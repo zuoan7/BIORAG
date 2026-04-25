@@ -1,0 +1,934 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+parsed_raw → parsed_clean + parsed_preview 清洗脚本
+
+读取 parsed_raw/*.json，输出：
+  - parsed_clean/*.json  （后续 chunking 的唯一输入）
+  - parsed_preview/*.md  （人工审计，不参与 pipeline）
+
+职责：
+  1. 修复 PDF 断词（保守词典规则）
+  2. 降级误判标题（16S rRNA、引物、化合物等）
+  3. 拆分 inline subsection heading
+  4. 分离 Figure / Table caption
+  5. 标记 References 区段
+  6. 输出结构化 parsed_clean JSON + Markdown preview
+
+用法：
+    python scripts/ingestion/clean_parsed_structure.py \
+      --input_dir data/paper_round1/parsed_raw \
+      --output_dir data/paper_round1/parsed_clean \
+      --preview_dir data/paper_round1/parsed_preview
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Optional
+
+
+# ============================================================
+# 断词修复词典（保守）
+# ============================================================
+
+BROKEN_WORD_FIXES: list[tuple[str, str]] = [
+    # 细菌名
+    (r"Bifido\s+bacterium", "Bifidobacterium"),
+    (r"Bifidobacte\s+rium", "Bifidobacterium"),
+    (r"Bifido\s+bacteria", "Bifidobacteria"),
+    (r"Kleb\s+siella", "Klebsiella"),
+    (r"pneu\s+moniae", "pneumoniae"),
+    # 常见断词
+    (r"fermenta\s+tion", "fermentation"),
+    (r"fermenta\s+tions", "fermentations"),
+    (r"struc\s+turally", "structurally"),
+    (r"pri\s+mary", "primary"),
+    (r"sup\s+portive", "supportive"),
+    (r"micro\s+biome", "microbiome"),
+    (r"re\s+view", "review"),
+    (r"con\s+sumption", "consumption"),
+    (r"fuco\s+syllactose", "fucosyllactose"),
+    # 额外常见断词
+    (r"estab\s+lish", "establish"),
+    (r"estab\s+lishment", "establishment"),
+    (r"sub\s+species", "subspecies"),
+    (r"patho\s+gens", "pathogens"),
+    (r"patho\s+gen", "pathogen"),
+    (r"meta\s+bolism", "metabolism"),
+    (r"meta\s+bolic", "metabolic"),
+    (r"meta\s+bolite", "metabolite"),
+    (r"fermenta\s+tive", "fermentative"),
+    (r"hydro\s+lysis", "hydrolysis"),
+    (r"gastro\s+intestinal", "gastrointestinal"),
+    (r"pre\s+biotic", "prebiotic"),
+    (r"pre\s+biotics", "prebiotics"),
+    (r"se\s+quence", "sequence"),
+    (r"se\s+quences", "sequences"),
+    (r"se\s+quencing", "sequencing"),
+    (r"asso\s+ciated", "associated"),
+    (r"asso\s+ciation", "association"),
+]
+
+BROKEN_WORD_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(pat, re.I), replacement)
+    for pat, replacement in BROKEN_WORD_FIXES
+]
+
+# 检测残存断词的模式
+BROKEN_WORD_DETECT_PATTERNS = [
+    re.compile(r"Bifido\s+bacterium", re.I),
+    re.compile(r"Kleb\s+siella", re.I),
+    re.compile(r"fermenta\s+tion", re.I),
+    re.compile(r"struc\s+turally", re.I),
+    re.compile(r"pri\s+mary", re.I),
+    re.compile(r"sup\s+portive", re.I),
+    re.compile(r"micro\s+biome", re.I),
+    re.compile(r"re\s+view", re.I),
+]
+
+
+# ============================================================
+# Section 标题白名单（真正的大 section）
+# ============================================================
+
+VALID_SECTION_HEADINGS = [
+    "abstract", "introduction", "background",
+    "materials and methods", "methods", "experimental procedures",
+    "experimental methods", "experimental section",
+    "results", "results and discussion", "discussion and results",
+    "discussion", "conclusion", "conclusions",
+    "references", "acknowledgements", "acknowledgments",
+    "appendix", "supplementary data", "supplementary materials",
+    "supplementary information",
+]
+
+VALID_SECTION_PATTERN = re.compile(
+    r"^\s*(?:\d+\.?\s+)?("
+    + "|".join(re.escape(h) for h in VALID_SECTION_HEADINGS)
+    + r")\s*$",
+    re.I,
+)
+
+
+# ============================================================
+# 误判标题检测
+# ============================================================
+
+FALSE_HEADING_PATTERNS = [
+    re.compile(r"^#{1,3}\s+\d+S\s+rRNA", re.I),
+    re.compile(r"^#{1,3}\s+\d+F\b"),
+    re.compile(r"^#{1,3}\s+13CH", re.I),
+    re.compile(r"^#{1,3}\s+1F-β?-?fructofuranosyl", re.I),
+    re.compile(r"^#{1,3}\s+\d+F-"),
+    re.compile(r"^#{1,3}\s+\d+R\b"),
+    re.compile(r"^#{1,3}\s+\d+C-"),
+]
+
+FALSE_HEADING_DETECT_PATTERNS = [
+    re.compile(r"16S\s+rRNA", re.I),
+    re.compile(r"27F\b"),
+    re.compile(r"1492R\b"),
+    re.compile(r"13CH", re.I),
+    re.compile(r"1F-β?-?fructofuranosyl", re.I),
+]
+
+
+# ============================================================
+# Figure / Table caption 检测
+# ============================================================
+
+FIGURE_CAPTION_PATTERN = re.compile(
+    r"^(?:Supplementary\s+)?(?:Fig\.?|Figure)\s+S?\d+",
+    re.I,
+)
+
+TABLE_CAPTION_PATTERN = re.compile(
+    r"^(?:Supplementary\s+)?Table\s+S?\d+",
+    re.I,
+)
+
+FIGURE_CAPTION_INLINE_PATTERN = re.compile(
+    r"(?:Supplementary\s+)?(?:Fig\.?|Figure)\s+S?\d+[\.\:]\s*",
+    re.I,
+)
+
+TABLE_CAPTION_INLINE_PATTERN = re.compile(
+    r"(?:Supplementary\s+)?Table\s+S?\d+[\.\:]\s*",
+    re.I,
+)
+
+
+# ============================================================
+# Subsection heading 检测
+# ============================================================
+
+SUBSECTION_HEADING_PATTERN = re.compile(
+    r"^(\d+\.\d+\.?\s+[A-Z][^\n]{3,80}?)\s{2,}([A-Z][^\n]+)$"
+)
+
+SUBSECTION_HEADING_START_PATTERN = re.compile(
+    r"^(\d+\.\d+\.?\s+[A-Z][^\n]{3,80}?)\s+([A-Z][a-z]+\s+[a-z])"
+)
+
+# 简单 subsection 编号检测
+SUBSECTION_NUMBER_PATTERN = re.compile(
+    r"^(\d+\.\d+\.?)\s+"
+)
+
+
+# ============================================================
+# References 检测
+# ============================================================
+
+REFERENCES_HEADING_PATTERN = re.compile(
+    r"^\s*(?:\d+\.?\s+)?"
+    r"(references|bibliography|literature\s+cited|works\s+cited)\s*$",
+    re.I,
+)
+
+
+# ============================================================
+# 数据类
+# ============================================================
+
+@dataclass
+class Block:
+    block_id: str
+    type: str  # title | abstract | section_heading | subsection_heading | paragraph | figure_caption | table_caption | table_text | references | noise
+    text: str
+    section_path: list[str] = field(default_factory=list)
+    page: int = 1
+
+
+@dataclass
+class CleanPage:
+    page: int
+    text: str
+    blocks: list[Block] = field(default_factory=list)
+
+
+@dataclass
+class ProcessingCounters:
+    processed_docs: int = 0
+    total_blocks: int = 0
+    fixed_broken_words: int = 0
+    demoted_false_headings: int = 0
+    detected_subsections: int = 0
+    detected_figure_captions: int = 0
+    detected_table_captions: int = 0
+    detected_references_blocks: int = 0
+    detected_table_text_blocks: int = 0
+
+
+# ============================================================
+# 文本清洗
+# ============================================================
+
+def fix_broken_words(text: str) -> tuple[str, int]:
+    """修复断词，返回 (修复后文本, 修复次数)"""
+    count = 0
+    for pattern, replacement in BROKEN_WORD_PATTERNS:
+        matches = pattern.findall(text)
+        count += len(matches)
+        text = pattern.sub(replacement, text)
+    return text, count
+
+
+def is_false_heading(line: str) -> bool:
+    """检测误判标题"""
+    for pat in FALSE_HEADING_PATTERNS:
+        if pat.match(line):
+            return True
+    return False
+
+
+def is_valid_section_heading(text: str) -> bool:
+    """检测是否为合法的大 section 标题"""
+    stripped = text.lstrip("#").strip()
+    if VALID_SECTION_PATTERN.match(stripped):
+        return True
+    return False
+
+
+def detect_figure_caption(text: str) -> bool:
+    """检测是否以 figure caption 开头"""
+    stripped = text.strip()
+    return bool(FIGURE_CAPTION_PATTERN.match(stripped))
+
+
+def detect_table_caption(text: str) -> bool:
+    """检测是否以 table caption 开头"""
+    stripped = text.strip()
+    return bool(TABLE_CAPTION_PATTERN.match(stripped))
+
+
+def extract_figure_caption_from_inline(text: str) -> Optional[tuple[str, str]]:
+    """从正文中间提取 figure caption，返回 (caption, remainder) 或 None"""
+    m = FIGURE_CAPTION_INLINE_PATTERN.search(text)
+    if m:
+        # 找到 Fig. / Figure 的位置
+        start = m.start()
+        prefix = text[:start].strip()
+        # caption 延伸到句子结束
+        caption_start = start
+        rest = text[m.end():]
+        # 找到下一个句号作为 caption 结束
+        dot_pos = rest.find(".")
+        if dot_pos >= 0 and dot_pos < 200:
+            caption_text = text[caption_start:m.end() + dot_pos + 1].strip()
+            remainder = text[m.end() + dot_pos + 1:].strip()
+            if prefix:
+                return (prefix, caption_text, remainder)
+            else:
+                return ("", caption_text, remainder)
+    return None
+
+
+def extract_table_caption_from_inline(text: str) -> Optional[tuple[str, str]]:
+    """从正文中间提取 table caption，返回 (caption, remainder) 或 None"""
+    m = TABLE_CAPTION_INLINE_PATTERN.search(text)
+    if m:
+        start = m.start()
+        prefix = text[:start].strip()
+        caption_start = start
+        rest = text[m.end():]
+        dot_pos = rest.find(".")
+        if dot_pos >= 0 and dot_pos < 200:
+            caption_text = text[caption_start:m.end() + dot_pos + 1].strip()
+            remainder = text[m.end() + dot_pos + 1:].strip()
+            if prefix:
+                return (prefix, caption_text, remainder)
+            else:
+                return ("", caption_text, remainder)
+    return None
+
+
+# ============================================================
+# 页面处理
+# ============================================================
+
+def classify_line_type(line: str, in_references: bool) -> str:
+    """
+    分类单行文本的类型。
+    返回: title | section_heading | subsection_heading | paragraph | figure_caption | table_caption | references | noise
+    """
+    stripped = line.strip()
+
+    if not stripped:
+        return "noise"
+
+    # Markdown 标题行
+    if stripped.startswith("### "):
+        heading_text = stripped[4:].strip()
+        if is_false_heading(stripped):
+            return "paragraph"
+        # subsection heading 通常有数字编号
+        if SUBSECTION_NUMBER_PATTERN.match(heading_text):
+            return "subsection_heading"
+        # 可能是误判，检查是否为合法 section
+        if is_valid_section_heading(stripped):
+            return "section_heading"
+        return "subsection_heading"
+
+    if stripped.startswith("## "):
+        heading_text = stripped[3:].strip()
+        if is_false_heading(stripped):
+            return "paragraph"
+        if is_valid_section_heading(stripped):
+            return "section_heading"
+        # 有数字编号的可能是 section heading
+        if re.match(r"^\d+\.?\s+[A-Z]", heading_text):
+            # 检查是否是 subsection 级别（2.1, 3.2 等）
+            if re.match(r"^\d+\.\d+", heading_text):
+                return "subsection_heading"
+            return "section_heading"
+        return "section_heading"
+
+    if stripped.startswith("# "):
+        return "title"
+
+    # Figure / Table caption
+    if detect_figure_caption(stripped):
+        return "figure_caption"
+    if detect_table_caption(stripped):
+        return "table_caption"
+
+    # 在 references 区段中
+    if in_references:
+        return "references"
+
+    # 普通正文
+    return "paragraph"
+
+
+def split_inline_subsection(text: str) -> list[tuple[str, str]]:
+    """
+    拆分 inline subsection heading。
+    例如: "2.3. In vitro fermentation with individual infant inocula In vitro fecal fermentation..."
+    → [("subsection_heading", "2.3. In vitro fermentation with individual infant inocula"),
+       ("paragraph", "In vitro fecal fermentation...")]
+
+    返回 [(type, text), ...]
+    """
+    # 尝试匹配 "数字.数字 标题 大写开头的正文"
+    m = SUBSECTION_HEADING_PATTERN.match(text)
+    if m:
+        heading = m.group(1).strip()
+        body = m.group(2).strip()
+        return [("subsection_heading", heading), ("paragraph", body)]
+
+    # 更宽松的匹配
+    m = SUBSECTION_HEADING_START_PATTERN.match(text)
+    if m:
+        heading = m.group(1).strip()
+        body = text[len(m.group(1)):].strip()
+        if body and len(heading.split()) >= 3:
+            return [("subsection_heading", heading), ("paragraph", body)]
+
+    return [("paragraph", text)]
+
+
+def split_inline_section_heading(text: str) -> list[tuple[str, str]]:
+    """
+    拆分 inline section heading。
+    例如: "2.1. Materials Six commercially available HMOs..."
+    → [("subsection_heading", "2.1. Materials"), ("paragraph", "Six commercially available HMOs...")]
+    """
+    # 匹配 "数字.数字 标题词(1-5词) 正文"
+    m = re.match(r"^(\d+\.\d+\.?\s+(?:[A-Z][a-z]+(?:\s+and\s+)?){1,5})\s+([A-Z][a-z])", text)
+    if m:
+        heading = m.group(1).strip()
+        body = text[len(m.group(1)):].strip()
+        if body and len(heading.split()) <= 10:
+            return [("subsection_heading", heading), ("paragraph", body)]
+
+    return [("paragraph", text)]
+
+
+def process_page_text(
+    page_text: str,
+    page_num: int,
+    block_index_start: int,
+    counters: ProcessingCounters,
+) -> tuple[list[Block], str, bool]:
+    """
+    处理单个页面的文本，返回 (blocks, 清洗后全文, in_references状态)
+    """
+    lines = page_text.split("\n")
+    blocks: list[Block] = []
+    current_paragraph: list[str] = []
+    section_path: list[str] = []
+    in_references = False
+    block_idx = block_index_start
+
+    def flush_paragraph():
+        nonlocal block_idx
+        if current_paragraph:
+            text = " ".join(current_paragraph)
+            current_paragraph.clear()
+            if not text.strip():
+                return
+
+            # 修复断词
+            text, fix_count = fix_broken_words(text)
+            counters.fixed_broken_words += fix_count
+
+            # 检查是否包含 inline subsection heading
+            if SUBSECTION_NUMBER_PATTERN.match(text) and len(text) > 40:
+                parts = split_inline_subsection(text)
+                if len(parts) > 1:
+                    for ptype, ptext in parts:
+                        block_id = f"p{page_num}_b{block_idx:04d}"
+                        ptext, fc = fix_broken_words(ptext)
+                        counters.fixed_broken_words += fc
+                        if ptype == "subsection_heading":
+                            counters.detected_subsections += 1
+                            section_path.append(ptext.strip())
+                        blocks.append(Block(
+                            block_id=block_id,
+                            type=ptype,
+                            text=ptext.strip(),
+                            section_path=list(section_path),
+                            page=page_num,
+                        ))
+                        block_idx += 1
+                    counters.total_blocks += len(parts)
+                    return
+
+                parts = split_inline_section_heading(text)
+                if len(parts) > 1:
+                    for ptype, ptext in parts:
+                        block_id = f"p{page_num}_b{block_idx:04d}"
+                        ptext, fc = fix_broken_words(ptext)
+                        counters.fixed_broken_words += fc
+                        if ptype == "subsection_heading":
+                            counters.detected_subsections += 1
+                            section_path.append(ptext.strip())
+                        blocks.append(Block(
+                            block_id=block_id,
+                            type=ptype,
+                            text=ptext.strip(),
+                            section_path=list(section_path),
+                            page=page_num,
+                        ))
+                        block_idx += 1
+                    counters.total_blocks += len(parts)
+                    return
+
+            # 检查是否包含 inline figure caption
+            fig_result = extract_figure_caption_from_inline(text)
+            if fig_result and len(fig_result) == 3:
+                prefix, caption, remainder = fig_result
+                if prefix:
+                    block_id = f"p{page_num}_b{block_idx:04d}"
+                    blocks.append(Block(
+                        block_id=block_id, type="paragraph", text=prefix,
+                        section_path=list(section_path), page=page_num,
+                    ))
+                    block_idx += 1
+                block_id = f"p{page_num}_b{block_idx:04d}"
+                blocks.append(Block(
+                    block_id=block_id, type="figure_caption", text=caption,
+                    section_path=list(section_path), page=page_num,
+                ))
+                counters.detected_figure_captions += 1
+                block_idx += 1
+                if remainder:
+                    block_id = f"p{page_num}_b{block_idx:04d}"
+                    blocks.append(Block(
+                        block_id=block_id, type="paragraph", text=remainder,
+                        section_path=list(section_path), page=page_num,
+                    ))
+                    block_idx += 1
+                counters.total_blocks += 2 + (1 if prefix else 0) + (1 if remainder else 0)
+                return
+
+            # 检查是否包含 inline table caption
+            tbl_result = extract_table_caption_from_inline(text)
+            if tbl_result and len(tbl_result) == 3:
+                prefix, caption, remainder = tbl_result
+                if prefix:
+                    block_id = f"p{page_num}_b{block_idx:04d}"
+                    blocks.append(Block(
+                        block_id=block_id, type="paragraph", text=prefix,
+                        section_path=list(section_path), page=page_num,
+                    ))
+                    block_idx += 1
+                block_id = f"p{page_num}_b{block_idx:04d}"
+                blocks.append(Block(
+                    block_id=block_id, type="table_caption", text=caption,
+                    section_path=list(section_path), page=page_num,
+                ))
+                counters.detected_table_captions += 1
+                block_idx += 1
+                if remainder:
+                    block_id = f"p{page_num}_b{block_idx:04d}"
+                    blocks.append(Block(
+                        block_id=block_id, type="paragraph", text=remainder,
+                        section_path=list(section_path), page=page_num,
+                    ))
+                    block_idx += 1
+                counters.total_blocks += 2 + (1 if prefix else 0) + (1 if remainder else 0)
+                return
+
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id,
+                type="references" if in_references else "paragraph",
+                text=text.strip(),
+                section_path=list(section_path),
+                page=page_num,
+            ))
+            counters.total_blocks += 1
+            block_idx += 1
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            # 空行刷新段落
+            flush_paragraph()
+            continue
+
+        line_type = classify_line_type(stripped, in_references)
+
+        # 先修复断词
+        fixed_text, fix_count = fix_broken_words(stripped)
+        counters.fixed_broken_words += fix_count
+
+        if line_type == "title":
+            flush_paragraph()
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id, type="title", text=fixed_text,
+                section_path=["Title"], page=page_num,
+            ))
+            section_path = ["Title"]
+            counters.total_blocks += 1
+            block_idx += 1
+
+        elif line_type == "section_heading":
+            flush_paragraph()
+            # 提取标题文本
+            heading_text = fixed_text.lstrip("#").strip()
+            # 更新 section_path（只保留当前大 section）
+            section_path = [heading_text]
+            # 检查是否进入 References
+            if REFERENCES_HEADING_PATTERN.match(heading_text):
+                in_references = True
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id, type="section_heading", text=fixed_text,
+                section_path=list(section_path), page=page_num,
+            ))
+            counters.total_blocks += 1
+            block_idx += 1
+
+        elif line_type == "subsection_heading":
+            flush_paragraph()
+            heading_text = fixed_text.lstrip("#").strip()
+            # 更新 section_path（保留大 section + 当前 subsection）
+            if len(section_path) > 0:
+                # 替换最后一个 subsection
+                if len(section_path) > 1 and SUBSECTION_NUMBER_PATTERN.match(section_path[-1]):
+                    section_path[-1] = heading_text
+                else:
+                    section_path.append(heading_text)
+            else:
+                section_path = [heading_text]
+            counters.detected_subsections += 1
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id, type="subsection_heading", text=fixed_text,
+                section_path=list(section_path), page=page_num,
+            ))
+            counters.total_blocks += 1
+            block_idx += 1
+
+        elif line_type == "figure_caption":
+            flush_paragraph()
+            counters.detected_figure_captions += 1
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id, type="figure_caption", text=fixed_text,
+                section_path=list(section_path), page=page_num,
+            ))
+            counters.total_blocks += 1
+            block_idx += 1
+
+        elif line_type == "table_caption":
+            flush_paragraph()
+            counters.detected_table_captions += 1
+            block_id = f"p{page_num}_b{block_idx:04d}"
+            blocks.append(Block(
+                block_id=block_id, type="table_caption", text=fixed_text,
+                section_path=list(section_path), page=page_num,
+            ))
+            counters.total_blocks += 1
+            block_idx += 1
+
+        elif line_type == "references":
+            # 在 references 区段内的行，累积到当前段落
+            counters.detected_references_blocks += 1
+            current_paragraph.append(fixed_text)
+
+        elif line_type == "paragraph":
+            # 误判标题降级为正文
+            if stripped.startswith("## ") and is_false_heading(stripped):
+                counters.demoted_false_headings += 1
+            current_paragraph.append(fixed_text)
+
+        elif line_type == "noise":
+            flush_paragraph()
+
+    flush_paragraph()
+
+    # 重建清洗后的页面文本
+    cleaned_text = rebuild_page_text(blocks)
+
+    return blocks, cleaned_text, in_references
+
+
+def rebuild_page_text(blocks: list[Block]) -> str:
+    """从 blocks 重建页面文本"""
+    parts = []
+    for block in blocks:
+        if block.type == "title":
+            parts.append(f"# {block.text}")
+        elif block.type == "section_heading":
+            parts.append(f"## {block.text.lstrip('#').strip()}")
+        elif block.type == "subsection_heading":
+            parts.append(f"### {block.text.lstrip('#').strip()}")
+        elif block.type == "figure_caption":
+            parts.append(f"[FIGURE CAPTION] {block.text}")
+        elif block.type == "table_caption":
+            parts.append(f"[TABLE CAPTION] {block.text}")
+        elif block.type == "table_text":
+            parts.append(f"[TABLE] {block.text}")
+        else:
+            parts.append(block.text)
+    return "\n\n".join(parts)
+
+
+# ============================================================
+# 单文档处理
+# ============================================================
+
+def process_document(
+    input_path: Path,
+    output_dir: Path,
+    preview_dir: Path,
+    counters: ProcessingCounters,
+) -> dict:
+    """
+    处理单个 parsed_raw JSON，输出 parsed_clean JSON 和 parsed_preview MD。
+    """
+    with input_path.open("r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+
+    doc_id = raw_data.get("doc_id", input_path.stem)
+    source_file = raw_data.get("source_file", input_path.name)
+    total_pages = raw_data.get("total_pages", 0)
+    raw_pages = raw_data.get("pages", [])
+
+    # 检查是否已有 blocks（兼容旧格式）
+    has_blocks = any(
+        isinstance(p, dict) and "blocks" in p and p["blocks"]
+        for p in raw_pages
+    )
+
+    clean_pages: list[dict] = []
+    all_blocks: list[Block] = []
+    global_block_idx = 0
+    in_references = False
+
+    for page_data in raw_pages:
+        page_num = page_data.get("page", 0)
+        page_text = page_data.get("text", "")
+
+        if not page_text.strip():
+            clean_pages.append({
+                "page": page_num,
+                "text": "",
+                "blocks": [],
+            })
+            continue
+
+        # 如果已有 blocks，直接使用（合并断词修复）
+        if has_blocks and page_data.get("blocks"):
+            blocks = []
+            for raw_block in page_data["blocks"]:
+                text = raw_block.get("text", "")
+                text, fix_count = fix_broken_words(text)
+                counters.fixed_broken_words += fix_count
+                block = Block(
+                    block_id=raw_block.get("block_id", f"p{page_num}_b{global_block_idx:04d}"),
+                    type=raw_block.get("type", "paragraph"),
+                    text=text,
+                    section_path=raw_block.get("section_path", []),
+                    page=page_num,
+                )
+                blocks.append(block)
+                global_block_idx += 1
+            clean_text = rebuild_page_text(blocks)
+            clean_pages.append({
+                "page": page_num,
+                "text": clean_text,
+                "blocks": [asdict(b) for b in blocks],
+            })
+            all_blocks.extend(blocks)
+            continue
+
+        # 处理页面文本
+        blocks, cleaned_text, in_references = process_page_text(
+            page_text, page_num, global_block_idx, counters
+        )
+        global_block_idx += len(blocks)
+
+        clean_pages.append({
+            "page": page_num,
+            "text": cleaned_text,
+            "blocks": [asdict(b) for b in blocks],
+        })
+        all_blocks.extend(blocks)
+
+    # 构建 parsed_clean JSON
+    clean_data = {
+        "doc_id": doc_id,
+        "source_file": source_file,
+        "total_pages": total_pages,
+        "parser_stage": "parsed_clean_v1",
+        "pages": clean_pages,
+    }
+
+    # 输出 parsed_clean JSON
+    output_path = output_dir / f"{doc_id}.json"
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(clean_data, f, ensure_ascii=False, indent=2)
+
+    # 输出 parsed_preview MD
+    preview_path = preview_dir / f"{doc_id}.md"
+    md_content = generate_preview_md(all_blocks)
+    preview_path.write_text(md_content, encoding="utf-8")
+
+    counters.processed_docs += 1
+
+    return {
+        "doc_id": doc_id,
+        "total_pages": total_pages,
+        "total_blocks": len(all_blocks),
+        "status": "ok",
+    }
+
+
+def generate_preview_md(blocks: list[Block]) -> str:
+    """从 blocks 生成 Markdown 预览"""
+    parts = []
+
+    for block in blocks:
+        if block.type == "title":
+            parts.append(f"# {block.text}\n")
+        elif block.type == "section_heading":
+            text = block.text.lstrip("#").strip()
+            parts.append(f"\n## {text}\n")
+        elif block.type == "subsection_heading":
+            text = block.text.lstrip("#").strip()
+            parts.append(f"\n### {text}\n")
+        elif block.type == "figure_caption":
+            parts.append(f"\n[FIGURE CAPTION] {block.text}\n")
+        elif block.type == "table_caption":
+            parts.append(f"\n[TABLE CAPTION] {block.text}\n")
+        elif block.type == "table_text":
+            parts.append(f"\n[TABLE] {block.text}\n")
+        elif block.type == "references":
+            if not parts or not parts[-1].startswith("[REFERENCES]"):
+                parts.append(f"\n[REFERENCES]\n")
+            parts.append(block.text)
+        elif block.type == "noise":
+            continue
+        else:
+            parts.append(block.text)
+
+    return "\n".join(parts).strip()
+
+
+# ============================================================
+# 批量处理
+# ============================================================
+
+def batch_process(
+    input_dir: Path,
+    output_dir: Path,
+    preview_dir: Path,
+) -> ProcessingCounters:
+    """批量处理 parsed_raw 目录下的所有 JSON 文件"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    json_files = sorted(input_dir.glob("*.json"))
+    if not json_files:
+        print(f"[WARN] 目录中没有找到 JSON 文件: {input_dir}")
+        return ProcessingCounters()
+
+    print(f"找到 {len(json_files)} 个 JSON 文件")
+    print()
+
+    counters = ProcessingCounters()
+    success = 0
+    failed = 0
+    failed_list: list[str] = []
+
+    start_time = time.time()
+
+    for i, json_path in enumerate(json_files, start=1):
+        print(f"  [{i}/{len(json_files)}] {json_path.name} ...", end=" ")
+        try:
+            result = process_document(json_path, output_dir, preview_dir, counters)
+            print(f"OK ({result['total_pages']} 页, {result['total_blocks']} blocks)")
+            success += 1
+        except Exception as e:
+            print(f"FAILED ({e})")
+            failed += 1
+            failed_list.append(f"{json_path.name}: {e}")
+
+    elapsed = time.time() - start_time
+
+    print()
+    print("=" * 60)
+    print("parsed_clean 清洗统计")
+    print("=" * 60)
+    print(f"总文件数:           {len(json_files)}")
+    print(f"成功:               {success}")
+    print(f"失败:               {failed}")
+    print(f"处理文档数:         {counters.processed_docs}")
+    print(f"总 blocks:          {counters.total_blocks}")
+    print(f"修复断词:           {counters.fixed_broken_words}")
+    print(f"降级误判标题:       {counters.demoted_false_headings}")
+    print(f"检测到 subsection:  {counters.detected_subsections}")
+    print(f"检测到 figure cap:  {counters.detected_figure_captions}")
+    print(f"检测到 table cap:   {counters.detected_table_captions}")
+    print(f"检测到 table text:  {counters.detected_table_text_blocks}")
+    print(f"检测到 references:  {counters.detected_references_blocks}")
+    print(f"耗时:               {elapsed:.2f}s")
+    print(f"输出目录:           {output_dir}")
+    print(f"预览目录:           {preview_dir}")
+
+    if failed_list:
+        print()
+        print("失败列表:")
+        for item in failed_list:
+            print(f"  - {item}")
+
+    return counters
+
+
+# ============================================================
+# 主入口
+# ============================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="parsed_raw → parsed_clean + parsed_preview 清洗脚本"
+    )
+    parser.add_argument(
+        "--input_dir", required=True,
+        help="parsed_raw 目录（包含原始解析 JSON）",
+    )
+    parser.add_argument(
+        "--output_dir", required=True,
+        help="parsed_clean 输出目录",
+    )
+    parser.add_argument(
+        "--preview_dir", required=True,
+        help="parsed_preview 输出目录（Markdown 预览）",
+    )
+
+    args = parser.parse_args()
+
+    input_dir = Path(args.input_dir).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    preview_dir = Path(args.preview_dir).resolve()
+
+    if not input_dir.exists() or not input_dir.is_dir():
+        print(f"[ERROR] 输入目录不存在: {input_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    print("=" * 60)
+    print("parsed_raw → parsed_clean 清洗")
+    print("=" * 60)
+    print(f"输入目录:   {input_dir}")
+    print(f"输出目录:   {output_dir}")
+    print(f"预览目录:   {preview_dir}")
+    print()
+
+    batch_process(input_dir, output_dir, preview_dir)
+
+
+if __name__ == "__main__":
+    main()

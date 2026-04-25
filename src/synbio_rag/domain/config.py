@@ -126,7 +126,9 @@ class Round8PolicyConfig:
 @dataclass
 class KnowledgeBaseConfig:
     paper_dir: str = "./data/paper_round1/paper"
-    parsed_dir: str = "./data/paper_round1/parsed"
+    parsed_raw_dir: str = "./data/paper_round1/parsed_raw"
+    parsed_dir: str = "./data/paper_round1/parsed_clean"
+    parsed_preview_dir: str = "./data/paper_round1/parsed_preview"
     chunk_dir: str = "./data/paper_round1/chunks"
     chunk_jsonl: str = "./data/paper_round1/chunks/chunks.jsonl"
     embedding_model_path: str = "./models/BAAI/bge-m3"
@@ -332,7 +334,9 @@ class Settings:
         self.retrieval.milvus_uri = _resolve_local_path(self.retrieval.milvus_uri)
         self.retrieval.bm25_cache_path = _resolve_local_path(self.retrieval.bm25_cache_path)
         self.kb.paper_dir = _resolve_local_path(self.kb.paper_dir)
+        self.kb.parsed_raw_dir = _resolve_local_path(self.kb.parsed_raw_dir)
         self.kb.parsed_dir = _resolve_local_path(self.kb.parsed_dir)
+        self.kb.parsed_preview_dir = _resolve_local_path(self.kb.parsed_preview_dir)
         self.kb.chunk_dir = _resolve_local_path(self.kb.chunk_dir)
         self.kb.chunk_jsonl = _resolve_local_path(self.kb.chunk_jsonl)
         self.kb.embedding_model_path = _resolve_local_path(self.kb.embedding_model_path)
@@ -342,7 +346,9 @@ class Settings:
 
     def ensure_directories(self) -> None:
         for path_str in (
+            self.kb.parsed_raw_dir,
             self.kb.parsed_dir,
+            self.kb.parsed_preview_dir,
             self.kb.chunk_dir,
             str(Path(self.kb.chunk_jsonl).parent),
             str(Path(self.retrieval.bm25_cache_path).parent),

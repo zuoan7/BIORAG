@@ -46,6 +46,11 @@ SECTION_PATTERNS = [
     (re.compile(r"^experimental\s+(?:procedures?|section|methods?)\b", re.I), "Experimental Procedures"),
 ]
 
+# Subsection 识别模式：匹配 "数字.数字 标题" 格式
+SUBSECTION_PATTERN = re.compile(
+    r"^(\d+\.\d+\.?\s+\S+(?:\s+\S+){0,14})\s*$",
+)
+
 SECTION_NUMBERED_PATTERN = re.compile(
     r"^\s*(?:\d+\.?\s+)"
     r"(abstract|introduction|background|results?\s+and\s+discussion|"
@@ -91,7 +96,7 @@ HEADER_FOOTER_PATTERN = re.compile(
 )
 
 HYPHEN_BREAK_PATTERN = re.compile(r"(\w)-\s+(\w)")
-LEADING_MARKER_PATTERN = re.compile(r"^\s*(?:[#>*\-]+|\(?\d+(?:\.\d+)*\)?\.?)\s*")
+LEADING_MARKER_PATTERN = re.compile(r"^\s*(?:[#>*\-]+)\s*")
 TITLE_EXPLICIT_PATTERN = re.compile(r"^\s*(?:title|article)\s*:\s*(.+)$", re.I)
 PAGE_MARKER_PATTERN = re.compile(r"^\s*(?:page\s+)?\d+\s*(?:of|/)\s*\d+\s*$", re.I)
 DOWNLOADED_LINE_PATTERN = re.compile(r"^\s*downloaded\s+via\b", re.I)
@@ -516,6 +521,17 @@ def _match_section_title(line: str) -> Optional[str]:
             if pat.match(raw):
                 return name
 
+    # 识别 subsection 标题（如 "2.3. In vitro fermentation..."）
+    subsec_match = SUBSECTION_PATTERN.match(normalized)
+    if subsec_match:
+        subsec_text = subsec_match.group(1).strip()
+        # 尝试匹配 subsection 中的 section 关键词
+        for pat, name in SECTION_PATTERNS:
+            if pat.search(subsec_text):
+                return name
+        # 返回 subsection 原始标题作为 section 名
+        return subsec_text
+
     return None
 
 
@@ -819,7 +835,8 @@ def read_txt_file(filepath: Path) -> dict:
 def read_json_file(filepath: Path) -> dict:
     """
     读取 json 格式输入。
-    利用 pages 信息拼接全文，并保留 pages 供后续页码估算。
+    优先使用 pages[].blocks（parsed_clean 格式），按 block 顺序重建 text。
+    如果没有 blocks，回退使用 pages[].text（旧格式兼容）。
     """
     with filepath.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -828,7 +845,48 @@ def read_json_file(filepath: Path) -> dict:
     source_file = data.get("source_file", filepath.name)
     pages = data.get("pages", [])
 
-    full_text = "\n".join(p.get("text", "") for p in pages)
+    # 优先使用 blocks
+    has_blocks = any(
+        isinstance(p, dict) and p.get("blocks") for p in pages
+    )
+
+    if has_blocks:
+        page_texts = []
+        for p in pages:
+            blocks = p.get("blocks", [])
+            if not blocks:
+                page_texts.append(p.get("text", ""))
+                continue
+            block_parts = []
+            for block in blocks:
+                btype = block.get("type", "paragraph")
+                btext = block.get("text", "")
+                if not btext.strip():
+                    continue
+                if btype == "title":
+                    block_parts.append(f"# {btext}")
+                elif btype == "section_heading":
+                    heading = btext.lstrip("#").strip()
+                    block_parts.append(f"## {heading}")
+                elif btype == "subsection_heading":
+                    heading = btext.lstrip("#").strip()
+                    block_parts.append(f"### {heading}")
+                elif btype == "figure_caption":
+                    block_parts.append(f"[FIGURE CAPTION] {btext}")
+                elif btype == "table_caption":
+                    block_parts.append(f"[TABLE CAPTION] {btext}")
+                elif btype == "table_text":
+                    block_parts.append(f"[TABLE] {btext}")
+                elif btype == "references":
+                    block_parts.append(f"## References\n{btext}")
+                elif btype == "noise":
+                    continue
+                else:
+                    block_parts.append(btext)
+            page_texts.append("\n\n".join(block_parts))
+        full_text = "\n".join(page_texts)
+    else:
+        full_text = "\n".join(p.get("text", "") for p in pages)
 
     return {
         "doc_id": doc_id,

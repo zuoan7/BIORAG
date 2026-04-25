@@ -20,8 +20,20 @@ class KnowledgeBaseBuilder:
                 "--input_dir",
                 self.settings.kb.paper_dir,
                 "--output_dir",
-                self.settings.kb.parsed_dir,
+                self.settings.kb.parsed_raw_dir,
                 "--also_txt",
+            ]
+        )
+        self._run(
+            [
+                "python",
+                "scripts/ingestion/clean_parsed_structure.py",
+                "--input_dir",
+                self.settings.kb.parsed_raw_dir,
+                "--output_dir",
+                self.settings.kb.parsed_dir,
+                "--preview_dir",
+                self.settings.kb.parsed_preview_dir,
             ]
         )
         self._run(
@@ -54,6 +66,7 @@ class KnowledgeBaseBuilder:
                 self.settings.kb.embedding_model_path,
                 "--dim",
                 str(self.settings.kb.embedding_dim),
+                "--rebuild",
             ]
         )
 
