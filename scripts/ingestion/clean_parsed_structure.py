@@ -225,6 +225,7 @@ class ProcessingCounters:
     detected_table_captions: int = 0
     detected_references_blocks: int = 0
     detected_table_text_blocks: int = 0
+    merged_split_headings: int = 0
 
 
 # ============================================================
@@ -255,6 +256,141 @@ def is_valid_section_heading(text: str) -> bool:
     if VALID_SECTION_PATTERN.match(stripped):
         return True
     return False
+
+
+# ============================================================
+# 连续 heading 合并
+# ============================================================
+
+# 第二行以这些小写连接词开头时，可以合并到上一行
+CONTINUATION_START_WORDS = frozenset({
+    "from", "of", "in", "on", "by", "with", "for", "to",
+    "and", "or", "the", "a", "an",
+})
+
+# 第一行以这些词结尾时，表示标题被截断，可以合并下一行
+TRUNCATION_END_WORDS = frozenset({
+    "to", "of", "in", "for", "with", "by", "and", "or",
+    "real-time", "from",
+})
+
+
+def _get_heading_level(line: str) -> int:
+    """获取 Markdown heading level（1-3），非 heading 返回 0"""
+    stripped = line.strip()
+    if stripped.startswith("### "):
+        return 3
+    if stripped.startswith("## "):
+        return 2
+    if stripped.startswith("# "):
+        return 1
+    return 0
+
+
+def _heading_text(line: str) -> str:
+    """提取 heading 文本（去除 # 前缀）"""
+    stripped = line.strip()
+    if stripped.startswith("### "):
+        return stripped[4:].strip()
+    if stripped.startswith("## "):
+        return stripped[3:].strip()
+    if stripped.startswith("# "):
+        return stripped[2:].strip()
+    return stripped
+
+
+def should_merge_headings(prev_line: str, curr_line: str) -> bool:
+    """
+    判断两行连续 heading 是否应该合并。
+
+    保守规则：
+    1. 两行 heading level 相同或相近
+    2. 第二行以小写连接词开头，或第一行以截断词结尾
+    3. 第二行较短，且不像独立 section 标题
+    4. 合并后不像两个独立标题
+    """
+    prev_level = _get_heading_level(prev_line)
+    curr_level = _get_heading_level(curr_line)
+
+    # 必须都是 heading
+    if prev_level == 0 or curr_level == 0:
+        return False
+
+    # heading level 相同或相近（差异 ≤ 1）
+    if abs(prev_level - curr_level) > 1:
+        return False
+
+    prev_text = _heading_text(prev_line)
+    curr_text = _heading_text(curr_line)
+
+    # 第二行太长则不像残片（>60 字符通常是独立标题）
+    if len(curr_text) > 60:
+        return False
+
+    # 检查第二行是否以小写连接词开头
+    curr_first_word = curr_text.split()[0].lower() if curr_text.split() else ""
+    starts_with_continuation = curr_first_word in CONTINUATION_START_WORDS
+
+    # 检查第一行是否以截断词结尾
+    prev_words = prev_text.rstrip(".,;:").split()
+    prev_last_word = prev_words[-1].lower() if prev_words else ""
+    ends_with_truncation = prev_last_word in TRUNCATION_END_WORDS
+
+    # 至少满足一个条件
+    if not (starts_with_continuation or ends_with_truncation):
+        return False
+
+    # 第二行不能像独立 section 标题
+    if is_valid_section_heading(curr_line):
+        return False
+
+    # 如果第二行以大写字母开头且不是连接词，则可能独立
+    if curr_text[0:1].isupper() and not starts_with_continuation:
+        return False
+
+    return True
+
+
+def merge_consecutive_headings(lines: list[str]) -> tuple[list[str], int]:
+    """
+    合并连续的 heading 行（中间允许空行）。
+    返回 (合并后的行列表, 合并次数)
+    """
+    if not lines:
+        return lines, 0
+
+    merged_lines: list[str] = []
+    merge_count = 0
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        # 尝试与下一行合并（跳过中间空行）
+        if _get_heading_level(line) > 0:
+            # 查找下一个非空行
+            j = i + 1
+            skipped_blanks = 0
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+                skipped_blanks += 1
+
+            if j < len(lines) and _get_heading_level(lines[j]) > 0:
+                next_line = lines[j]
+                if should_merge_headings(line, next_line):
+                    # 合并：保留第一行的 level，拼接文本
+                    level = _get_heading_level(line)
+                    prefix = "#" * level
+                    combined_text = f"{_heading_text(line)} {_heading_text(next_line)}"
+                    merged_lines.append(f"{prefix} {combined_text}")
+                    merge_count += 1
+                    # 跳过空行和下一行
+                    i = j + 1
+                    continue
+
+        merged_lines.append(line)
+        i += 1
+
+    return merged_lines, merge_count
 
 
 def detect_figure_caption(text: str) -> bool:
@@ -422,6 +558,10 @@ def process_page_text(
     处理单个页面的文本，返回 (blocks, 清洗后全文, in_references状态)
     """
     lines = page_text.split("\n")
+    # 先合并连续 heading 行
+    lines, merged_count = merge_consecutive_headings(lines)
+    counters.merged_split_headings += merged_count
+
     blocks: list[Block] = []
     current_paragraph: list[str] = []
     section_path: list[str] = []
@@ -875,6 +1015,7 @@ def batch_process(
     print(f"检测到 table cap:   {counters.detected_table_captions}")
     print(f"检测到 table text:  {counters.detected_table_text_blocks}")
     print(f"检测到 references:  {counters.detected_references_blocks}")
+    print(f"合并拆分标题:       {counters.merged_split_headings}")
     print(f"耗时:               {elapsed:.2f}s")
     print(f"输出目录:           {output_dir}")
     print(f"预览目录:           {preview_dir}")
