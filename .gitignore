@@ -1,0 +1,61 @@
+# 环境变量（敏感信息）
+.env
+
+# Python 编译产物
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行时产物（日志、会话、向量库）
+runtime/logs/
+runtime/vectorstores/
+logs/
+vector_db/
+
+# 模型资产（大文件，通常不纳入版本管理）
+models/
+
+# 数据文件（PDF、原始论文、评测集等，按需忽略）
+data/
+
+# 评测与结果报告
+reports/
+results/
+
+# 过程性文档（round 迭代记录，按需保留）
+docs/round*_*.md
+docs/*_report.md
+
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+
+# Docker
+docker-compose.override.yml
+
+# 其他
+*.log
+.claude
