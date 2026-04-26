@@ -18,6 +18,7 @@ from ..infrastructure.clients.openai_compatible import OpenAICompatibleClient, e
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_+-]+|[\u4e00-\u9fff]")
 _UNCERTAINTY_TERMS = ("may", "might", "unclear", "possible", "可能", "尚不清楚", "提示")
+DOC_ID_RE = re.compile(r"\bdoc[_-]?\d{4}\b", flags=re.IGNORECASE)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,8 @@ class EvidenceAssessment:
     citation_budget: dict[str, Any] = field(default_factory=dict)
     citation_count_before_budget: int = 0
     citation_count_after_budget: int = 0
+    support_selection_debug: list[dict[str, Any]] = field(default_factory=list)
+    prompt_support_context: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +85,10 @@ _PHASE_A_SYSTEM = (
     "2. 如果问题的某个方面没有证据支持，在 missing 列表中标注。\n"
     "3. 不要添加证据之外的任何信息或推断。\n"
     "4. 尽量提取具体数据（数值、百分比、倍数变化等）。\n"
+    "4.1. [TABLE TEXT]、[TABLE CAPTION]、[FIGURE CAPTION] 都是可直接引用的证据。\n"
+    "     - 对表格问题，优先提取表格中的字段、数值、菌株名、primer 名称与序列。\n"
+    "     - 对图注问题，优先提取 [FIGURE CAPTION] 中对 Figure/Fig. 编号的描述。\n"
+    "     - 不要因为证据呈现为表格行或图注格式就忽略它们。\n"
     "5. 首先判断证据片段的主题是否与问题的核心主题一致。\n"
     "   - 如果证据片段讨论的主题（如某种化合物、某个生物过程）与问题询问的主题不同，\n"
     "     则 relevant 设为 false，claims 为空。\n"
@@ -123,6 +130,10 @@ _PHASE_B_SYSTEM_BASE = (
     "6. 优先使用证据原文措辞，不要改写或扩展原文含义。\n"
     "7. 回答范围严格限定在已确认事实点内，不要推断因果关系或补充机制细节。\n"
     "8. 用中文回答。专有名词（基因名、蛋白名、化合物名等）保留英文原文。\n"
+    "9. [TABLE TEXT]、[TABLE CAPTION]、[FIGURE CAPTION] 都是高优先级可引用证据。\n"
+    "   - 遇到 Table/Figure 编号、数值、primer、strain、sequence、Vmax、KM 等问题时，优先直接使用这些证据。\n"
+    "   - 如果表格证据中已经给出明确数值，不得再回答“无法提供具体数值”。\n"
+    "   - 如果图注证据中已经描述 Figure/Fig. 内容，不得忽略图注而改用泛化正文。\n"
 )
 
 _PHASE_B_TEMPLATES = {
@@ -194,7 +205,8 @@ class QwenChatGenerator:
     ) -> str:
         del context
         assessment = assessment or self.assess_evidence(question, chunks, analysis=analysis)
-        support_context = _build_support_context(assessment.support_pack)
+        support_context = assessment.prompt_support_context or _build_support_context(assessment.support_pack)
+        assessment.prompt_support_context = support_context
         if assessment.should_refuse:
             return _build_refusal_answer(assessment)
         if assessment.final_answer_mode == "limited_partial_compare":
@@ -203,11 +215,16 @@ class QwenChatGenerator:
             return _build_fallback_answer(question, assessment)
         if self.client.is_enabled():
             try:
-                return self._generate_two_phase(
+                answer = self._generate_two_phase(
                     question, support_context, assessment, analysis, history, chunks,
                 )
+                if _should_prefer_structured_answer(question, answer, assessment):
+                    return _build_structured_support_answer(question, assessment)
+                return answer
             except Exception:
                 logger.exception("Two-phase generation failed, falling back")
+        if _has_structured_support_for_query(question, assessment.support_pack):
+            return _build_structured_support_answer(question, assessment)
         if assessment.partial_only:
             return _build_limited_answer(question, assessment)
         return _build_supported_answer(assessment)
@@ -367,7 +384,8 @@ class QwenChatGenerator:
                 refusal_reason="empty_support_refuse",
             )
 
-        top_chunks = chunks[:5]
+        support_profile = _build_support_profile(question, analysis)
+        top_chunks, support_selection_debug = _select_support_chunks(chunks, support_profile, limit=5)
         top_scores = [_normalize_score(max(chunk.rerank_score, chunk.vector_score, chunk.fusion_score)) for chunk in top_chunks]
         score_strength = sum(top_scores) / len(top_scores)
         unique_doc_count = len({chunk.doc_id for chunk in top_chunks})
@@ -445,7 +463,7 @@ class QwenChatGenerator:
             fallback_method = "extractive_keyword_entity_parent_score"
             evidence_units = _extract_evidence_units(question, top_chunks, analysis, self.round8_config)
             supported_claim_count = len(evidence_units)
-            support_pack = build_support_pack(top_chunks, evidence_units, top_chunks)
+            support_pack = build_support_pack(question, top_chunks, evidence_units, top_chunks, analysis)
             if (
                 citation_count > 0
                 and _claim_fallback_satisfies_route(supported_claim_count, analysis)
@@ -460,7 +478,13 @@ class QwenChatGenerator:
                 refusal_reason = "fallback_without_citable_support"
                 fallback_guardrail_failed = True
         if not support_pack:
-            support_pack = build_support_pack(top_chunks, evidence_units, top_chunks)
+            support_pack = build_support_pack(question, top_chunks, evidence_units, top_chunks, analysis)
+
+        if _should_refuse_for_missing_structured_reference(support_profile, top_chunks, support_pack):
+            should_refuse = True
+            partial_only = False
+            reason = _structured_reference_refusal_reason(support_profile)
+            refusal_reason = "missing_structured_reference"
 
         empty_support_pack_guardrail_triggered = False
         if not support_pack:
@@ -528,6 +552,7 @@ class QwenChatGenerator:
         citation_budget = _citation_budget_for_intent(intent)
         support_pack_doc_ids = _unique_str_values(item.get("doc_id") for item in support_pack)
         support_pack_chunk_ids = _unique_str_values(item.get("chunk_id") for item in support_pack)
+        prompt_support_context = _build_support_context(support_pack)
 
         final_answer_mode = _final_answer_mode(
             should_refuse,
@@ -579,6 +604,8 @@ class QwenChatGenerator:
             branch_citable_quote_counts=branch_citable_quote_counts,
             citation_budget=citation_budget,
             citation_count_before_budget=len(support_pack),
+            support_selection_debug=support_selection_debug,
+            prompt_support_context=prompt_support_context,
         )
 
     # ------------------------------------------------------------------
@@ -933,11 +960,285 @@ def _branch_match_score(label: str, text: str) -> float:
     return max(entity_overlap, term_overlap)
 
 
+def _build_support_profile(
+    question: str,
+    analysis: QueryAnalysis | None,
+) -> dict[str, Any]:
+    lowered = _normalize_text_for_terms(question)
+    kind = "body"
+    if any(token in lowered for token in ("table", "primer", "sequence", "strain", "vmax", "km", "relative peak area", "glycan", "parameter")):
+        kind = "table"
+    elif any(token in lowered for token in ("figure", "fig.", "fig ")):
+        kind = "figure"
+    if analysis and analysis.intent == QueryIntent.COMPARISON:
+        kind = "body"
+
+    doc_match = DOC_ID_RE.search(question)
+    reference_match = re.search(r"\b(table|fig(?:ure)?)\s*([a-z]?\d+)\b", lowered)
+    anchors = sorted(_anchor_terms(question) | _entity_terms(question))
+    return {
+        "kind": kind,
+        "doc_id": doc_match.group(0).replace("-", "_").lower() if doc_match else "",
+        "reference_label": f"{reference_match.group(1)} {reference_match.group(2)}" if reference_match else "",
+        "anchors": anchors,
+        "question_text": lowered,
+    }
+
+
+def _infer_block_types(text: str) -> list[str]:
+    lowered = _normalize_text_for_terms(text)
+    block_types: list[str] = []
+    if "[table text]" in lowered:
+        block_types.append("table_text")
+    if "[table caption]" in lowered:
+        block_types.append("table_caption")
+    if "[figure caption]" in lowered:
+        block_types.append("figure_caption")
+    if not block_types and "references" in lowered[:80]:
+        block_types.append("references")
+    return block_types
+
+
+def _reference_label_matches(profile: dict[str, Any], text: str) -> bool:
+    label = str(profile.get("reference_label") or "")
+    if not label:
+        return False
+    normalized = _normalize_text_for_terms(text)
+    label = label.replace("figure", "fig").strip()
+    if label in normalized:
+        return True
+    if label.startswith("table ") and label.replace("table ", "table") in normalized:
+        return True
+    if label.startswith("fig ") and (label in normalized or label.replace("fig ", "figure ") in normalized):
+        return True
+    return False
+
+
+def _anchor_coverage(profile: dict[str, Any], text: str) -> float:
+    anchors = [anchor for anchor in profile.get("anchors", []) if len(anchor) >= 2]
+    if not anchors:
+        return 0.0
+    normalized = _normalize_text_for_terms(text)
+    matched = sum(1 for anchor in anchors if anchor in normalized)
+    return matched / max(len(anchors), 1)
+
+
+def _marker_compatibility(profile: dict[str, Any], block_types: list[str], text: str) -> float:
+    kinds = set(block_types or _infer_block_types(text))
+    kind = profile.get("kind")
+    if kind == "table":
+        score = 0.0
+        if "table_text" in kinds:
+            score += 0.45
+        if "table_caption" in kinds:
+            score += 0.30
+        return min(score, 0.8)
+    if kind == "figure":
+        return 0.75 if "figure_caption" in kinds else 0.0
+    return 0.0
+
+
+def _support_item_score(
+    profile: dict[str, Any],
+    text: str,
+    doc_id: str,
+    base_score: float,
+) -> float:
+    normalized = _normalize_score(base_score)
+    block_types = _infer_block_types(text)
+    anchor_score = _anchor_coverage(profile, text)
+    marker_score = _marker_compatibility(profile, block_types, text)
+    reference_score = 0.45 if _reference_label_matches(profile, text) else 0.0
+    doc_score = 0.18 if profile.get("doc_id") and profile.get("doc_id") == (doc_id or "").lower() else 0.0
+    structure_bonus = 0.0
+    normalized_text = _normalize_text_for_terms(text)
+    question_text = str(profile.get("question_text") or "")
+    if profile.get("kind") == "table":
+        if any(term in question_text for term in ("primer", "sequence")) and re.search(r"\b[acgt]{16,}\b", normalized_text):
+            structure_bonus += 0.9
+        if "strain" in question_text and len(re.findall(r"\bpp[a-z0-9]{3,}\b", normalized_text)) >= 3:
+            structure_bonus += 0.7
+        if any(term in question_text for term in ("vmax", "km", "relative peak area")) and len(re.findall(r"\b\d+(?:\.\d+)?\b", normalized_text)) >= 2:
+            structure_bonus += 0.4
+    return normalized + anchor_score + marker_score + reference_score + doc_score + structure_bonus
+
+
+def _select_support_chunks(
+    chunks: list[RetrievedChunk],
+    profile: dict[str, Any],
+    limit: int = 5,
+) -> tuple[list[RetrievedChunk], list[dict[str, Any]]]:
+    explicit_doc_id = str(profile.get("doc_id") or "")
+    working_chunks = chunks
+    if explicit_doc_id:
+        doc_matched = [chunk for chunk in chunks if (chunk.doc_id or "").lower() == explicit_doc_id]
+        if doc_matched:
+            working_chunks = doc_matched
+    scored: list[tuple[float, RetrievedChunk, dict[str, Any]]] = []
+    for index, chunk in enumerate(working_chunks):
+        base_score = _normalize_score(max(chunk.rerank_score, chunk.vector_score, chunk.fusion_score))
+        block_types = list(chunk.metadata.get("block_types") or []) or _infer_block_types(chunk.text)
+        anchor_score = _anchor_coverage(profile, " ".join([chunk.title, chunk.section, chunk.text]))
+        marker_score = _marker_compatibility(profile, block_types, chunk.text)
+        reference_score = 0.45 if _reference_label_matches(profile, " ".join([chunk.title, chunk.section, chunk.text])) else 0.0
+        doc_score = 0.18 if profile.get("doc_id") and profile.get("doc_id") == (chunk.doc_id or "").lower() else 0.0
+        final_score = base_score + anchor_score + marker_score + reference_score + doc_score - (index * 1e-6)
+        scored.append(
+            (
+                final_score,
+                chunk,
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "base_score": round(base_score, 4),
+                    "anchor_score": round(anchor_score, 4),
+                    "marker_score": round(marker_score, 4),
+                    "reference_score": round(reference_score, 4),
+                    "doc_score": round(doc_score, 4),
+                    "final_score": round(final_score, 4),
+                    "block_types": block_types,
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [chunk for _score, chunk, _debug in scored[:limit]]
+    debug_rows = [debug for _score, _chunk, debug in scored[:max(limit, 8)]]
+    return selected, debug_rows
+
+
+def _should_refuse_for_missing_structured_reference(
+    profile: dict[str, Any],
+    top_chunks: list[RetrievedChunk],
+    support_pack: list[dict[str, Any]],
+) -> bool:
+    if profile.get("kind") not in {"table", "figure"}:
+        return False
+    reference_label = str(profile.get("reference_label") or "")
+    if not reference_label:
+        return False
+    candidates = support_pack or [
+        {
+            "quote": chunk.text,
+            "doc_id": chunk.doc_id,
+            "block_types": _infer_block_types(chunk.text),
+        }
+        for chunk in top_chunks
+    ]
+    for item in candidates:
+        text = " ".join([str(item.get("quote") or ""), str(item.get("section") or ""), str(item.get("title") or "")])
+        block_types = list(item.get("block_types") or _infer_block_types(text))
+        if _reference_label_matches(profile, text) and _marker_compatibility(profile, block_types, text) > 0.0:
+            return False
+    return True
+
+
+def _structured_reference_refusal_reason(profile: dict[str, Any]) -> str:
+    label = str(profile.get("reference_label") or "").strip()
+    if profile.get("kind") == "table":
+        return f"当前检索证据中没有稳定匹配 {label or '目标表格'} 的表格正文，无法确定具体字段或数值。"
+    if profile.get("kind") == "figure":
+        return f"当前检索证据中没有稳定匹配 {label or '目标图注'} 的图注正文，无法可靠描述其内容。"
+    return _NO_EVIDENCE_REFUSAL
+
+
+def _has_structured_support_for_query(question: str, support_pack: list[dict[str, Any]]) -> bool:
+    profile = _build_support_profile(question, None)
+    if profile.get("kind") not in {"table", "figure"}:
+        return False
+    for item in support_pack:
+        text = " ".join([str(item.get("quote") or ""), str(item.get("section") or ""), str(item.get("title") or "")])
+        block_types = list(item.get("block_types") or _infer_block_types(text))
+        if _marker_compatibility(profile, block_types, text) <= 0.0:
+            continue
+        if profile.get("doc_id") and profile.get("doc_id") != str(item.get("doc_id") or "").lower():
+            continue
+        if profile.get("reference_label") and not _reference_label_matches(profile, text):
+            continue
+        if _anchor_coverage(profile, text) < 0.18:
+            continue
+        return True
+    return False
+
+
+def _looks_like_generation_refusal(answer: str) -> bool:
+    lowered = (answer or "").strip().lower()
+    return any(term.lower() in lowered for term in ("证据不足", "无法可靠作答", "无法提供", "未覆盖", "insufficient", "unable to answer"))
+
+
+def _answer_anchor_coverage(question: str, answer: str) -> float:
+    profile = _build_support_profile(question, None)
+    return _anchor_coverage(profile, answer)
+
+
+def _should_prefer_structured_answer(question: str, answer: str, assessment: EvidenceAssessment) -> bool:
+    profile = _build_support_profile(question, None)
+    if profile.get("kind") not in {"table", "figure"}:
+        return False
+    if not _has_structured_support_for_query(question, assessment.support_pack):
+        return False
+    if _looks_like_generation_refusal(answer):
+        return True
+    answer_cov = _answer_anchor_coverage(question, answer)
+    best_support_cov = 0.0
+    for item in assessment.support_pack:
+        text = " ".join([str(item.get("quote") or ""), str(item.get("section") or ""), str(item.get("title") or "")])
+        best_support_cov = max(best_support_cov, _anchor_coverage(profile, text))
+    if profile.get("reference_label") and not _reference_label_matches(profile, answer):
+        return True
+    if profile.get("kind") == "table" and best_support_cov >= 0.25 and answer_cov < best_support_cov:
+        return True
+    if best_support_cov >= 0.35 and answer_cov + 0.15 < best_support_cov:
+        return True
+    return False
+
+
+def _build_structured_support_answer(question: str, assessment: EvidenceAssessment) -> str:
+    profile = _build_support_profile(question, None)
+    ranked = sorted(
+        assessment.support_pack,
+        key=lambda item: (
+            float(item.get("support_score") or 0.0),
+            float(item.get("score") or 0.0),
+        ),
+        reverse=True,
+    )
+    selected: list[dict[str, Any]] = []
+    for item in ranked:
+        text = " ".join([str(item.get("quote") or ""), str(item.get("section") or ""), str(item.get("title") or "")])
+        block_types = list(item.get("block_types") or _infer_block_types(text))
+        if _marker_compatibility(profile, block_types, text) <= 0.0:
+            continue
+        if profile.get("doc_id") and profile.get("doc_id") != str(item.get("doc_id") or "").lower():
+            continue
+        if profile.get("reference_label") and not _reference_label_matches(profile, text):
+            continue
+        selected.append(item)
+        if len(selected) >= 2:
+            break
+    if not selected:
+        return _build_refusal_answer(assessment)
+
+    if profile.get("kind") == "figure":
+        lead = f"根据已检索到的 {profile.get('reference_label') or '图注'} 证据，"
+    else:
+        lead = f"根据已检索到的 {profile.get('reference_label') or '表格'} 证据，"
+    snippets = []
+    for index, item in enumerate(selected, start=1):
+        snippets.append(f"{_compress_text(str(item.get('quote') or ''), 260)}[{index}]")
+    answer = lead + "；".join(snippets) + "。"
+    if assessment.reason and "没有稳定匹配" in assessment.reason:
+        return _build_refusal_answer(assessment)
+    return answer
+
+
 def build_support_pack(
+    question: str,
     top_contexts: list[RetrievedChunk],
     evidence_units: list[dict[str, Any]],
     citation_candidates: list[RetrievedChunk],
+    analysis: QueryAnalysis | None = None,
 ) -> list[dict[str, Any]]:
+    support_profile = _build_support_profile(question, analysis)
     chunk_map = {chunk.chunk_id: chunk for chunk in citation_candidates}
     support_pack: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -965,11 +1266,14 @@ def build_support_pack(
                 "page_end": chunk.page_end if chunk else None,
                 "support_type": "evidence_unit",
                 "branch_labels": _support_branch_labels(str(unit.get("text") or quote)),
+                "block_types": _infer_block_types(quote),
+                "support_score": _support_item_score(support_profile, quote, chunk.doc_id if chunk else str(unit.get("doc_id") or ""), float(unit.get("score") or 0.0)),
             }
         )
 
     for chunk in top_contexts[:5]:
-        quote = _compress_text(chunk.text, limit=1200)
+        quote_limit = 2000 if set(_infer_block_types(chunk.text)) & {"table_text", "table_caption", "figure_caption"} else 1200
+        quote = _compress_text(chunk.text, limit=quote_limit)
         key = (chunk.chunk_id, re.sub(r"\s+", " ", quote))
         if not quote or not chunk.doc_id or not chunk.source_file or key in seen_keys:
             continue
@@ -987,10 +1291,23 @@ def build_support_pack(
                 "page_end": chunk.page_end,
                 "support_type": "retrieved_chunk",
                 "branch_labels": _support_branch_labels(chunk.text),
+                "block_types": _infer_block_types(chunk.text) or list(chunk.metadata.get("block_types") or []),
+                "support_score": _support_item_score(
+                    support_profile,
+                    chunk.text,
+                    chunk.doc_id,
+                    _normalize_score(max(chunk.rerank_score, chunk.vector_score, chunk.fusion_score)),
+                ),
             }
         )
 
-    support_pack.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    support_pack.sort(
+        key=lambda item: (
+            float(item.get("support_score") or 0.0),
+            float(item.get("score") or 0.0),
+        ),
+        reverse=True,
+    )
     return support_pack
 
 
@@ -1000,10 +1317,19 @@ def _build_support_context(support_pack: list[dict[str, Any]]) -> str:
         title = str(item.get("title") or item.get("doc_id") or "文献")
         section = str(item.get("section") or "Full Text")
         source_file = str(item.get("source_file") or "")
+        chunk_id = str(item.get("chunk_id") or "")
+        doc_id = str(item.get("doc_id") or "")
+        block_types = ",".join(str(value) for value in (item.get("block_types") or []) if value)
+        pages = ""
+        if item.get("page_start") is not None:
+            pages = f" | pages={item.get('page_start')}-{item.get('page_end')}"
         quote = str(item.get("quote") or "").strip()
         if not quote:
             continue
-        lines.append(f"[{index}] {title} | {section} | {source_file}\n{quote}")
+        lines.append(
+            f"[{index}] {title} | {section} | {source_file} | doc_id={doc_id} | chunk_id={chunk_id}"
+            f"{pages} | block_types={block_types or 'unknown'}\n{quote}"
+        )
     return "\n\n".join(lines)
 
 

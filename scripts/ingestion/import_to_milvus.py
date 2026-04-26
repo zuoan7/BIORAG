@@ -47,7 +47,7 @@ from pymilvus import (
     FieldSchema,
 )
 
-
+DEFAULT_BGE_EMBED_MAX_LENGTH = 2048
 # ============================================================
 # Embedding 接口
 # ============================================================
@@ -97,25 +97,44 @@ class BGEEmbedder(BaseEmbedder):
         model_path: str,
         dim: int = 1024,
         use_fp16: bool = True,
-        max_length: int = 8192,
+        max_length: int = DEFAULT_BGE_EMBED_MAX_LENGTH,
     ):
         super().__init__(dim)
         from FlagEmbedding import BGEM3FlagModel
         self.model = BGEM3FlagModel(model_path, use_fp16=use_fp16)
+        self.tokenizer = getattr(self.model, "tokenizer", None)
         self.max_length = max_length
         print(f"  BGE-M3 embed max_length={self.max_length}")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        # 检测可能被截断的长文本并发出警告
-        for i, t in enumerate(texts):
-            # 粗略估算：1 token ≈ 1.5 个字符（中英混合）
-            est_tokens = len(t) / 1.5
-            if est_tokens > self.max_length:
-                logger.warning(
-                    "文本 #%d 估算 %.0f tokens > max_length=%d，"
-                    "超出部分将被模型静默截断",
-                    i, est_tokens, self.max_length,
+        # 使用真实 BGE tokenizer 检查是否会超过 max_length。
+        # 注意：这里的 i 是当前 encode batch 内的 index，不是全局 chunk index。
+        if self.tokenizer is not None:
+            encoded = self.tokenizer(
+                texts,
+                add_special_tokens=True,
+                truncation=False,
+                padding=False,
+            )
+            token_lengths = [len(input_ids) for input_ids in encoded["input_ids"]]
+            over_limit = [
+                (i, n) for i, n in enumerate(token_lengths)
+                if n > self.max_length
+            ]
+
+            if over_limit:
+                examples = ", ".join(
+                    f"#{i}:{n}" for i, n in over_limit[:10]
                 )
+                logger.warning(
+                    "本批次 %d/%d 条文本实际 tokenizer tokens > max_length=%d，"
+                    "超出部分将被模型截断。示例: %s",
+                    len(over_limit),
+                    len(texts),
+                    self.max_length,
+                    examples,
+                )
+
         output = self.model.encode(texts, batch_size=32, max_length=self.max_length)
         dense = output["dense_vecs"]
         return [vec.tolist() for vec in dense]
@@ -125,7 +144,7 @@ def create_embedder(
     embedding_type: str,
     model_path: Optional[str] = None,
     dim: int = 1024,
-    embed_max_length: int = 8192,
+    embed_max_length: int = DEFAULT_BGE_EMBED_MAX_LENGTH,
 ) -> BaseEmbedder:
     if embedding_type == "mock":
         return MockEmbedder(dim=dim)
@@ -395,18 +414,18 @@ def main():
     )
     parser.add_argument(
         "--embed-max-length", type=int, default=None,
-        help="BGE embedding 最大 token 长度（默认: 8192，可通过 BGE_EMBED_MAX_LENGTH 环境变量配置）",
+        help="BGE embedding 最大 token 长度（默认: 1024，可通过 BGE_EMBED_MAX_LENGTH 环境变量配置）",
     )
 
     args = parser.parse_args()
 
-    # 解析 embed_max_length: CLI 参数 > 环境变量 > 默认值 8192
+    # 解析 embed_max_length: CLI 参数 > 环境变量 > 默认值 DEFAULT_BGE_EMBED_MAX_LENGTH
     if args.embed_max_length is not None:
         embed_max_length = args.embed_max_length
     elif os.environ.get("BGE_EMBED_MAX_LENGTH"):
         embed_max_length = int(os.environ["BGE_EMBED_MAX_LENGTH"])
     else:
-        embed_max_length = 8192
+        embed_max_length = DEFAULT_BGE_EMBED_MAX_LENGTH
 
     jsonl_path = Path(args.jsonl).resolve()
     if not jsonl_path.exists():

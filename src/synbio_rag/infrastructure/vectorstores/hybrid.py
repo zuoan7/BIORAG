@@ -35,6 +35,8 @@ _ROUTE_TERM_ALIASES: dict[str, tuple[str, ...]] = {
     "6′-sl": ("cmp-neu5ac", "sialyltransferase", "alpha-2,6-sialyltransferase", "lactose", "biosynthesis"),
     "6'-sl": ("cmp-neu5ac", "sialyltransferase", "alpha-2,6-sialyltransferase", "lactose", "biosynthesis"),
 }
+_TABLE_QUERY_HINTS = ("table", "primer", "sequence", "strain", "vmax", "km", "relative peak area", "glycan", "parameter")
+_FIGURE_QUERY_HINTS = ("figure", "fig.", "fig ", "图")
 
 
 class HybridRetriever:
@@ -116,6 +118,7 @@ class HybridRetriever:
             rrf_k=self.config.rrf_k,
         )
         boosted = _apply_title_keyword_boost(fused, question, self.config)
+        boosted = _apply_structure_marker_boost(boosted, question, self.config)
         diversified = _apply_comparison_diversity(boosted, limit, analysis, self.config)
         self.last_debug["rrf_hits"] = _serialize_hits(diversified[:5], "fusion_score")
         return diversified
@@ -332,6 +335,42 @@ def _apply_title_keyword_boost(
             elif matched_groups >= 2:
                 boost += config.title_keyword_boost * 0.35
             chunk.fusion_score += max(boost, 0.0)
+        boosted.append(chunk)
+    boosted.sort(
+        key=lambda item: (
+            item.fusion_score,
+            item.vector_score > 0.0,
+            item.vector_score,
+            item.bm25_score,
+        ),
+        reverse=True,
+    )
+    return boosted
+
+
+def _apply_structure_marker_boost(
+    chunks: list[RetrievedChunk],
+    question: str,
+    config: RetrievalConfig,
+) -> list[RetrievedChunk]:
+    lowered_question = question.lower()
+    wants_table = any(hint in lowered_question for hint in _TABLE_QUERY_HINTS)
+    wants_figure = any(hint in lowered_question for hint in _FIGURE_QUERY_HINTS)
+    if not wants_table and not wants_figure:
+        return chunks[:]
+    boosted: list[RetrievedChunk] = []
+    for chunk in chunks:
+        text = (chunk.text or "").lower()
+        boost = 0.0
+        if wants_table:
+            if "[table text]" in text:
+                boost += config.table_text_boost
+            if "[table caption]" in text:
+                boost += config.table_caption_boost
+        if wants_figure and "[figure caption]" in text:
+            boost += config.figure_caption_boost
+        if boost:
+            chunk.fusion_score += boost
         boosted.append(chunk)
     boosted.sort(
         key=lambda item: (

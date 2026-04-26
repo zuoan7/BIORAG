@@ -237,7 +237,7 @@ def test_empty_support_pack_triggers_refusal_guardrail(monkeypatch) -> None:
             disable_comparison_single_doc_hard_refusal=True,
         )
     )
-    monkeypatch.setattr(generation_service, "build_support_pack", lambda top_contexts, evidence_units, citation_candidates: [])
+    monkeypatch.setattr(generation_service, "build_support_pack", lambda *args, **kwargs: [])
 
     assessment = generator.assess_evidence(
         "解释 engineered E. coli 优化条件下的产量变化。",

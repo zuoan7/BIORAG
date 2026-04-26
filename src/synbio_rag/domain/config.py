@@ -35,6 +35,7 @@ class RetrievalConfig:
     bm25_limit: int = 40
     rerank_top_k: int = 10
     final_top_k: int = 8
+    rerank_mode: str = "plain"
     metric_type: str = "COSINE"
     ef: int = 64
     score_floor: float = 0.05
@@ -50,8 +51,19 @@ class RetrievalConfig:
     comparison_max_chunks_per_doc: int = 1
     comparison_rerank_max_chunks_per_doc: int = 1
     title_keyword_boost: float = 0.08
+    table_text_boost: float = 0.10
+    table_caption_boost: float = 0.06
+    figure_caption_boost: float = 0.08
     rerank_subquery_aggregate_alpha: float = 0.15
     rerank_strategy_bonus: float = 0.1
+    guarded_hybrid_weight: float = 0.45
+    guarded_reranker_weight: float = 0.15
+    guarded_keyword_weight: float = 0.25
+    guarded_marker_weight: float = 0.10
+    guarded_doc_weight: float = 0.05
+    guarded_incomplete_penalty: float = 0.18
+    guarded_rank1_min_completeness_gain: float = 0.18
+    guarded_rank1_max_score_gap: float = 0.20
     evidence_numeric_bonus: float = 0.20
     evidence_result_bonus: float = 0.22
     evidence_definition_bonus: float = 0.06
@@ -171,6 +183,16 @@ class Settings:
         settings.retrieval.score_floor = float(
             get_value("RETRIEVAL_SCORE_FLOOR", str(settings.retrieval.score_floor))
         )
+        settings.retrieval.rerank_mode = get_value(
+            "BIORAG_RERANK_MODE",
+            get_value("RETRIEVAL_RERANK_MODE", settings.retrieval.rerank_mode),
+        ).strip().lower()
+        settings.retrieval.hybrid_enabled = _parse_bool(
+            get_value("RETRIEVAL_HYBRID_ENABLED", str(settings.retrieval.hybrid_enabled))
+        )
+        settings.retrieval.bm25_enabled = _parse_bool(
+            get_value("RETRIEVAL_BM25_ENABLED", str(settings.retrieval.bm25_enabled))
+        )
         settings.retrieval.dense_rrf_weight = float(
             get_value("RETRIEVAL_DENSE_RRF_WEIGHT", str(settings.retrieval.dense_rrf_weight))
         )
@@ -210,6 +232,15 @@ class Settings:
                 str(settings.retrieval.title_keyword_boost),
             )
         )
+        settings.retrieval.table_text_boost = float(
+            get_value("RETRIEVAL_TABLE_TEXT_BOOST", str(settings.retrieval.table_text_boost))
+        )
+        settings.retrieval.table_caption_boost = float(
+            get_value("RETRIEVAL_TABLE_CAPTION_BOOST", str(settings.retrieval.table_caption_boost))
+        )
+        settings.retrieval.figure_caption_boost = float(
+            get_value("RETRIEVAL_FIGURE_CAPTION_BOOST", str(settings.retrieval.figure_caption_boost))
+        )
         settings.retrieval.rerank_subquery_aggregate_alpha = float(
             get_value(
                 "RETRIEVAL_RERANK_SUBQUERY_AGGREGATE_ALPHA",
@@ -220,6 +251,39 @@ class Settings:
             get_value(
                 "RETRIEVAL_RERANK_STRATEGY_BONUS",
                 str(settings.retrieval.rerank_strategy_bonus),
+            )
+        )
+        settings.retrieval.guarded_hybrid_weight = float(
+            get_value("RETRIEVAL_GUARDED_HYBRID_WEIGHT", str(settings.retrieval.guarded_hybrid_weight))
+        )
+        settings.retrieval.guarded_reranker_weight = float(
+            get_value("RETRIEVAL_GUARDED_RERANKER_WEIGHT", str(settings.retrieval.guarded_reranker_weight))
+        )
+        settings.retrieval.guarded_keyword_weight = float(
+            get_value("RETRIEVAL_GUARDED_KEYWORD_WEIGHT", str(settings.retrieval.guarded_keyword_weight))
+        )
+        settings.retrieval.guarded_marker_weight = float(
+            get_value("RETRIEVAL_GUARDED_MARKER_WEIGHT", str(settings.retrieval.guarded_marker_weight))
+        )
+        settings.retrieval.guarded_doc_weight = float(
+            get_value("RETRIEVAL_GUARDED_DOC_WEIGHT", str(settings.retrieval.guarded_doc_weight))
+        )
+        settings.retrieval.guarded_incomplete_penalty = float(
+            get_value(
+                "RETRIEVAL_GUARDED_INCOMPLETE_PENALTY",
+                str(settings.retrieval.guarded_incomplete_penalty),
+            )
+        )
+        settings.retrieval.guarded_rank1_min_completeness_gain = float(
+            get_value(
+                "RETRIEVAL_GUARDED_RANK1_MIN_COMPLETENESS_GAIN",
+                str(settings.retrieval.guarded_rank1_min_completeness_gain),
+            )
+        )
+        settings.retrieval.guarded_rank1_max_score_gap = float(
+            get_value(
+                "RETRIEVAL_GUARDED_RANK1_MAX_SCORE_GAP",
+                str(settings.retrieval.guarded_rank1_max_score_gap),
             )
         )
         settings.retrieval.search_limit = int(

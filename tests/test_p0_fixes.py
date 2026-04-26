@@ -7,7 +7,10 @@ P0 修复的单元测试：
   P0-3: block-based chunking 优先路径
 """
 from __future__ import annotations
-
+from scripts.ingestion.import_to_milvus import (
+    BGEEmbedder,
+    DEFAULT_BGE_EMBED_MAX_LENGTH,
+)
 import json
 import os
 import sys
@@ -495,7 +498,7 @@ class TestEmbedMaxLength:
         sig = inspect.signature(BGEEmbedder.__init__)
         max_length_param = sig.parameters.get("max_length")
         assert max_length_param is not None
-        assert max_length_param.default == 8192
+        assert max_length_param.default ==  DEFAULT_BGE_EMBED_MAX_LENGTH
 
     def test_env_var_override(self):
         """BGE_EMBED_MAX_LENGTH 环境变量应被读取。"""
