@@ -31,10 +31,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from pymilvus import (
     MilvusClient,
@@ -88,13 +92,31 @@ class BGEEmbedder(BaseEmbedder):
     依赖: pip install FlagEmbedding
     """
 
-    def __init__(self, model_path: str, dim: int = 1024, use_fp16: bool = True):
+    def __init__(
+        self,
+        model_path: str,
+        dim: int = 1024,
+        use_fp16: bool = True,
+        max_length: int = 8192,
+    ):
         super().__init__(dim)
         from FlagEmbedding import BGEM3FlagModel
         self.model = BGEM3FlagModel(model_path, use_fp16=use_fp16)
+        self.max_length = max_length
+        print(f"  BGE-M3 embed max_length={self.max_length}")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        output = self.model.encode(texts, batch_size=32, max_length=512)
+        # 检测可能被截断的长文本并发出警告
+        for i, t in enumerate(texts):
+            # 粗略估算：1 token ≈ 1.5 个字符（中英混合）
+            est_tokens = len(t) / 1.5
+            if est_tokens > self.max_length:
+                logger.warning(
+                    "文本 #%d 估算 %.0f tokens > max_length=%d，"
+                    "超出部分将被模型静默截断",
+                    i, est_tokens, self.max_length,
+                )
+        output = self.model.encode(texts, batch_size=32, max_length=self.max_length)
         dense = output["dense_vecs"]
         return [vec.tolist() for vec in dense]
 
@@ -103,13 +125,14 @@ def create_embedder(
     embedding_type: str,
     model_path: Optional[str] = None,
     dim: int = 1024,
+    embed_max_length: int = 8192,
 ) -> BaseEmbedder:
     if embedding_type == "mock":
         return MockEmbedder(dim=dim)
     elif embedding_type == "bge-m3":
         if not model_path:
             raise ValueError("使用 bge-m3 embedding 必须指定 --model_path")
-        return BGEEmbedder(model_path=model_path, dim=dim)
+        return BGEEmbedder(model_path=model_path, dim=dim, max_length=embed_max_length)
     else:
         raise ValueError(f"不支持的 embedding 类型: {embedding_type}")
 
@@ -370,8 +393,20 @@ def main():
         "--delete_doc_ids", nargs="*", default=None,
         help="导入前按 doc_id 删除旧数据（支持多个 doc_id）",
     )
+    parser.add_argument(
+        "--embed-max-length", type=int, default=None,
+        help="BGE embedding 最大 token 长度（默认: 8192，可通过 BGE_EMBED_MAX_LENGTH 环境变量配置）",
+    )
 
     args = parser.parse_args()
+
+    # 解析 embed_max_length: CLI 参数 > 环境变量 > 默认值 8192
+    if args.embed_max_length is not None:
+        embed_max_length = args.embed_max_length
+    elif os.environ.get("BGE_EMBED_MAX_LENGTH"):
+        embed_max_length = int(os.environ["BGE_EMBED_MAX_LENGTH"])
+    else:
+        embed_max_length = 8192
 
     jsonl_path = Path(args.jsonl).resolve()
     if not jsonl_path.exists():
@@ -386,6 +421,7 @@ def main():
     print(f"Milvus URI:       {args.milvus_uri}")
     print(f"Embedding:        {args.embedding}")
     print(f"维度:             {args.dim}")
+    print(f"Embed max_length: {embed_max_length}")
     print()
 
     # 1. 读取 JSONL
@@ -403,6 +439,7 @@ def main():
         embedding_type=args.embedding,
         model_path=args.model_path,
         dim=args.dim,
+        embed_max_length=embed_max_length,
     )
     print(f"  Embedder: {type(embedder).__name__}, dim={embedder.dim}")
 

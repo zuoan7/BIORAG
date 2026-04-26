@@ -553,9 +553,12 @@ def process_page_text(
     page_num: int,
     block_index_start: int,
     counters: ProcessingCounters,
-) -> tuple[list[Block], str, bool]:
+    section_path: Optional[list[str]] = None,
+    in_references: bool = False,
+) -> tuple[list[Block], str, list[str], bool]:
     """
-    处理单个页面的文本，返回 (blocks, 清洗后全文, in_references状态)
+    处理单个页面的文本，返回 (blocks, 清洗后全文, section_path, in_references)。
+    section_path 和 in_references 从上一页传入，实现跨页状态连续传递。
     """
     lines = page_text.split("\n")
     # 先合并连续 heading 行
@@ -564,8 +567,9 @@ def process_page_text(
 
     blocks: list[Block] = []
     current_paragraph: list[str] = []
-    section_path: list[str] = []
-    in_references = False
+    if section_path is None:
+        section_path = []
+    # in_references 由参数传入，不再重新初始化
     block_idx = block_index_start
 
     def flush_paragraph():
@@ -792,7 +796,7 @@ def process_page_text(
     # 重建清洗后的页面文本
     cleaned_text = rebuild_page_text(blocks)
 
-    return blocks, cleaned_text, in_references
+    return blocks, cleaned_text, section_path, in_references
 
 
 def rebuild_page_text(blocks: list[Block]) -> str:
@@ -847,6 +851,7 @@ def process_document(
     all_blocks: list[Block] = []
     global_block_idx = 0
     in_references = False
+    section_path: list[str] = []
 
     for page_data in raw_pages:
         page_num = page_data.get("page", 0)
@@ -867,13 +872,37 @@ def process_document(
                 text = raw_block.get("text", "")
                 text, fix_count = fix_broken_words(text)
                 counters.fixed_broken_words += fix_count
+                # 跨页状态传递：更新 section_path 和 in_references
+                block_type = raw_block.get("type", "paragraph")
+                raw_section_path = raw_block.get("section_path", [])
+                if block_type == "section_heading":
+                    heading_text = text.lstrip("#").strip()
+                    section_path = [heading_text]
+                    if REFERENCES_HEADING_PATTERN.match(heading_text):
+                        in_references = True
+                elif block_type == "subsection_heading":
+                    heading_text = text.lstrip("#").strip()
+                    if len(section_path) > 0:
+                        if len(section_path) > 1 and SUBSECTION_NUMBER_PATTERN.match(section_path[-1]):
+                            section_path[-1] = heading_text
+                        else:
+                            section_path.append(heading_text)
+                    else:
+                        section_path = [heading_text]
+                elif block_type == "title":
+                    section_path = [text.lstrip("#").strip()]
+
                 block = Block(
                     block_id=raw_block.get("block_id", f"p{page_num}_b{global_block_idx:04d}"),
-                    type=raw_block.get("type", "paragraph"),
+                    type=block_type,
                     text=text,
-                    section_path=raw_block.get("section_path", []),
+                    section_path=list(section_path),
                     page=page_num,
                 )
+                # 覆盖 references 类型判断：如果文档已在 references 状态
+                if in_references and block_type == "paragraph":
+                    block.type = "references"
+                    counters.detected_references_blocks += 1
                 blocks.append(block)
                 global_block_idx += 1
             clean_text = rebuild_page_text(blocks)
@@ -885,9 +914,10 @@ def process_document(
             all_blocks.extend(blocks)
             continue
 
-        # 处理页面文本
-        blocks, cleaned_text, in_references = process_page_text(
-            page_text, page_num, global_block_idx, counters
+        # 处理页面文本（无 blocks 路径）
+        blocks, cleaned_text, section_path, in_references = process_page_text(
+            page_text, page_num, global_block_idx, counters,
+            section_path=section_path, in_references=in_references,
         )
         global_block_idx += len(blocks)
 

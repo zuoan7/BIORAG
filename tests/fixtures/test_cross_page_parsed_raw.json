@@ -1,0 +1,23 @@
+{
+  "doc_id": "test_cross_page",
+  "source_file": "test_cross_page.pdf",
+  "total_pages": 4,
+  "pages": [
+    {
+      "page": 1,
+      "text": "# Effects of Probiotics on Gut Microbiome\n\n## 1. Results\nThe initial analysis revealed significant changes in the gut microbiome composition after probiotic supplementation. We observed a marked increase in Bifidobacterium populations, which is consistent with previous studies on probiotic efficacy."
+    },
+    {
+      "page": 2,
+      "text": "Further analysis showed that the diversity of the microbiome increased substantially. The Shannon diversity index rose from 3.2 to 4.1 (p < 0.01). These findings suggest that probiotic supplementation promotes a more diverse gut ecosystem."
+    },
+    {
+      "page": 3,
+      "text": "## 2. References\n1. Smith J, et al. Probiotic effects on gut health. Nature. 2023;456:123-130.\n2. Wang L, et al. Microbiome diversity analysis methods. Science. 2022;789:456-465."
+    },
+    {
+      "page": 4,
+      "text": "3. Johnson K, et al. Clinical trials of probiotic supplements. Cell. 2021;345:678-689.\n4. Lee S, et al. Bifidobacterium and human health. PNAS. 2020;567:234-245.\n5. Brown A, et al. Fermentation technologies for probiotics. Biotechnol Adv. 2019;234:567-578."
+    }
+  ]
+}

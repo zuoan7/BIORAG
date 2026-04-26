@@ -131,6 +131,8 @@ class Chunk:
     text: str
     retrieval_text: str
     quality_score: float
+    section_path: list[str] = field(default_factory=list)
+    block_types: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -609,6 +611,277 @@ def _estimate_page_range(
 
 
 # ============================================================
+# Block-based chunking（优先路径，基于 parsed_clean 的 blocks）
+# ============================================================
+
+def chunk_by_blocks(
+    pages: list[dict],
+    doc_id: str,
+    source_file: str,
+    chunk_size: int = 800,
+    chunk_overlap: int = 120,
+    skip_references: bool = True,
+) -> list[Chunk]:
+    """
+    基于 pages[].blocks 的结构化分块。
+    按 section_path 聚合相邻 paragraph block，遇 section/subsection heading
+    开启新 section 上下文。figure/table caption 进入 chunk 并在 metadata 中标记。
+    页码由 block.page 最小/最大值计算，不再通过字符偏移估算。
+    """
+    # 按文档顺序收集所有有效 block
+    all_blocks: list[dict] = []
+    doc_title = ""
+    for p in pages:
+        page_num = p.get("page", 1)
+        for block in p.get("blocks", []):
+            btype = block.get("type", "paragraph")
+            btext = block.get("text", "").strip()
+            if not btext:
+                continue
+            if btype == "noise":
+                continue
+            if btype == "title" and not doc_title:
+                doc_title = btext.lstrip("#").strip()
+            # references 处理：跳过或保留
+            if btype == "references" and skip_references:
+                continue
+            # 跳过 References section heading 本身
+            if btype == "section_heading" and skip_references:
+                heading_text = btext.lstrip("#").strip()
+                if REFERENCE_SECTION_PATTERN.match(heading_text):
+                    continue
+            all_blocks.append({
+                "type": btype,
+                "text": btext,
+                "section_path": block.get("section_path", []),
+                "page": page_num,
+            })
+
+    if not all_blocks:
+        return []
+
+    # 按 section 聚合 blocks
+    # 每个 section group 包含同一 section 下的连续 paragraph/caption blocks
+    section_groups: list[dict] = []  # [{section, section_path, blocks: [{type, text, page}]}]
+
+    current_section = ""
+    current_section_path: list[str] = []
+    current_blocks: list[dict] = []
+
+    for block in all_blocks:
+        btype = block["type"]
+        btext = block["text"]
+        bsection_path = block.get("section_path", [])
+        bpage = block.get("page", 1)
+
+        if btype in ("section_heading", "subsection_heading"):
+            # 保存当前 section group
+            if current_blocks:
+                section_groups.append({
+                    "section": current_section,
+                    "section_path": list(current_section_path),
+                    "blocks": current_blocks,
+                })
+            # 开启新 section
+            heading_text = btext.lstrip("#").strip()
+            if btype == "section_heading":
+                current_section = heading_text
+                current_section_path = [heading_text]
+            else:
+                # subsection: 保留 parent section
+                if current_section_path:
+                    # 替换最后一个 subsection 或追加
+                    if len(current_section_path) > 1:
+                        current_section_path[-1] = heading_text
+                    else:
+                        current_section_path.append(heading_text)
+                else:
+                    current_section_path = [heading_text]
+                current_section = heading_text
+            # heading block 也作为内容进入 chunk（标记 section）
+            current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+            continue
+
+        if btype == "title":
+            # 保存当前 group
+            if current_blocks:
+                section_groups.append({
+                    "section": current_section,
+                    "section_path": list(current_section_path),
+                    "blocks": current_blocks,
+                })
+            current_section = "Title"
+            current_section_path = ["Title"]
+            current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+            continue
+
+        if btype == "references":
+            if skip_references:
+                continue
+            # 如果保留 references，归入当前 section
+
+        # paragraph, figure_caption, table_caption 等
+        current_blocks.append({"type": btype, "text": btext, "page": bpage})
+
+    # 最后一个 section group
+    if current_blocks:
+        section_groups.append({
+            "section": current_section,
+            "section_path": list(current_section_path),
+            "blocks": current_blocks,
+        })
+
+    # 对每个 section group 进行分块
+    all_chunks: list[Chunk] = []
+    chunk_idx = 0
+
+    for sec_group in section_groups:
+        sec_name = sec_group["section"] or "Unknown"
+        sec_path = sec_group["section_path"]
+        sec_blocks = sec_group["blocks"]
+
+        # 将 blocks 按 chunk_size 聚合
+        chunk_block_groups = _aggregate_blocks_into_chunks(
+            sec_blocks, chunk_size, chunk_overlap
+        )
+
+        for group in chunk_block_groups:
+            if not group:
+                continue
+
+            # 构造 chunk 文本
+            chunk_text_parts = []
+            block_types_set = set()
+            pages_in_chunk = []
+
+            for blk in group:
+                btype = blk["type"]
+                btext = blk["text"]
+                block_types_set.add(btype)
+                pages_in_chunk.append(blk["page"])
+
+                if btype == "section_heading":
+                    heading = btext.lstrip("#").strip()
+                    chunk_text_parts.append(f"## {heading}")
+                elif btype == "subsection_heading":
+                    heading = btext.lstrip("#").strip()
+                    chunk_text_parts.append(f"### {heading}")
+                elif btype == "figure_caption":
+                    chunk_text_parts.append(f"[FIGURE CAPTION] {btext}")
+                elif btype == "table_caption":
+                    chunk_text_parts.append(f"[TABLE CAPTION] {btext}")
+                elif btype == "table_text":
+                    chunk_text_parts.append(f"[TABLE] {btext}")
+                elif btype == "title":
+                    chunk_text_parts.append(btext)
+                else:
+                    chunk_text_parts.append(btext)
+
+            chunk_text = "\n\n".join(chunk_text_parts)
+            tc = count_tokens(chunk_text)
+            qs = compute_quality_score(chunk_text)
+
+            page_start = min(pages_in_chunk) if pages_in_chunk else None
+            page_end = max(pages_in_chunk) if pages_in_chunk else None
+
+            chunk_idx += 1
+            chunk_id = f"{doc_id}_sec{len(all_chunks):02d}_chunk{chunk_idx:02d}"
+
+            section_display = sec_name
+            if sec_path and len(sec_path) > 1:
+                section_display = sec_path[0]
+
+            retrieval_text = build_retrieval_text(
+                title=doc_title,
+                section=section_display,
+                source_file=source_file,
+                doc_id=doc_id,
+                chunk_text=chunk_text,
+            )
+
+            all_chunks.append(Chunk(
+                chunk_id=chunk_id,
+                doc_id=doc_id,
+                source_file=source_file,
+                title=doc_title,
+                section=section_display,
+                page_start=page_start,
+                page_end=page_end,
+                chunk_index=chunk_idx,
+                token_count=tc,
+                text=chunk_text,
+                retrieval_text=retrieval_text,
+                quality_score=qs,
+                section_path=list(sec_path),
+                block_types=sorted(block_types_set),
+            ))
+
+    # 重新编号 chunk_index
+    for i, chunk in enumerate(all_chunks, start=1):
+        chunk.chunk_index = i
+
+    return all_chunks
+
+
+def _aggregate_blocks_into_chunks(
+    blocks: list[dict],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[list[dict]]:
+    """
+    将 blocks 聚合成 chunk group 列表，每个 group 的总 token 数不超过 chunk_size。
+    heading block 总是开启新 group（除非前面没有内容）。
+    """
+    if not blocks:
+        return []
+
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+
+    for block in blocks:
+        btype = block["type"]
+        block_tokens = count_tokens(block["text"])
+
+        # heading 开启新 chunk（如果当前 group 有内容）
+        if btype in ("section_heading", "subsection_heading") and current:
+            groups.append(current)
+            overlap_blocks = _get_overlap_blocks(current, chunk_overlap)
+            current = overlap_blocks
+            current_tokens = sum(count_tokens(b["text"]) for b in current)
+
+        # 如果加入当前 block 会超限，且当前 group 有内容
+        if current_tokens + block_tokens > chunk_size and current:
+            groups.append(current)
+            overlap_blocks = _get_overlap_blocks(current, chunk_overlap)
+            current = overlap_blocks
+            current_tokens = sum(count_tokens(b["text"]) for b in current)
+
+        current.append(block)
+        current_tokens += block_tokens
+
+    if current:
+        groups.append(current)
+
+    return groups
+
+
+def _get_overlap_blocks(blocks: list[dict], overlap_tokens: int) -> list[dict]:
+    """从 blocks 尾部提取 overlap 文本对应的 blocks。"""
+    if not blocks:
+        return []
+
+    # 从最后一个 block 取 overlap
+    last = blocks[-1]
+    words = last["text"].split()
+    if len(words) > overlap_tokens:
+        overlap_text = " ".join(words[-overlap_tokens:])
+        return [{"type": last["type"], "text": overlap_text, "page": last["page"]}]
+    else:
+        return [last]
+
+
+# ============================================================
 # 分块
 # ============================================================
 
@@ -829,14 +1102,15 @@ def read_txt_file(filepath: Path) -> dict:
         "source_file": source_file,
         "pages": None,
         "raw_text": text,
+        "has_blocks": False,
     }
 
 
 def read_json_file(filepath: Path) -> dict:
     """
     读取 json 格式输入。
-    优先使用 pages[].blocks（parsed_clean 格式），按 block 顺序重建 text。
-    如果没有 blocks，回退使用 pages[].text（旧格式兼容）。
+    优先保留 pages[].blocks（parsed_clean 格式），供 block-based chunking 使用。
+    同时生成 full_text 用于旧逻辑 fallback。
     """
     with filepath.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -845,11 +1119,12 @@ def read_json_file(filepath: Path) -> dict:
     source_file = data.get("source_file", filepath.name)
     pages = data.get("pages", [])
 
-    # 优先使用 blocks
+    # 检测是否有 blocks
     has_blocks = any(
         isinstance(p, dict) and p.get("blocks") for p in pages
     )
 
+    # 构建 full_text（fallback 用）
     if has_blocks:
         page_texts = []
         for p in pages:
@@ -893,6 +1168,7 @@ def read_json_file(filepath: Path) -> dict:
         "source_file": source_file,
         "pages": pages,
         "raw_text": full_text,
+        "has_blocks": has_blocks,
     }
 
 
@@ -927,6 +1203,7 @@ def read_pdf_file(filepath: Path) -> dict:
         "source_file": source_file,
         "pages": pages,
         "raw_text": full_text,
+        "has_blocks": False,
     }
 
 
@@ -957,33 +1234,47 @@ def process_document(
 ) -> tuple[list[Chunk], bool]:
     """
     处理单篇论文，返回 (chunks, is_low_quality)。
+    优先使用 block-based chunking（当 pages[].blocks 存在时），
+    否则 fallback 到旧的 full_text + section 识别逻辑。
     """
     raw_text = doc_data["raw_text"]
     doc_id = doc_data["doc_id"]
     source_file = doc_data["source_file"]
     pages = doc_data.get("pages")
+    has_blocks = doc_data.get("has_blocks", False)
 
-    cleaned = clean_text(raw_text)
-    cleaned = truncate_at_references(cleaned)
-
-    title = extract_title(cleaned)
-
-    sections = identify_sections(cleaned, pages)
-
-    all_chunks: list[Chunk] = []
-    for sec_idx, section in enumerate(sections, start=1):
-        if not section.text.strip():
-            continue
-        sec_chunks = chunk_section(
-            section=section,
+    # 优先路径：block-based chunking
+    if has_blocks and pages:
+        all_chunks = chunk_by_blocks(
+            pages=pages,
             doc_id=doc_id,
             source_file=source_file,
-            title=title,
-            section_idx=sec_idx,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        all_chunks.extend(sec_chunks)
+    else:
+        # Fallback 路径：旧的 full_text 逻辑
+        cleaned = clean_text(raw_text)
+        cleaned = truncate_at_references(cleaned)
+
+        title = extract_title(cleaned)
+
+        sections = identify_sections(cleaned, pages)
+
+        all_chunks: list[Chunk] = []
+        for sec_idx, section in enumerate(sections, start=1):
+            if not section.text.strip():
+                continue
+            sec_chunks = chunk_section(
+                section=section,
+                doc_id=doc_id,
+                source_file=source_file,
+                title=title,
+                section_idx=sec_idx,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            all_chunks.extend(sec_chunks)
 
     filtered = []
     for chunk in all_chunks:
