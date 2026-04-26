@@ -24,6 +24,7 @@ class SynBioRAGPipeline:
         self.embedder = BGEM3Embedder(
             model_path=settings.kb.embedding_model_path,
             dim=settings.kb.embedding_dim,
+            max_length=settings.kb.embedding_max_length,
         )
         self.router = QueryRouter(settings.retrieval)
         self.dense_retriever = MilvusRetriever(settings.retrieval, self.embedder)

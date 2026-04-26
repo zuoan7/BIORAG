@@ -184,7 +184,7 @@ SUBSECTION_NUMBER_PATTERN = re.compile(
 
 
 # ============================================================
-# References 检测
+# References 检测（增强版：防止表格列名误触发、支持退出 references）
 # ============================================================
 
 REFERENCES_HEADING_PATTERN = re.compile(
@@ -192,6 +192,202 @@ REFERENCES_HEADING_PATTERN = re.compile(
     r"(references|bibliography|literature\s+cited|works\s+cited)\s*$",
     re.I,
 )
+
+# 正文 section 标题 — 出现时应退出 in_references
+BODY_SECTION_HEADINGS = [
+    "abstract", "introduction", "background",
+    "results", "results and discussion", "discussion and results",
+    "discussion", "conclusion", "conclusions",
+    "methods", "materials and methods",
+    "experimental procedures", "experimental methods", "experimental section",
+]
+
+BODY_SECTION_PATTERN = re.compile(
+    r"^\s*(?:\d+\.?\s+)?("
+    + "|".join(re.escape(h) for h in BODY_SECTION_HEADINGS)
+    + r")\s*$",
+    re.I,
+)
+
+# 尾部 section 标题 — 出现时也应退出 in_references（但标为 back_matter）
+BACK_MATTER_HEADINGS = [
+    "acknowledgments", "acknowledgements",
+    "author contributions", "contributors",
+    "additional information", "supplementary information", "supporting information",
+    "supplementary data", "supplementary materials",
+    "data availability", "data availability statement",
+    "funding", "conflict of interest", "competing financial interests",
+    "competing interests", "ethics statement", "ethics approval",
+    "how to cite", "license", "open access",
+    "author information",
+]
+
+BACK_MATTER_PATTERN = re.compile(
+    r"^\s*(?:\d+\.?\s+)?("
+    + "|".join(re.escape(h) for h in BACK_MATTER_HEADINGS)
+    + r")\s*$",
+    re.I,
+)
+
+# 日期 / 期刊侧栏 metadata — 应降级为 paragraph，不应成为 section_heading
+METADATA_HEADING_PATTERNS = [
+    re.compile(r"^#{1,3}\s+(?:Received|Accepted|Published|Revised)$", re.I),
+    re.compile(r"^#{1,3}\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4}$", re.I),
+    re.compile(r"^#{1,3}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4}$", re.I),
+    re.compile(r"^#{1,3}\s+\d{4}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", re.I),
+    re.compile(r"^#{1,3}\s+Correspondence\s+and\s+requests", re.I),
+    re.compile(r"^#{1,3}\s+Subject\s+areas", re.I),
+    re.compile(r"^#{1,3}\s+www\.", re.I),
+    re.compile(r"^#{1,3}\s+DOI", re.I),
+    re.compile(r"^#{1,3}\s+SCIENTIFIC\s+REPORTS", re.I),
+]
+
+# 参考文献条目模式（编号 + 作者 + 年份/期刊）
+REFERENCE_ENTRY_PATTERN = re.compile(
+    r"^\s*\d{1,3}\.\s+[A-Z][a-z]+.*(?:\(\d{4}\)|et\s+al\.|doi|vol\.|p\.|pp\.)",
+    re.I,
+)
+
+# 表格上下文中的 "references" — 不应触发 in_references
+# 注意：仅匹配 "content references" 等多词形式，不匹配纯 "References"（那是合法标题）
+TABLE_CONTEXT_REFERENCE_PATTERN = re.compile(
+    r"^(?:content\s+references?|selected\s+stud.*references?|column\s+references?)\s*$",
+    re.I,
+)
+
+
+def is_references_heading(text: str, recent_block_types: list[str] | None = None) -> bool:
+    """
+    判断是否为真正的 References 章节标题（而非表格列名等）。
+
+    条件：
+    1. 匹配 REFERENCES_HEADING_PATTERN；
+    2. 不是表格上下文中的 "references"；
+    3. 文本不含 Table/Figure/caption/column 等表格/图注关键词；
+    4. 不是 "content references" 等表格列名形式。
+    """
+    heading = text.lstrip("#").strip()
+    if not REFERENCES_HEADING_PATTERN.match(heading):
+        return False
+
+    # 如果是 "content references" 等表格列名，不进入 references
+    if TABLE_CONTEXT_REFERENCE_PATTERN.match(heading):
+        return False
+
+    # 如果 heading 包含表格/图注关键词，不进入 references
+    table_keywords = ["table", "figure", "caption", "column", "selected stud"]
+    heading_lower = heading.lower()
+    for kw in table_keywords:
+        if kw in heading_lower:
+            return False
+
+    # 如果最近几个 block 是 table_caption / table_text，大概率是表格列名
+    if recent_block_types:
+        recent = recent_block_types[-5:]  # 看最近 5 个 block
+        table_nearby = sum(1 for bt in recent if bt in ("table_caption", "table_text"))
+        if table_nearby >= 1:
+            return False
+
+    return True
+
+
+def should_exit_references(heading_text: str) -> str | None:
+    """
+    判断是否应退出 in_references 状态。
+
+    返回:
+      "body" — 正文 section，应退出 references
+      "back_matter" — 尾部 section，应退出 references
+      None — 不退出
+    """
+    heading = heading_text.lstrip("#").strip()
+
+    if BODY_SECTION_PATTERN.match(heading):
+        return "body"
+    if BACK_MATTER_PATTERN.match(heading):
+        return "back_matter"
+    return None
+
+
+def is_false_heading_metadata(line: str) -> bool:
+    """检测日期/期刊侧栏 metadata 误判标题"""
+    for pat in METADATA_HEADING_PATTERNS:
+        if pat.match(line):
+            return True
+    return False
+
+
+def is_numbered_reference_entry(text: str) -> bool:
+    """判断单行是否像编号参考文献条目"""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return bool(REFERENCE_ENTRY_PATTERN.match(stripped))
+
+
+def is_table_context(recent_block_types: list[str] | None, window: int = 5) -> bool:
+    """检查最近 block 是否处于表格上下文（table_caption / table_text）"""
+    if not recent_block_types:
+        return False
+    recent = recent_block_types[-window:]
+    return any(bt in ("table_caption", "table_text") for bt in recent)
+
+
+def looks_like_numbered_ref_heading(text: str) -> bool:
+    """
+    检查 ## heading 以数字开头时是否实为参考文献条目。
+    例如 "## 21. Non-Conventional Yeasts In Genetics... (Springer, 2003). doi:..."
+    """
+    heading = text.lstrip("#").strip()
+    m = re.match(r'^(\d{1,3})\.\s+', heading)
+    if not m:
+        return False
+    features = 0
+    if re.search(r'et\s+al\.', heading, re.I):
+        features += 1
+    if re.search(r'\(\d{4}\)', heading):
+        features += 1
+    if re.search(r'(?:Springer|Wiley|Elsevier|Oxford|Cambridge|doi|vol\.|pp?\.)', heading, re.I):
+        features += 1
+    if re.search(r'\d+,\s*\d+[–\-]\d+', heading):
+        features += 1
+    if len(heading) > 80:
+        features += 1
+    return features >= 1
+
+
+def _is_reference_like_paragraph(text: str, page_num: int, total_pages: int) -> bool:
+    """
+    保守判断段落是否像参考文献条目。仅在文档后部且信号强烈时返回 True。
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if total_pages > 0 and page_num / total_pages < 0.65:
+        return False
+    # 强信号：以编号参考文献开头
+    if is_numbered_reference_entry(stripped):
+        return True
+    # 强信号：单段包含多条编号引用（如 "1. Author... 2. Author... 3. Author..."）
+    ref_numbers = re.findall(r'(?:^|\.\s+)(\d{1,3})\.\s+[A-Z][a-z]', stripped)
+    if len(ref_numbers) >= 2:
+        return True
+    # 中等信号：以期刊引用续行开头 + 新编号条目
+    if re.match(r'^[A-Z][a-z]+\.?\s+\d+,\s*\d+[–\-]\d+\s*\(\d{4}\)', stripped):
+        return True
+    # 较弱信号：包含多个文献特征且文本较短
+    features = 0
+    if re.search(r'et\s+al\.', stripped, re.I):
+        features += 1
+    if re.search(r'\(\d{4}\)', stripped):
+        features += 1
+    if re.search(r'(?:Proc\.|Nat\.|Science|J\.|Acad\.|Biochem|Biotechnol|Microbiol|Yeast|Protein|Glycobiology|BMC|PLoS|Springer)', stripped, re.I):
+        features += 1
+    if re.search(r'\d+,\s*\d+[–\-]\d+', stripped):
+        features += 1
+    if re.search(r'doi', stripped, re.I):
+        features += 1
+    return features >= 3
 
 
 # ============================================================
@@ -450,7 +646,7 @@ def extract_table_caption_from_inline(text: str) -> Optional[tuple[str, str]]:
 # 页面处理
 # ============================================================
 
-def classify_line_type(line: str, in_references: bool) -> str:
+def classify_line_type(line: str, in_references: bool, recent_block_types: list[str] | None = None) -> str:
     """
     分类单行文本的类型。
     返回: title | section_heading | subsection_heading | paragraph | figure_caption | table_caption | references | noise
@@ -465,11 +661,21 @@ def classify_line_type(line: str, in_references: bool) -> str:
         heading_text = stripped[4:].strip()
         if is_false_heading(stripped):
             return "paragraph"
+        # 日期/期刊 metadata 降级
+        if is_false_heading_metadata(stripped):
+            return "paragraph"
+        # 编号参考文献条目伪装成 heading
+        if looks_like_numbered_ref_heading(stripped):
+            return "paragraph"
         # subsection heading 通常有数字编号
         if SUBSECTION_NUMBER_PATTERN.match(heading_text):
             return "subsection_heading"
         # 可能是误判，检查是否为合法 section
         if is_valid_section_heading(stripped):
+            # 表格上下文中的 "references" 不应是 section_heading
+            heading_lower = heading_text.lower()
+            if heading_lower in ("references", "bibliography") and is_table_context(recent_block_types):
+                return "paragraph"
             return "section_heading"
         return "subsection_heading"
 
@@ -477,14 +683,31 @@ def classify_line_type(line: str, in_references: bool) -> str:
         heading_text = stripped[3:].strip()
         if is_false_heading(stripped):
             return "paragraph"
+        # 日期/期刊 metadata 降级
+        if is_false_heading_metadata(stripped):
+            return "paragraph"
+        # 编号参考文献条目伪装成 heading（如 "## 21. Non-Conventional Yeasts..."）
+        if looks_like_numbered_ref_heading(stripped):
+            return "paragraph"
         if is_valid_section_heading(stripped):
+            # 表格上下文中的 "references" 不应是 section_heading
+            heading_lower = heading_text.lower()
+            if heading_lower in ("references", "bibliography") and is_table_context(recent_block_types):
+                return "paragraph"
             return "section_heading"
         # 有数字编号的可能是 section heading
         if re.match(r"^\d+\.?\s+[A-Z]", heading_text):
+            # 编号参考文献条目伪装成 heading
+            if looks_like_numbered_ref_heading(stripped):
+                return "paragraph"
             # 检查是否是 subsection 级别（2.1, 3.2 等）
             if re.match(r"^\d+\.\d+", heading_text):
                 return "subsection_heading"
             return "section_heading"
+        # 纯 "references" 在表格上下文中降级为 paragraph
+        heading_lower = heading_text.lower()
+        if heading_lower in ("references", "bibliography") and is_table_context(recent_block_types):
+            return "paragraph"
         return "section_heading"
 
     if stripped.startswith("# "):
@@ -496,8 +719,31 @@ def classify_line_type(line: str, in_references: bool) -> str:
     if detect_table_caption(stripped):
         return "table_caption"
 
-    # 在 references 区段中
+    # 在 references 区段中 — 但如果此行像正文 heading，应退出
     if in_references:
+        # 检查是否应退出 references（正文 section / 尾部 section）
+        exit_type = should_exit_references(stripped)
+        if exit_type == "body":
+            if stripped.startswith("## "):
+                return "section_heading"
+            elif stripped.startswith("### "):
+                return "subsection_heading"
+            else:
+                return "section_heading"
+        if exit_type == "back_matter":
+            if stripped.startswith("## "):
+                return "section_heading"
+            elif stripped.startswith("### "):
+                return "subsection_heading"
+            else:
+                return "section_heading"
+        # 非标题行以尾部 section 关键词开头 → 退出 references
+        check_text = stripped.lstrip("#").strip().lower()
+        for bm in BACK_MATTER_HEADINGS:
+            if check_text.startswith(bm):
+                after = check_text[len(bm):]
+                if not after or after[0] in (' ', '.', ',', ':', ';'):
+                    return "paragraph"
         return "references"
 
     # 普通正文
@@ -555,6 +801,8 @@ def process_page_text(
     counters: ProcessingCounters,
     section_path: Optional[list[str]] = None,
     in_references: bool = False,
+    total_pages: int = 0,
+    recent_block_types: Optional[list[str]] = None,
 ) -> tuple[list[Block], str, list[str], bool]:
     """
     处理单个页面的文本，返回 (blocks, 清洗后全文, section_path, in_references)。
@@ -571,6 +819,14 @@ def process_page_text(
         section_path = []
     # in_references 由参数传入，不再重新初始化
     block_idx = block_index_start
+    # 追踪最近 block 类型，用于 table context 判断
+    if recent_block_types is None:
+        recent_block_types = []
+
+    def _trim_recent():
+        """保持 recent_block_types 在合理长度（使用 slice 赋值避免 reassignment）"""
+        if len(recent_block_types) > 20:
+            del recent_block_types[:len(recent_block_types)-20]
 
     def flush_paragraph():
         nonlocal block_idx
@@ -683,13 +939,17 @@ def process_page_text(
                 return
 
             block_id = f"p{page_num}_b{block_idx:04d}"
+            btype = "references" if in_references else "paragraph"
             blocks.append(Block(
                 block_id=block_id,
-                type="references" if in_references else "paragraph",
+                type=btype,
                 text=text.strip(),
                 section_path=list(section_path),
                 page=page_num,
             ))
+            recent_block_types.append(btype)
+            if len(recent_block_types) > 20:
+                _trim_recent()
             counters.total_blocks += 1
             block_idx += 1
 
@@ -700,11 +960,21 @@ def process_page_text(
             flush_paragraph()
             continue
 
-        line_type = classify_line_type(stripped, in_references)
+        line_type = classify_line_type(stripped, in_references, recent_block_types)
 
         # 先修复断词
         fixed_text, fix_count = fix_broken_words(stripped)
         counters.fixed_broken_words += fix_count
+
+        # 如果 in_references 且 classify 返回 paragraph（尾部 section 退出），更新状态
+        if in_references and line_type == "paragraph":
+            check_text = stripped.lstrip("#").strip().lower()
+            for bm in BACK_MATTER_HEADINGS:
+                if check_text.startswith(bm):
+                    after = check_text[len(bm):]
+                    if not after or after[0] in (' ', '.', ',', ':', ';'):
+                        in_references = False
+                        break
 
         if line_type == "title":
             flush_paragraph()
@@ -723,14 +993,22 @@ def process_page_text(
             heading_text = fixed_text.lstrip("#").strip()
             # 更新 section_path（只保留当前大 section）
             section_path = [heading_text]
-            # 检查是否进入 References
-            if REFERENCES_HEADING_PATTERN.match(heading_text):
+            # 检查是否应退出 references 状态
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
+            # 检查是否进入 References（使用更严格的判断）
+            if is_references_heading(fixed_text, recent_block_types):
                 in_references = True
             block_id = f"p{page_num}_b{block_idx:04d}"
             blocks.append(Block(
                 block_id=block_id, type="section_heading", text=fixed_text,
                 section_path=list(section_path), page=page_num,
             ))
+            recent_block_types.append("section_heading")
+            # 保持 recent_block_types 在合理长度
+            if len(recent_block_types) > 20:
+                _trim_recent()
             counters.total_blocks += 1
             block_idx += 1
 
@@ -746,12 +1024,19 @@ def process_page_text(
                     section_path.append(heading_text)
             else:
                 section_path = [heading_text]
+            # 检查是否应退出 references（subsection_heading 也可能触发）
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
             counters.detected_subsections += 1
             block_id = f"p{page_num}_b{block_idx:04d}"
             blocks.append(Block(
                 block_id=block_id, type="subsection_heading", text=fixed_text,
                 section_path=list(section_path), page=page_num,
             ))
+            recent_block_types.append("subsection_heading")
+            if len(recent_block_types) > 20:
+                _trim_recent()
             counters.total_blocks += 1
             block_idx += 1
 
@@ -763,6 +1048,9 @@ def process_page_text(
                 block_id=block_id, type="figure_caption", text=fixed_text,
                 section_path=list(section_path), page=page_num,
             ))
+            recent_block_types.append("figure_caption")
+            if len(recent_block_types) > 20:
+                _trim_recent()
             counters.total_blocks += 1
             block_idx += 1
 
@@ -774,6 +1062,9 @@ def process_page_text(
                 block_id=block_id, type="table_caption", text=fixed_text,
                 section_path=list(section_path), page=page_num,
             ))
+            recent_block_types.append("table_caption")
+            if len(recent_block_types) > 20:
+                _trim_recent()
             counters.total_blocks += 1
             block_idx += 1
 
@@ -785,6 +1076,8 @@ def process_page_text(
         elif line_type == "paragraph":
             # 误判标题降级为正文
             if stripped.startswith("## ") and is_false_heading(stripped):
+                counters.demoted_false_headings += 1
+            if stripped.startswith("## ") and is_false_heading_metadata(stripped):
                 counters.demoted_false_headings += 1
             current_paragraph.append(fixed_text)
 
@@ -815,9 +1108,102 @@ def rebuild_page_text(blocks: list[Block]) -> str:
             parts.append(f"[TABLE CAPTION] {block.text}")
         elif block.type == "table_text":
             parts.append(f"[TABLE] {block.text}")
+        elif block.type == "references":
+            parts.append(block.text)
         else:
             parts.append(block.text)
     return "\n\n".join(parts)
+
+
+def _post_process_numbered_references(
+    blocks: list[Block], total_pages: int, counters: ProcessingCounters,
+) -> list[Block]:
+    """
+    后处理：保守检测文档后部的无标题编号参考文献列表。
+    触发条件（满足其一）：
+    1. 连续出现 2+ 条文献样式段落；
+    2. 单个段落包含 2+ 条编号引用（如 "1. Author... 2. Author..."）。
+    确认后从该位置起标记为 references，直到遇到尾部 section 退出。
+    """
+    if not blocks or total_pages == 0:
+        return blocks
+
+    threshold_page = max(1, int(total_pages * 0.65))
+
+    # 找到文档后部的文献样式段落索引
+    ref_like_indices: list[int] = []
+    for i, block in enumerate(blocks):
+        if block.page >= threshold_page and block.type == "paragraph":
+            if _is_reference_like_paragraph(block.text, block.page, total_pages):
+                ref_like_indices.append(i)
+
+    if not ref_like_indices:
+        return blocks
+
+    # 确定参考文献区域起点（取最早的位置）
+    ref_start_idx = None
+
+    # 条件 1：单块含多条编号引用 → 立即确认
+    for idx in ref_like_indices:
+        ref_numbers = re.findall(r'(?:^|\.\s+)(\d{1,3})\.\s+[A-Z][a-z]', blocks[idx].text)
+        if len(ref_numbers) >= 2:
+            ref_start_idx = idx
+            break
+
+    # 条件 2：连续 2+ 条文献样式段落（可能比条件1更早）
+    if len(ref_like_indices) >= 2:
+        groups: list[list[int]] = []
+        current_group = [ref_like_indices[0]]
+        for i in range(1, len(ref_like_indices)):
+            if ref_like_indices[i] - ref_like_indices[i - 1] <= 3:
+                current_group.append(ref_like_indices[i])
+            else:
+                if len(current_group) >= 2:
+                    groups.append(current_group)
+                current_group = [ref_like_indices[i]]
+        if len(current_group) >= 2:
+            groups.append(current_group)
+        if groups:
+            best_group = max(groups, key=len)
+            group_start = best_group[0]
+            # 取更早的位置
+            if ref_start_idx is None or group_start < ref_start_idx:
+                ref_start_idx = group_start
+
+    if ref_start_idx is None:
+        return blocks
+
+    # 从起点开始，标记所有段落为 references，直到退出条件
+    for idx in range(ref_start_idx, len(blocks)):
+        block = blocks[idx]
+        # 退出条件 1：遇到 body / back matter heading
+        if block.type in ("section_heading", "subsection_heading"):
+            heading = block.text.lstrip("#").strip()
+            if should_exit_references(heading) is not None:
+                break
+            # 编号参考文献伪装成 heading → 降级为 references
+            if looks_like_numbered_ref_heading(block.text):
+                block.type = "references"
+                counters.detected_references_blocks += 1
+                continue
+        # 退出条件 2：段落以尾部 section 关键词开头
+        if block.type == "paragraph":
+            text_lower = block.text.strip().lower()
+            is_back_matter = False
+            for bm in BACK_MATTER_HEADINGS:
+                if text_lower.startswith(bm):
+                    after = text_lower[len(bm):]
+                    if not after or after[0] in (' ', '.', ',', ':', ';'):
+                        is_back_matter = True
+                        break
+            if is_back_matter:
+                break
+        # 标记为 references
+        if block.type == "paragraph":
+            block.type = "references"
+            counters.detected_references_blocks += 1
+
+    return blocks
 
 
 # ============================================================
@@ -852,6 +1238,7 @@ def process_document(
     global_block_idx = 0
     in_references = False
     section_path: list[str] = []
+    recent_block_types: list[str] = []  # 追踪最近 block 类型用于 table context 判断
 
     for page_data in raw_pages:
         page_num = page_data.get("page", 0)
@@ -877,9 +1264,56 @@ def process_document(
                 raw_section_path = raw_block.get("section_path", [])
                 if block_type == "section_heading":
                     heading_text = text.lstrip("#").strip()
+                    # 表格上下文中的 "references" 降级为 paragraph
+                    heading_lower = heading_text.lower()
+                    if heading_lower in ("references", "bibliography") and is_table_context(recent_block_types):
+                        block_type = "paragraph"
+                        counters.demoted_false_headings += 1
+                        # 不更新 section_path，不进入 references
+                        block = Block(
+                            block_id=raw_block.get("block_id", f"p{page_num}_b{global_block_idx:04d}"),
+                            type=block_type,
+                            text=text,
+                            section_path=list(section_path),
+                            page=page_num,
+                        )
+                        recent_block_types.append("paragraph")
+                        if len(recent_block_types) > 20:
+                            del recent_block_types[:len(recent_block_types)-20]
+                        blocks.append(block)
+                        global_block_idx += 1
+                        continue
+                    # 编号参考文献伪装成 heading → 降级
+                    if looks_like_numbered_ref_heading(text):
+                        block_type = "paragraph"
+                        counters.demoted_false_headings += 1
+                        block = Block(
+                            block_id=raw_block.get("block_id", f"p{page_num}_b{global_block_idx:04d}"),
+                            type=block_type,
+                            text=text,
+                            section_path=list(section_path),
+                            page=page_num,
+                        )
+                        recent_block_types.append("paragraph")
+                        if len(recent_block_types) > 20:
+                            del recent_block_types[:len(recent_block_types)-20]
+                        if in_references:
+                            block.type = "references"
+                            counters.detected_references_blocks += 1
+                        blocks.append(block)
+                        global_block_idx += 1
+                        continue
                     section_path = [heading_text]
-                    if REFERENCES_HEADING_PATTERN.match(heading_text):
+                    # 检查是否应退出 references
+                    exit_type = should_exit_references(heading_text)
+                    if exit_type is not None:
+                        in_references = False
+                    # 使用更严格的 references 判断
+                    if is_references_heading(text, recent_block_types):
                         in_references = True
+                    recent_block_types.append("section_heading")
+                    if len(recent_block_types) > 20:
+                        del recent_block_types[:len(recent_block_types)-20]
                 elif block_type == "subsection_heading":
                     heading_text = text.lstrip("#").strip()
                     if len(section_path) > 0:
@@ -889,8 +1323,16 @@ def process_document(
                             section_path.append(heading_text)
                     else:
                         section_path = [heading_text]
+                    recent_block_types.append("subsection_heading")
+                    if len(recent_block_types) > 20:
+                        del recent_block_types[:len(recent_block_types)-20]
                 elif block_type == "title":
                     section_path = [text.lstrip("#").strip()]
+                    recent_block_types.append("title")
+                elif block_type in ("table_caption", "table_text"):
+                    recent_block_types.append(block_type)
+                    if len(recent_block_types) > 20:
+                        del recent_block_types[:len(recent_block_types)-20]
 
                 block = Block(
                     block_id=raw_block.get("block_id", f"p{page_num}_b{global_block_idx:04d}"),
@@ -901,8 +1343,20 @@ def process_document(
                 )
                 # 覆盖 references 类型判断：如果文档已在 references 状态
                 if in_references and block_type == "paragraph":
-                    block.type = "references"
-                    counters.detected_references_blocks += 1
+                    # 检查是否以尾部 section 关键词开头 → 退出 references
+                    text_lower = text.strip().lower()
+                    exit_refs = False
+                    for bm in BACK_MATTER_HEADINGS:
+                        if text_lower.startswith(bm):
+                            after = text_lower[len(bm):]
+                            if not after or after[0] in (' ', '.', ',', ':', ';'):
+                                exit_refs = True
+                                break
+                    if exit_refs:
+                        in_references = False
+                    else:
+                        block.type = "references"
+                        counters.detected_references_blocks += 1
                 blocks.append(block)
                 global_block_idx += 1
             clean_text = rebuild_page_text(blocks)
@@ -918,7 +1372,13 @@ def process_document(
         blocks, cleaned_text, section_path, in_references = process_page_text(
             page_text, page_num, global_block_idx, counters,
             section_path=section_path, in_references=in_references,
+            total_pages=total_pages, recent_block_types=recent_block_types,
         )
+        # 更新 recent_block_types
+        for b in blocks:
+            recent_block_types.append(b.type)
+        if len(recent_block_types) > 20:
+            del recent_block_types[:len(recent_block_types)-20]
         global_block_idx += len(blocks)
 
         clean_pages.append({
@@ -927,6 +1387,16 @@ def process_document(
             "blocks": [asdict(b) for b in blocks],
         })
         all_blocks.extend(blocks)
+
+    # 后处理：保守检测文档后部的无标题编号参考文献列表
+    _post_process_numbered_references(all_blocks, total_pages, counters)
+
+    # 重建 clean_pages 文本（后处理可能改变了 block type）
+    for page_data in clean_pages:
+        page_blocks = [b for b in all_blocks if b.page == page_data.get("page", 0)]
+        if page_blocks:
+            page_data["text"] = rebuild_page_text(page_blocks)
+            page_data["blocks"] = [asdict(b) for b in page_blocks]
 
     # 构建 parsed_clean JSON
     clean_data = {

@@ -1252,6 +1252,8 @@ def process_document(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
+        # block-based 路径下，用 raw_text 判断是否有内容
+        has_content = bool(raw_text and raw_text.strip())
     else:
         # Fallback 路径：旧的 full_text 逻辑
         cleaned = clean_text(raw_text)
@@ -1276,6 +1278,8 @@ def process_document(
             )
             all_chunks.extend(sec_chunks)
 
+        has_content = bool(cleaned and cleaned.strip())
+
     filtered = []
     for chunk in all_chunks:
         if len(chunk.text) < min_chunk_chars:
@@ -1289,7 +1293,7 @@ def process_document(
     for i, chunk in enumerate(filtered, start=1):
         chunk.chunk_index = i
 
-    is_low_quality = len(filtered) == 0 and len(cleaned.strip()) > 0
+    is_low_quality = len(filtered) == 0 and has_content
 
     return filtered, is_low_quality
 

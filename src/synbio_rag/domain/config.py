@@ -133,6 +133,7 @@ class KnowledgeBaseConfig:
     chunk_jsonl: str = "./data/paper_round1/chunks/chunks.jsonl"
     embedding_model_path: str = "./models/BAAI/bge-m3"
     embedding_dim: int = 1024
+    embedding_max_length: int = 512
     chunk_size: int = 800
     chunk_overlap: int = 120
 
@@ -278,6 +279,9 @@ class Settings:
         settings.kb.embedding_model_path = get_value(
             "BGE_M3_MODEL_PATH",
             settings.kb.embedding_model_path,
+        )
+        settings.kb.embedding_max_length = int(
+            get_value("BGE_EMBED_MAX_LENGTH", str(settings.kb.embedding_max_length))
         )
         settings.llm.api_base = get_value("QWEN_CHAT_API_BASE", "")
         settings.llm.api_key = get_value("QWEN_CHAT_API_KEY", "")
