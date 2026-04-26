@@ -160,7 +160,7 @@ FIGURE_CAPTION_INLINE_PATTERN = re.compile(
 )
 
 TABLE_CAPTION_INLINE_PATTERN = re.compile(
-    r"(?:Supplementary\s+)?Table\s+S?\d+[\.\:]\s*",
+    r"(?:Supplementary\s+)?Table\s+S?\d+\s*[\.\:\|]\s*",
     re.I,
 )
 
@@ -242,6 +242,58 @@ METADATA_HEADING_PATTERNS = [
     re.compile(r"^#{1,3}\s+SCIENTIFIC\s+REPORTS", re.I),
 ]
 
+METADATA_LINE_PATTERNS = [
+    re.compile(r"^\s*contents\s+lists\s+available\s+at\s+", re.I),
+    re.compile(r"^\s*journal\s+homepage\s*:\s*", re.I),
+    re.compile(r"^\s*available\s+online\b", re.I),
+    re.compile(r"^\s*(?:https?://|www\.)", re.I),
+    re.compile(r"^\s*(?:received|accepted|published)(?:\s+in\s+revised\s+form)?\b", re.I),
+    re.compile(r"^\s*(?:correspondence\s+and\s+requests\s+for\s+materials|should\s+be\s+addressed\s+to)\b", re.I),
+    re.compile(r"^\s*subject\s+areas\b", re.I),
+    re.compile(r"^\s*open\s*$", re.I),
+    re.compile(r"^\s*(?:doi|https://doi\.org)\b", re.I),
+    re.compile(r"^\s*©\s*\d{4}\b", re.I),
+    re.compile(r"^\s*all\s+rights\s+reserved\.?\s*$", re.I),
+    re.compile(r"^\s*(?:scientific\s+reports|carbohydrate\s+polymers)\b", re.I),
+    re.compile(r"^\s*[A-Z]\.\s*[A-Za-z][A-Za-z\-\s]+et\s+al\.?\s*$", re.I),
+]
+
+METADATA_HEADING_TEXT_PATTERN = re.compile(
+    r"^(?:"
+    r"a\s*r\s*t\s*i\s*c\s*l\s*e\s*i\s*n\s*f\s*o|"
+    r"keywords?|"
+    r"nomenclature|"
+    r"subject\s+areas|"
+    r"correspondence\s+and\s+requests\s+for\s+materials|"
+    r"open"
+    r")\s*:?\s*$",
+    re.I,
+)
+
+NOMENCLATURE_ENTRY_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9'\-_/().]{1,20}\s+[A-Za-z][^\n]{2,120}$"
+)
+
+TABLE_HEADER_PHRASES = [
+    "content",
+    "references",
+    "primer name",
+    "sequence",
+    "production strain",
+    "glycan structure",
+    "relative peak area",
+    "strain name",
+    "km_abts",
+    "vmax",
+]
+
+TABLE_UNIT_PATTERN = re.compile(
+    r"(?:\b\d+(?:\.\d+)?\b|%|\[[^\]]+\]|\b(?:mg|g|kg|mL|L|mM|mmol|mol|OD600|ABTS|H2O2|Vmax|KM_ABTS)\b)",
+    re.I,
+)
+
+DNA_SEQUENCE_PATTERN = re.compile(r"\b[ACGT]{10,}\b", re.I)
+
 # 参考文献条目模式（编号 + 作者 + 年份/期刊）
 REFERENCE_ENTRY_PATTERN = re.compile(
     r"^\s*\d{1,3}\.\s+[A-Z][a-z]+.*(?:\(\d{4}\)|et\s+al\.|doi|vol\.|p\.|pp\.)",
@@ -315,6 +367,168 @@ def is_false_heading_metadata(line: str) -> bool:
         if pat.match(line):
             return True
     return False
+
+
+def is_metadata_heading_text(text: str) -> bool:
+    heading = text.lstrip("#").strip()
+    if METADATA_HEADING_TEXT_PATTERN.match(heading):
+        return True
+    return any(pat.match(heading) for pat in METADATA_LINE_PATTERNS)
+
+
+def is_metadata_line(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.isdigit() and len(stripped) <= 3:
+        return True
+    return any(pat.match(stripped) for pat in METADATA_LINE_PATTERNS)
+
+
+def _normalize_table_text_candidate(text: str) -> str:
+    return text.lstrip("#").strip().replace("’", "'").replace("–", "-").replace("—", "-")
+
+
+def looks_like_nomenclature_entry(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    if not NOMENCLATURE_ENTRY_PATTERN.match(stripped):
+        return False
+    words = stripped.split()
+    if len(words) < 2 or len(words) > 12:
+        return False
+    term = words[0]
+    return any(ch.isupper() for ch in term) or any(ch.isdigit() for ch in term)
+
+
+def looks_like_body_paragraph(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    lowered = stripped.lower()
+    sentence_end_hits = len(re.findall(r"[.!?](?:\s|$)", stripped))
+    if len(stripped) < 120:
+        return False
+    if sentence_end_hits == 0:
+        return False
+    if sentence_end_hits == 1 and not re.search(
+        r"\b(?:this|these|we|the|were|was|into|from|using|performed|designed|transformed|results?|discussion|conclusion)\b",
+        lowered,
+    ):
+        return False
+    if stripped.lower().startswith(("table ", "figure ")):
+        return False
+    return True
+
+
+def looks_like_table_text(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    lowered = stripped.lower()
+    sentence_end_hits = len(re.findall(r"[.!?](?:\s|$)", stripped))
+    if not stripped:
+        return False
+    if detect_table_caption(stripped) or detect_figure_caption(stripped):
+        return False
+    if is_valid_section_heading(stripped):
+        return False
+    if is_metadata_heading_text(stripped):
+        return False
+    if is_numbered_reference_entry(stripped):
+        return False
+    if looks_like_body_paragraph(stripped):
+        return False
+    if lowered in {"references", "bibliography"}:
+        return True
+    if any(phrase in lowered for phrase in TABLE_HEADER_PHRASES):
+        return True
+    if DNA_SEQUENCE_PATTERN.search(stripped):
+        return True
+
+    tokens = [tok for tok in re.split(r"\s+", stripped) if tok]
+    if not tokens:
+        return False
+    table_unit_hits = len(TABLE_UNIT_PATTERN.findall(stripped))
+    if len(tokens) <= 50 and table_unit_hits >= 10:
+        return True
+    if len(tokens) > 24 and sentence_end_hits >= 1:
+        return False
+    if len(stripped) > 180 and sentence_end_hits >= 1 and re.search(
+        r"\b(?:this|these|we|the|were|was|into|from|using|performed|designed|transformed)\b",
+        lowered,
+    ):
+        return False
+
+    short_token_count = sum(1 for tok in tokens if len(tok) <= 12)
+    mixed_token_count = sum(
+        1
+        for tok in tokens
+        if any(ch.isdigit() for ch in tok)
+        or "-" in tok
+        or "_" in tok
+        or "/" in tok
+        or "[" in tok
+        or "]" in tok
+    )
+    uppercase_token_count = sum(
+        1
+        for tok in tokens
+        if tok.upper() == tok and any(ch.isalpha() for ch in tok) and len(tok) <= 12
+    )
+    if len(tokens) <= 12 and table_unit_hits >= 2 and short_token_count >= 2:
+        return True
+    if len(tokens) <= 40 and table_unit_hits >= 6 and sentence_end_hits <= 1:
+        return True
+    if len(tokens) <= 18 and mixed_token_count >= 2 and short_token_count >= 3:
+        return True
+    if len(tokens) <= 10 and uppercase_token_count >= 2 and mixed_token_count >= 1:
+        return True
+    if re.match(r"^[A-Za-z][A-Za-z0-9'\-_/().]{1,20}\s+[-+]?\d+(?:\.\d+)?(?:\s+[-+]?\d+(?:\.\d+)?){1,6}$", stripped):
+        return True
+    if re.match(r"^\d+(?:[.,]\d+)?(?:\s+\d+(?:[.,]\d+)?){1,6}$", stripped):
+        return True
+    return False
+
+
+def split_table_caption_tail(text: str) -> tuple[str, str | None]:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    split_markers = [
+        " content ",
+        " references ",
+        " primer name ",
+        " glycan structure ",
+        " production strain ",
+        " strain name ",
+        " sequence (5",
+        " km_abts ",
+        " vmax ",
+    ]
+
+    split_pos: int | None = None
+    for marker in split_markers:
+        pos = lowered.find(marker)
+        if pos > 0:
+            split_pos = pos
+            break
+
+    if split_pos is None:
+        return stripped, None
+
+    caption = stripped[:split_pos].rstrip(" |:;,.")
+    tail = stripped[split_pos:].strip()
+    if not caption or not tail or not looks_like_table_text(tail):
+        return stripped, None
+    return caption, tail
+
+
+def is_strong_standalone_table_text(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    sentence_end_hits = len(re.findall(r"[.!?](?:\s|$)", stripped))
+    if not looks_like_table_text(stripped):
+        return False
+    if len(stripped) > 500:
+        return False
+    if sentence_end_hits > 2:
+        return False
+    unit_hits = len(TABLE_UNIT_PATTERN.findall(stripped))
+    return unit_hits >= 4 or any(phrase in stripped.lower() for phrase in TABLE_HEADER_PHRASES)
 
 
 def is_numbered_reference_entry(text: str) -> bool:
@@ -397,7 +611,7 @@ def _is_reference_like_paragraph(text: str, page_num: int, total_pages: int) -> 
 @dataclass
 class Block:
     block_id: str
-    type: str  # title | abstract | section_heading | subsection_heading | paragraph | figure_caption | table_caption | table_text | references | noise
+    type: str  # title | abstract | section_heading | subsection_heading | paragraph | figure_caption | table_caption | table_text | references | metadata | noise
     text: str
     section_path: list[str] = field(default_factory=list)
     page: int = 1
@@ -639,6 +853,12 @@ def extract_table_caption_from_inline(text: str) -> Optional[tuple[str, str]]:
                 return (prefix, caption_text, remainder)
             else:
                 return ("", caption_text, remainder)
+        inline_caption = text[caption_start:].strip()
+        caption_text, remainder = split_table_caption_tail(inline_caption)
+        if remainder:
+            if prefix:
+                return (prefix, caption_text, remainder)
+            return ("", caption_text, remainder)
     return None
 
 
@@ -1115,6 +1335,172 @@ def rebuild_page_text(blocks: list[Block]) -> str:
     return "\n\n".join(parts)
 
 
+def _post_process_table_and_metadata(
+    all_blocks: list[Block],
+    counters: ProcessingCounters,
+) -> list[Block]:
+    expanded_blocks: list[Block] = []
+
+    for block in all_blocks:
+        if block.type == "table_caption":
+            caption_text, tail = split_table_caption_tail(block.text)
+            block.text = caption_text
+            expanded_blocks.append(block)
+            if tail:
+                expanded_blocks.append(Block(
+                    block_id=f"{block.block_id}_tabletail",
+                    type="table_text",
+                    text=tail,
+                    section_path=list(block.section_path),
+                    page=block.page,
+                ))
+                counters.detected_table_text_blocks += 1
+            continue
+        expanded_blocks.append(block)
+
+    processed: list[Block] = []
+    table_context_active = False
+    table_context_page = 0
+    table_context_blocks = 0
+    metadata_context: str | None = None
+
+    for block in expanded_blocks:
+        text = block.text.strip()
+        heading_text = text.lstrip("#").strip()
+
+        if table_context_active:
+            too_far = block.page > table_context_page + 1 or table_context_blocks > 40
+            if too_far or block.type in ("figure_caption", "references"):
+                table_context_active = False
+            elif block.type in ("section_heading", "subsection_heading") and not looks_like_table_text(heading_text):
+                table_context_active = False
+
+        if block.type in ("section_heading", "subsection_heading"):
+            if is_metadata_heading_text(heading_text):
+                block.type = "metadata"
+                counters.demoted_false_headings += 1
+                metadata_context = heading_text.lower().rstrip(":")
+            elif table_context_active and looks_like_table_text(heading_text):
+                block.type = "table_text"
+                counters.demoted_false_headings += 1
+                counters.detected_table_text_blocks += 1
+            else:
+                metadata_context = None
+        elif metadata_context == "nomenclature":
+            if block.type == "paragraph" and (looks_like_nomenclature_entry(text) or is_metadata_line(text)):
+                block.type = "metadata"
+            elif block.type in ("section_heading", "subsection_heading", "table_caption", "figure_caption"):
+                metadata_context = None
+            elif block.type == "paragraph" and looks_like_body_paragraph(text):
+                metadata_context = None
+        elif metadata_context in {"a r t i c l e i n f o", "keywords", "keyword"}:
+            if block.type == "paragraph" and (is_metadata_line(text) or not looks_like_body_paragraph(text)):
+                block.type = "metadata"
+            else:
+                metadata_context = None
+
+        if block.type == "paragraph" and is_metadata_line(text):
+            block.type = "metadata"
+
+        if table_context_active and block.type == "paragraph" and looks_like_table_text(text):
+            block.type = "table_text"
+            counters.detected_table_text_blocks += 1
+        elif not table_context_active and block.type == "paragraph" and is_strong_standalone_table_text(text):
+            block.type = "table_text"
+            counters.detected_table_text_blocks += 1
+
+        if block.type == "table_caption":
+            table_context_active = True
+            table_context_page = block.page
+            table_context_blocks = 0
+        elif table_context_active:
+            table_context_blocks += 1
+            if block.type == "table_text":
+                table_context_page = block.page
+            elif block.type == "paragraph" and looks_like_body_paragraph(text):
+                table_context_active = False
+
+        processed.append(block)
+
+    return processed
+
+
+def _recompute_section_paths(
+    all_blocks: list[Block],
+    counters: ProcessingCounters,
+) -> None:
+    section_path: list[str] = []
+    in_references = False
+    recent_block_types: list[str] = []
+
+    for block in all_blocks:
+        text = block.text.strip()
+
+        if block.type == "title":
+            section_path = [text.lstrip("#").strip()]
+            block.section_path = list(section_path)
+        elif block.type == "section_heading":
+            heading_text = text.lstrip("#").strip()
+            section_path = [heading_text]
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
+            if is_references_heading(text, recent_block_types):
+                in_references = True
+            block.section_path = list(section_path)
+        elif block.type == "subsection_heading":
+            heading_text = text.lstrip("#").strip()
+            if section_path:
+                if len(section_path) > 1 and SUBSECTION_NUMBER_PATTERN.match(section_path[-1]):
+                    section_path[-1] = heading_text
+                else:
+                    section_path.append(heading_text)
+            else:
+                section_path = [heading_text]
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
+            block.section_path = list(section_path)
+        elif block.type == "references":
+            in_references = True
+            block.section_path = list(section_path)
+        elif block.type == "paragraph":
+            if in_references:
+                text_lower = text.lower()
+                exit_refs = False
+                for bm in BACK_MATTER_HEADINGS:
+                    if text_lower.startswith(bm):
+                        after = text_lower[len(bm):]
+                        if not after or after[0] in (" ", ".", ",", ":", ";"):
+                            exit_refs = True
+                            break
+                if exit_refs:
+                    in_references = False
+                else:
+                    block.type = "references"
+                    counters.detected_references_blocks += 1
+            block.section_path = list(section_path)
+        else:
+            block.section_path = list(section_path)
+
+        recent_block_types.append(block.type)
+        if len(recent_block_types) > 20:
+            del recent_block_types[:len(recent_block_types)-20]
+
+
+def _rebuild_clean_pages(raw_pages: list[dict], all_blocks: list[Block]) -> list[dict]:
+    clean_pages: list[dict] = []
+    for page_data in raw_pages:
+        page_num = page_data.get("page", 0)
+        page_blocks = [b for b in all_blocks if b.page == page_num]
+        clean_pages.append({
+            "page": page_num,
+            "text": rebuild_page_text(page_blocks) if page_blocks else "",
+            "blocks": [asdict(b) for b in page_blocks],
+        })
+    return clean_pages
+
+
 def _post_process_numbered_references(
     blocks: list[Block], total_pages: int, counters: ProcessingCounters,
 ) -> list[Block]:
@@ -1388,15 +1774,10 @@ def process_document(
         })
         all_blocks.extend(blocks)
 
-    # 后处理：保守检测文档后部的无标题编号参考文献列表
+    all_blocks = _post_process_table_and_metadata(all_blocks, counters)
     _post_process_numbered_references(all_blocks, total_pages, counters)
-
-    # 重建 clean_pages 文本（后处理可能改变了 block type）
-    for page_data in clean_pages:
-        page_blocks = [b for b in all_blocks if b.page == page_data.get("page", 0)]
-        if page_blocks:
-            page_data["text"] = rebuild_page_text(page_blocks)
-            page_data["blocks"] = [asdict(b) for b in page_blocks]
+    _recompute_section_paths(all_blocks, counters)
+    clean_pages = _rebuild_clean_pages(raw_pages, all_blocks)
 
     # 构建 parsed_clean JSON
     clean_data = {

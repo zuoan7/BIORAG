@@ -638,7 +638,7 @@ def chunk_by_blocks(
             btext = block.get("text", "").strip()
             if not btext:
                 continue
-            if btype == "noise":
+            if btype in ("noise", "metadata"):
                 continue
             if btype == "title" and not doc_title:
                 doc_title = btext.lstrip("#").strip()
@@ -771,7 +771,7 @@ def chunk_by_blocks(
                 elif btype == "table_caption":
                     chunk_text_parts.append(f"[TABLE CAPTION] {btext}")
                 elif btype == "table_text":
-                    chunk_text_parts.append(f"[TABLE] {btext}")
+                    chunk_text_parts.append(f"[TABLE TEXT] {btext}")
                 elif btype == "title":
                     chunk_text_parts.append(btext)
                 else:
@@ -1151,10 +1151,10 @@ def read_json_file(filepath: Path) -> dict:
                 elif btype == "table_caption":
                     block_parts.append(f"[TABLE CAPTION] {btext}")
                 elif btype == "table_text":
-                    block_parts.append(f"[TABLE] {btext}")
+                    block_parts.append(f"[TABLE TEXT] {btext}")
                 elif btype == "references":
                     block_parts.append(f"## References\n{btext}")
-                elif btype == "noise":
+                elif btype in ("noise", "metadata"):
                     continue
                 else:
                     block_parts.append(btext)
@@ -1282,11 +1282,16 @@ def process_document(
 
     filtered = []
     for chunk in all_chunks:
-        if len(chunk.text) < min_chunk_chars:
+        has_table_text = "table_text" in getattr(chunk, "block_types", [])
+        min_chars = 20 if has_table_text else min_chunk_chars
+        min_words = 3 if has_table_text else min_chunk_words
+        quality_floor = min(quality_threshold, 0.05) if has_table_text else quality_threshold
+
+        if len(chunk.text) < min_chars:
             continue
-        if len(chunk.text.split()) < min_chunk_words:
+        if len(chunk.text.split()) < min_words:
             continue
-        if chunk.quality_score < quality_threshold:
+        if chunk.quality_score < quality_floor:
             continue
         filtered.append(chunk)
 

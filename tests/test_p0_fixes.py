@@ -337,6 +337,133 @@ class TestBlockBasedChunking:
         all_text = " ".join(c.text for c in chunks)
         assert "[FIGURE CAPTION]" in all_text, "Should contain [FIGURE CAPTION] marker"
         assert "[TABLE CAPTION]" in all_text, "Should contain [TABLE CAPTION] marker"
+        assert "[TABLE TEXT]" not in all_text
+
+
+class TestTableTextAndMetadataEnhancements:
+    def _run_clean_pipeline(self, pages_text: list[str]) -> dict:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_dir = Path(tmpdir) / "parsed_raw"
+            output_dir = Path(tmpdir) / "parsed_clean"
+            preview_dir = Path(tmpdir) / "parsed_preview"
+            input_dir.mkdir()
+
+            raw_data = {
+                "doc_id": "test_table_metadata",
+                "source_file": "test.pdf",
+                "total_pages": len(pages_text),
+                "pages": [{"page": i + 1, "text": text} for i, text in enumerate(pages_text)],
+            }
+            (input_dir / "test.json").write_text(json.dumps(raw_data, ensure_ascii=False))
+            batch_process(input_dir, output_dir, preview_dir)
+            return json.loads((output_dir / "test_table_metadata.json").read_text())
+
+    def test_table_caption_followed_by_table_text(self):
+        clean_data = self._run_clean_pipeline([
+            (
+                "## Results\n"
+                "Result paragraph.\n\n"
+                "Table 3 | Relative peak areas of identified glycan structures\n"
+                "glycan structure PpMutSHRP PpFWK3HRP\n"
+                "Man7 0.0 7.9\n"
+                "Man8 0.0 57.3\n"
+                "Man10 31.4 6.1\n\n"
+                "## Discussion\n"
+                "Discussion paragraph."
+            )
+        ])
+
+        blocks = clean_data["pages"][0]["blocks"]
+        table_blocks = [b for b in blocks if b["type"] == "table_text"]
+        assert any("Table 3" in b["text"] for b in blocks if b["type"] == "table_caption")
+        assert any("glycan structure" in b["text"] for b in table_blocks)
+        assert any("Man8 0.0 57.3" in b["text"] for b in table_blocks)
+        assert any(b["type"] == "section_heading" and "Discussion" in b["text"] for b in blocks)
+        assert not any(
+            b["type"] in ("section_heading", "subsection_heading") and "Man8" in b["text"]
+            for b in blocks
+        )
+        discussion_para = next(b for b in blocks if "Discussion paragraph." in b["text"])
+        assert discussion_para["type"] == "paragraph"
+
+    def test_primer_table_and_chunk_metadata(self):
+        clean_data = self._run_clean_pipeline([
+            (
+                "## Methods\n"
+                "Table 5 | Oligonucleotide primer list\n"
+                "primer name sequence (5’ - 3’)\n"
+                "OCH1-5int-fw1 GAACTGTGTAACCTTTTAAATGACGGGATCTAAATACGTCATG\n"
+                "OCH1-5int-rv1 CTATTCTCTAGAAAGTATAGGAACTTCGGCTGATGATATTTGCTACGAACACTG\n\n"
+                "Bioreactor cultivations\n"
+                "Four different P. pastoris strains were characterized."
+            )
+        ])
+
+        pages = clean_data["pages"]
+        blocks = pages[0]["blocks"]
+        table_texts = [b["text"] for b in blocks if b["type"] == "table_text"]
+        assert any("primer name sequence" in text for text in table_texts)
+        assert any("OCH1-5int-fw1" in text for text in table_texts)
+        assert not any(
+            b["type"] in ("section_heading", "subsection_heading") and "OCH1-5int-fw1" in b["text"]
+            for b in blocks
+        )
+
+        chunks = chunk_by_blocks(pages, doc_id="test", source_file="test.pdf")
+        assert any("table_text" in chunk.block_types for chunk in chunks)
+        assert any("[TABLE TEXT]" in chunk.text for chunk in chunks)
+
+    def test_metadata_not_promoted_to_headings(self):
+        clean_data = self._run_clean_pipeline([
+            (
+                "Contents lists available at ScienceDirect\n"
+                "Carbohydrate Polymers\n"
+                "journal homepage: www.elsevier.com/locate/carbpol\n"
+                "Received 5 January 2022\n"
+                "Accepted 1 March 2022\n"
+                "A R T I C L E I N F O\n"
+                "Keywords: Human milk oligosaccharides\n\n"
+                "A B S T R A C T\n"
+                "This study investigated...\n\n"
+                "## 1. Introduction\n"
+                "Human milk oligosaccharides..."
+            )
+        ])
+
+        blocks = clean_data["pages"][0]["blocks"]
+        intro = next(b for b in blocks if "Introduction" in b["text"])
+        assert intro["type"] == "section_heading"
+        assert not any(
+            b["type"] in ("section_heading", "subsection_heading")
+            and any(token in b["text"] for token in ["Contents lists", "journal homepage", "Received", "Accepted", "Keywords", "A R T I C L E I N F O"])
+            for b in blocks
+        )
+
+    def test_nomenclature_does_not_pollute_section_path(self):
+        clean_data = self._run_clean_pipeline([
+            (
+                "### Nomenclature\n"
+                "ANOVA analysis of variance\n"
+                "ASVs amplicon sequence variants\n"
+                "GF3 nystose\n"
+                "Glc glucose\n"
+                "GlcNAc N-acetylglucosamine\n\n"
+                "## 2. Materials and methods\n"
+                "Six commercially available HMOs were supplied..."
+            )
+        ])
+
+        blocks = clean_data["pages"][0]["blocks"]
+        nomenclature_block = next(b for b in blocks if "Nomenclature" in b["text"])
+        assert nomenclature_block["type"] == "metadata"
+        assert not any(
+            b["type"] in ("section_heading", "subsection_heading") and b["text"].startswith("### Nomenclature")
+            for b in blocks
+        )
+        methods_block = next(b for b in blocks if "Materials and methods" in b["text"])
+        assert methods_block["type"] == "section_heading"
+        methods_para = next(b for b in blocks if "Six commercially available HMOs" in b["text"])
+        assert methods_para["section_path"] == ["2. Materials and methods"]
 
 
 # ============================================================
