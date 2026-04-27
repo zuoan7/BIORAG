@@ -108,6 +108,23 @@ class ToolConfig:
 
 
 @dataclass
+class GenerationConfig:
+    version: str = "old"
+    v2_use_qwen_synthesis: bool = False
+    v2_enable_comparison_coverage: bool = False
+    v2_qwen_synthesis_timeout_seconds: int = 30
+    v2_qwen_synthesis_max_chars_per_evidence: int = 1200
+    v2_qwen_synthesis_max_output_chars: int = 3000
+    v2_use_external_tools: bool = False
+    v2_use_history: bool = False
+    v2_max_support_factoid: int = 3
+    v2_max_support_summary: int = 5
+    v2_max_support_comparison: int = 6
+    v2_min_support_score: float = 0.0
+    v2_require_citation: bool = True
+
+
+@dataclass
 class Round8EvidencePolicy:
     score_strength_factoid: float = 0.34
     score_strength_summary: float = 0.32
@@ -160,6 +177,7 @@ class Settings:
     confidence: ConfidenceConfig = field(default_factory=ConfidenceConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
     round8: Round8PolicyConfig = field(default_factory=Round8PolicyConfig)
     llm: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-plus"))
     reranker: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-rerank"))
@@ -358,6 +376,79 @@ class Settings:
         settings.reranker.service_url = get_value("RERANKER_SERVICE_URL", "")
         settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
         settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
+        settings.generation.version = get_value("GENERATION_VERSION", settings.generation.version).strip().lower()
+        settings.generation.v2_use_qwen_synthesis = _parse_bool(
+            get_value(
+                "GENERATION_V2_USE_QWEN_SYNTHESIS",
+                str(settings.generation.v2_use_qwen_synthesis),
+            )
+        )
+        settings.generation.v2_enable_comparison_coverage = _parse_bool(
+            get_value(
+                "GENERATION_V2_ENABLE_COMPARISON_COVERAGE",
+                str(settings.generation.v2_enable_comparison_coverage),
+            )
+        )
+        settings.generation.v2_qwen_synthesis_timeout_seconds = int(
+            get_value(
+                "GENERATION_V2_QWEN_SYNTHESIS_TIMEOUT_SECONDS",
+                str(settings.generation.v2_qwen_synthesis_timeout_seconds),
+            )
+        )
+        settings.generation.v2_qwen_synthesis_max_chars_per_evidence = int(
+            get_value(
+                "GENERATION_V2_QWEN_SYNTHESIS_MAX_CHARS_PER_EVIDENCE",
+                str(settings.generation.v2_qwen_synthesis_max_chars_per_evidence),
+            )
+        )
+        settings.generation.v2_qwen_synthesis_max_output_chars = int(
+            get_value(
+                "GENERATION_V2_QWEN_SYNTHESIS_MAX_OUTPUT_CHARS",
+                str(settings.generation.v2_qwen_synthesis_max_output_chars),
+            )
+        )
+        settings.generation.v2_use_external_tools = _parse_bool(
+            get_value(
+                "GENERATION_V2_USE_EXTERNAL_TOOLS",
+                str(settings.generation.v2_use_external_tools),
+            )
+        )
+        settings.generation.v2_use_history = _parse_bool(
+            get_value(
+                "GENERATION_V2_USE_HISTORY",
+                str(settings.generation.v2_use_history),
+            )
+        )
+        settings.generation.v2_max_support_factoid = int(
+            get_value(
+                "GENERATION_V2_MAX_SUPPORT_FACTOID",
+                str(settings.generation.v2_max_support_factoid),
+            )
+        )
+        settings.generation.v2_max_support_summary = int(
+            get_value(
+                "GENERATION_V2_MAX_SUPPORT_SUMMARY",
+                str(settings.generation.v2_max_support_summary),
+            )
+        )
+        settings.generation.v2_max_support_comparison = int(
+            get_value(
+                "GENERATION_V2_MAX_SUPPORT_COMPARISON",
+                str(settings.generation.v2_max_support_comparison),
+            )
+        )
+        settings.generation.v2_min_support_score = float(
+            get_value(
+                "GENERATION_V2_MIN_SUPPORT_SCORE",
+                str(settings.generation.v2_min_support_score),
+            )
+        )
+        settings.generation.v2_require_citation = _parse_bool(
+            get_value(
+                "GENERATION_V2_REQUIRE_CITATION",
+                str(settings.generation.v2_require_citation),
+            )
+        )
         settings.round8.enable_round8_policy = _parse_bool(
             get_value("ROUND8_ENABLE_ROUND8_POLICY", str(settings.round8.enable_round8_policy))
         )

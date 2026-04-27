@@ -563,15 +563,35 @@ def get_evidence_quality(item: dict[str, Any]) -> dict[str, Any]:
     return ((item.get("api_response") or {}).get("debug") or {}).get("evidence_quality") or {}
 
 
+def get_generation_v2_debug(item: dict[str, Any]) -> dict[str, Any]:
+    return ((item.get("api_response") or {}).get("debug") or {}).get("generation_v2") or {}
+
+
 def get_final_answer_mode(item: dict[str, Any]) -> str:
-    return str(get_evidence_quality(item).get("final_answer_mode") or "").strip()
+    generation_v2 = get_generation_v2_debug(item)
+    for candidate in (
+        generation_v2.get("answer_mode"),
+        (generation_v2.get("answer_plan") or {}).get("mode"),
+        item.get("answer_mode"),
+        get_evidence_quality(item).get("final_answer_mode"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def get_support_pack_count(item: dict[str, Any]) -> int:
+    generation_v2 = get_generation_v2_debug(item)
+    if "support_pack_count" in generation_v2:
+        return normalize_int(generation_v2.get("support_pack_count"))
     return normalize_int(get_evidence_quality(item).get("support_pack_count"))
 
 
 def get_candidate_support_pack_count(item: dict[str, Any]) -> int:
+    generation_v2 = get_generation_v2_debug(item)
+    if "support_pack_count" in generation_v2:
+        return normalize_int(generation_v2.get("support_pack_count"))
     evidence = get_evidence_quality(item)
     if "candidate_support_pack_count" in evidence:
         return normalize_int(evidence.get("candidate_support_pack_count"))
@@ -579,10 +599,23 @@ def get_candidate_support_pack_count(item: dict[str, Any]) -> int:
 
 
 def get_should_refuse_final(item: dict[str, Any]) -> bool:
+    generation_v2 = get_generation_v2_debug(item)
+    answer_mode = str(generation_v2.get("answer_mode") or (generation_v2.get("answer_plan") or {}).get("mode") or "").strip()
+    if answer_mode == "refuse":
+        return True
     return bool(get_evidence_quality(item).get("should_refuse_final"))
 
 
 def get_refusal_reason(item: dict[str, Any]) -> str:
+    generation_v2 = get_generation_v2_debug(item)
+    for candidate in (
+        generation_v2.get("refuse_reason"),
+        (generation_v2.get("answer_plan") or {}).get("reason"),
+        get_evidence_quality(item).get("refusal_reason"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
     return str(get_evidence_quality(item).get("refusal_reason") or "").strip()
 
 
@@ -1599,15 +1632,15 @@ def build_failure_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
         response = str(item.get("response") or "")
         evidence = get_evidence_quality(item)
         debug = (item.get("api_response") or {}).get("debug") or {}
-        final_answer_mode = str(retrieval_eval.get("final_answer_mode") or "")
+        final_answer_mode = str(retrieval_eval.get("final_answer_mode") or get_effective_final_answer_mode(item) or "unknown")
         final_answer_mode_distribution[final_answer_mode] = final_answer_mode_distribution.get(final_answer_mode, 0) + 1
 
         if int(retrieval_eval.get("citation_count") or 0) == 0:
             zero_citation_ids.append(sample_id)
-            if retrieval_eval.get("zero_citation_substantive_answer"):
-                zero_citation_substantive_answer_ids.append(sample_id)
             if retrieval_eval.get("refusal_no_citation"):
                 refusal_no_citation_ids.append(sample_id)
+            elif retrieval_eval.get("zero_citation_substantive_answer"):
+                zero_citation_substantive_answer_ids.append(sample_id)
         if retrieval_eval.get("strict_route_match") is False:
             strict_route_miss_ids.append(sample_id)
         if retrieval_eval.get("accepted_route_match") is False:
@@ -1724,6 +1757,57 @@ def build_failure_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
             "final_answer_mode_distribution": final_answer_mode_distribution,
         },
     }
+
+
+def build_raw_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    raw_records: list[dict[str, Any]] = []
+    for item in records:
+        api_response = item.get("api_response") or {}
+        retrieval_eval = item.get("retrieval_eval") or {}
+        generation_v2 = get_generation_v2_debug(item)
+        support_pack = generation_v2.get("support_pack") or []
+        citations = api_response.get("citations") or []
+        raw_records.append(
+            {
+                "id": item.get("id"),
+                "question": item.get("question"),
+                "route": api_response.get("route"),
+                "expected_route": retrieval_eval.get("expected_route"),
+                "doc_hit": bool((retrieval_eval.get("doc_id_metrics") or {}).get("hit")),
+                "section_hit": bool((retrieval_eval.get("section_metrics") or {}).get("hit")),
+                "answer_mode": get_effective_final_answer_mode(item),
+                "citation_count": normalize_int(retrieval_eval.get("citation_count")),
+                "failure_category": retrieval_eval.get("failure_type"),
+                "answer_preview": get_answer_preview(item),
+                "support_pack_count": get_support_pack_count(item),
+                "debug": {
+                    "generation_v2": generation_v2 or None,
+                },
+                "support_pack": [
+                    {
+                        "evidence_id": support.get("evidence_id"),
+                        "chunk_id": support.get("chunk_id"),
+                        "doc_id": support.get("doc_id"),
+                        "section": support.get("section"),
+                        "support_score": support.get("support_score"),
+                        "reasons": support.get("reasons"),
+                    }
+                    for support in support_pack
+                ],
+                "citations": [
+                    {
+                        "chunk_id": citation.get("chunk_id"),
+                        "doc_id": citation.get("doc_id"),
+                        "section": citation.get("section"),
+                        "page": [citation.get("page_start"), citation.get("page_end")],
+                        "quote": citation.get("quote"),
+                    }
+                    for citation in citations
+                ],
+                "validator_debug": generation_v2.get("validator_debug") or {},
+            }
+        )
+    return raw_records
 
 
 def is_generation_failure(retrieval_eval: dict[str, Any], generation_eval: dict[str, Any]) -> bool:
@@ -2016,6 +2100,7 @@ def main() -> int:
             "items": generation_items,
         },
         "items": enriched,
+        "raw_records": build_raw_records(enriched),
     }
     report["enterprise_slices"] = build_slice_summary(enriched, embeddings=judge_embeddings)
     report["enterprise_gates"] = build_enterprise_gates(report)

@@ -13,6 +13,7 @@ from ..infrastructure.vectorstores.bm25 import BM25Retriever
 from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
 from .context_builder import ContextBuilder
+from .generation_v2 import GenerationV2Service
 from .generation_service import QwenChatGenerator
 from .neighbor_expansion import ChunkNeighborExpander
 from .rerank_service import QwenReranker
@@ -60,6 +61,7 @@ class SynBioRAGPipeline:
             temperature=settings.llm.temperature,
             round8_config=settings.round8,
         )
+        self.generator_v2 = GenerationV2Service(settings.llm)
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
         self.external_tools = ExternalToolManager(settings.tools)
 
@@ -84,6 +86,49 @@ class SynBioRAGPipeline:
             analysis=analysis,
         )
         seed_chunks = reranked[: self.settings.retrieval.final_top_k]
+        if self.settings.generation.version == "v2":
+            final_chunks = seed_chunks
+            confidence = self.confidence_scorer.score(seed_chunks)
+            gen_result = self.generator_v2.run(
+                question=question,
+                analysis=analysis,
+                seed_chunks=seed_chunks,
+                config=self.settings.generation,
+                history=history if self.settings.generation.v2_use_history else None,
+            )
+            return RAGResponse(
+                answer=gen_result.answer,
+                confidence=confidence,
+                route=analysis.intent,
+                citations=gen_result.citations,
+                used_external_tool=False,
+                tool_name=None,
+                tool_result=None,
+                session_id=session_id,
+                external_references=[],
+                debug={
+                    "analysis_notes": analysis.notes,
+                    "retrieved_count": len(retrieved),
+                    "reranked_count": len(reranked),
+                    "seed_context_count": len(seed_chunks),
+                    "final_context_count": len(final_chunks),
+                    "context_chars": 0,
+                    "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+                    "tenant_id": filters.tenant_id if filters else "default",
+                    "hybrid_enabled": self.settings.retrieval.hybrid_enabled,
+                    "bm25_enabled": self.settings.retrieval.bm25_enabled,
+                    "retrieval_hits": getattr(self.retriever, "last_debug", {}),
+                    "rerank_hits": getattr(self.reranker, "last_debug", {}),
+                    "neighbor_expansion": {
+                        "enabled": False,
+                        "reason": "generation_v2_seed_only",
+                        "input_count": len(seed_chunks),
+                        "output_count": len(seed_chunks),
+                    },
+                    "filter_strategy": retrieval_debug,
+                    "generation_v2": gen_result.debug,
+                },
+            )
         final_chunks = self.neighbor_expander.expand(seed_chunks)
         context = self.context_builder.build(question, final_chunks, history=history, intent=analysis.intent)
         evidence_quality = self.generator.assess_evidence(question, final_chunks, analysis=analysis)
