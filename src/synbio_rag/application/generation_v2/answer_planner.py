@@ -15,6 +15,7 @@ _FIGURE_LABEL_PATTERN = re.compile(r"(figure\s*\d+|fig\.\s*\d+|fig\s*\d+|图\s*\
 class AnswerPlanner:
     def __init__(self) -> None:
         self.last_existence_guardrail: dict[str, object] = {}
+        self.last_comparison_coverage_debug: dict[str, object] = {"reason": "not_comparison_intent", "parse_ok": False}
 
     def plan(
         self,
@@ -24,6 +25,7 @@ class AnswerPlanner:
         candidates: list[EvidenceCandidate] | None = None,
         config: GenerationConfig | None = None,
     ) -> AnswerPlan:
+        self.last_comparison_coverage_debug = {"reason": "not_comparison_intent", "parse_ok": False}
         existence_signal = detect_existence_question(question)
         existence_assessment = evaluate_existence_support(question, support_pack, candidates)
         self.last_existence_guardrail = {
@@ -50,12 +52,25 @@ class AnswerPlanner:
         comparison_coverage: ComparisonCoverage | None = None
         parse_result = parse_comparison_branches(question) if analysis.intent == QueryIntent.COMPARISON else None
         branches = parse_result.branches if parse_result and parse_result.parse_ok else []
-        if (
-            analysis.intent == QueryIntent.COMPARISON
-            and branches
-            and (config is None or config.v2_enable_comparison_coverage)
-        ):
-            comparison_coverage = build_comparison_coverage(question, branches, support_pack, candidates)
+        if analysis.intent == QueryIntent.COMPARISON:
+            if config is not None and not config.v2_enable_comparison_coverage:
+                self.last_comparison_coverage_debug = {"reason": "coverage_disabled", "parse_ok": False}
+            elif not parse_result or not parse_result.parse_ok:
+                self.last_comparison_coverage_debug = {
+                    "reason": "branch_parse_failed",
+                    "parse_ok": False,
+                    "branches": list(parse_result.branches) if parse_result else [],
+                }
+            elif not branches:
+                self.last_comparison_coverage_debug = {"reason": "no_valid_branches", "parse_ok": False}
+            elif not support_pack:
+                self.last_comparison_coverage_debug = {"reason": "empty_support_pack", "parse_ok": True, "branches": list(branches)}
+            else:
+                try:
+                    comparison_coverage = build_comparison_coverage(question, branches, support_pack, candidates)
+                    self.last_comparison_coverage_debug = comparison_coverage.to_dict()
+                except Exception:
+                    self.last_comparison_coverage_debug = {"reason": "coverage_builder_error", "parse_ok": False}
         covered_branches = list(comparison_coverage.covered_branches) if comparison_coverage else [
             branch for branch in branches if any(_branch_matches(branch, item) for item in support_pack)
         ]
@@ -109,18 +124,31 @@ class AnswerPlanner:
                     statuses = {entry.status for entry in comparison_coverage.branch_evidence}
                     direct_branches = [entry.branch for entry in comparison_coverage.branch_evidence if entry.status == "direct"]
                     indirect_branches = [entry.branch for entry in comparison_coverage.branch_evidence if entry.status == "indirect"]
-                    unique_direct_evidence_ids = {
+                    unique_direct_primary_ids = {
                         evidence_id
                         for entry in comparison_coverage.branch_evidence
                         if entry.status == "direct"
-                        for evidence_id in entry.evidence_ids
+                        for evidence_id in entry.primary_evidence_ids
                     }
-                    if support_pack and statuses == {"direct"} and len(unique_direct_evidence_ids) >= len(branches):
-                        mode = "full"
-                        reason = "comparison_branch_coverage"
+                    if (
+                        support_pack
+                        and statuses == {"direct"}
+                        and comparison_coverage.reason != "shared_evidence_limited_comparison"
+                        and len(unique_direct_primary_ids) >= len(branches)
+                    ):
+                        mode = "partial"
+                        reason = "direct_all_branches_independent"
+                    elif support_pack and comparison_coverage.reason == "shared_evidence_limited_comparison":
+                        mode = "partial"
+                        reason = "shared_evidence_limited_comparison"
                     elif support_pack and (direct_branches or indirect_branches):
                         mode = "partial"
-                        reason = "comparison_branch_coverage" if direct_branches else "comparison_indirect_support"
+                        if direct_branches and indirect_branches:
+                            reason = "branch_partial_support"
+                        elif direct_branches:
+                            reason = "comparison_branch_coverage"
+                        else:
+                            reason = "comparison_indirect_support"
                     elif support_pack:
                         mode = "partial"
                         reason = "comparison_indirect_support"
@@ -132,6 +160,8 @@ class AnswerPlanner:
                         allowed_scope.extend(
                             ["branch_limited_comparison", "missing_or_indirect_branches_must_be_disclosed"]
                         )
+                        if reason == "shared_evidence_limited_comparison":
+                            allowed_scope.append("shared_evidence_not_full_comparison")
                 elif covered_branches and not missing_branches:
                     mode = "full"
                     reason = "comparison_branch_coverage"

@@ -42,6 +42,7 @@ class SynthesisResult:
     fallback_reason: str
     raw_output_preview: str
     validation_flags: list[str] = field(default_factory=list)
+    validation_details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -134,6 +135,7 @@ class QwenSynthesizer:
             extractive_answer=extractive_answer,
             existence_guardrail=existence_guardrail or {},
         )
+        validation_details = getattr(validate_synthesized_answer, "last_details", {})
         if not is_valid:
             return SynthesisResult(
                 answer=extractive_answer,
@@ -142,6 +144,7 @@ class QwenSynthesizer:
                 fallback_reason="validation_failed",
                 raw_output_preview=synthesized_answer[:300],
                 validation_flags=validation_flags,
+                validation_details=validation_details,
             )
 
         return SynthesisResult(
@@ -151,6 +154,7 @@ class QwenSynthesizer:
             fallback_reason="",
             raw_output_preview=synthesized_answer[:300],
             validation_flags=validation_flags,
+            validation_details=validation_details,
         )
 
 
@@ -164,6 +168,7 @@ def validate_synthesized_answer(
     existence_guardrail: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     flags: list[str] = []
+    details: dict[str, Any] = {}
     support_ids = {item.evidence_id for item in support_pack}
     output_refs = _extract_evidence_ids(answer)
     extractive_refs = _extract_evidence_ids(extractive_answer)
@@ -179,8 +184,11 @@ def validate_synthesized_answer(
     invalid_refs = [ref for ref in output_refs if ref not in support_ids]
     if invalid_refs:
         flags.append("invalid_citation_ids")
-    if not exact_set_policy and any(ref not in allowed_ids for ref in output_refs):
+        details["invalid_evidence_ids"] = invalid_refs
+    disallowed_refs = [ref for ref in output_refs if ref not in allowed_ids] if not exact_set_policy else []
+    if disallowed_refs:
         flags.append("comparison_disallowed_citation")
+        details["disallowed_evidence_ids"] = disallowed_refs
 
     if len(answer) > config.v2_qwen_synthesis_max_output_chars:
         flags.append("output_too_long")
@@ -230,6 +238,7 @@ def validate_synthesized_answer(
     ):
         flags.append("missing_existence_weak_disclaimer")
 
+    validate_synthesized_answer.last_details = details
     return not flags, flags
 
 

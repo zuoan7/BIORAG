@@ -62,6 +62,11 @@ class GenerationV2Service:
             "selected_evidence_ids": [item.evidence_id for item in support_pack],
             "citation_binding": citation_debug,
         }
+        comparison_coverage_debug = (
+            plan.comparison_coverage.to_dict()
+            if plan.comparison_coverage
+            else dict(getattr(self.answer_planner, "last_comparison_coverage_debug", {"reason": "not_comparison_intent", "parse_ok": False}))
+        )
         debug = {
             "generation_version": "v2",
             "neighbor_expansion_used": False,
@@ -77,7 +82,7 @@ class GenerationV2Service:
             "citation_count": len(citations),
             "validator_debug": validator_debug,
             "existence_guardrail": existence_guardrail,
-            "comparison_coverage": plan.comparison_coverage.to_dict() if plan.comparison_coverage else {},
+            "comparison_coverage": comparison_coverage_debug,
             "qwen_synthesis": {
                 "enabled": bool(config.v2_use_qwen_synthesis),
                 "attempted": qwen_attempted,
@@ -85,6 +90,10 @@ class GenerationV2Service:
                 "fallback_used": synthesis_result.fallback_used,
                 "fallback_reason": synthesis_result.fallback_reason,
                 "validation_flags": list(synthesis_result.validation_flags),
+                "validation_details": dict(synthesis_result.validation_details),
+                "disallowed_evidence_ids": list(
+                    synthesis_result.validation_details.get("disallowed_evidence_ids", [])
+                ),
                 "raw_output_preview": synthesis_result.raw_output_preview,
                 "input_evidence_ids": [item.evidence_id for item in support_pack],
                 "output_evidence_ids": qwen_output_evidence_ids,

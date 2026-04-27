@@ -45,6 +45,8 @@ class BranchEvidence:
     branch: str
     status: str
     evidence_ids: list[str] = field(default_factory=list)
+    primary_evidence_ids: list[str] = field(default_factory=list)
+    secondary_evidence_ids: list[str] = field(default_factory=list)
     confidence: float = 0.0
     reasons: list[str] = field(default_factory=list)
     matched_terms: list[str] = field(default_factory=list)

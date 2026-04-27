@@ -36,12 +36,10 @@ class ExtractiveAnswerBuilder:
                 f"以下证据仅能说明相关背景，不能证明文库中已有完整的{target_terms}。"
             )
         elif comparison_coverage and comparison_coverage.parse_ok and comparison_coverage.branch_evidence:
-            if comparison_coverage.missing_branches or any(
-                entry.status == "indirect" for entry in comparison_coverage.branch_evidence
-            ):
-                lines.append("根据当前知识库证据，可以进行有限比较：")
-            else:
+            if plan.mode == "full":
                 lines.append("根据当前知识库证据，可以进行比较：")
+            else:
+                lines.append("根据当前知识库证据，只能进行有限比较：")
             support_by_id = {item.evidence_id: item for item in support_pack}
             for branch_info in comparison_coverage.branch_evidence:
                 evidence_refs = [
@@ -54,17 +52,19 @@ class ExtractiveAnswerBuilder:
                     evidence_text = "、".join(evidence_refs)
                 if branch_info.status == "direct":
                     item = support_by_id.get(branch_info.evidence_ids[0]) if branch_info.evidence_ids else None
-                    summary = _summarize(item) if item else "当前证据提供了该分支的直接信息。"
-                    lines.append(f"关于{branch_info.branch}，证据显示：{summary} {evidence_text}".strip())
+                    summary = _summarize(item) if item else "当前证据直接涉及该分支。"
+                    lines.append(f"关于{branch_info.branch}，证据直接涉及：{summary} {evidence_text}".strip())
                 elif branch_info.status == "indirect":
                     item = support_by_id.get(branch_info.evidence_ids[0]) if branch_info.evidence_ids else None
                     summary = _summarize(item) if item else "当前证据仅提供相关背景。"
                     lines.append(f"关于{branch_info.branch}，当前证据只提供间接线索：{summary} {evidence_text}".strip())
                 else:
                     lines.append(f"关于{branch_info.branch}，当前 support pack 未提供直接证据。")
+            if plan.reason == "shared_evidence_limited_comparison":
+                lines.append("部分分支依赖相同或重叠证据，不能视为两个分支都已有独立充分支持。")
             if comparison_coverage.missing_branches or any(
                 entry.status == "indirect" for entry in comparison_coverage.branch_evidence
-            ):
+            ) or plan.reason == "shared_evidence_limited_comparison":
                 lines.append("因此不能把缺失或仅间接支持的分支推断为已被文库完整支持。")
         elif plan.mode == "full":
             lines.append("根据当前知识库证据：")
