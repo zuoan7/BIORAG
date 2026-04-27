@@ -66,6 +66,18 @@ class ExtractiveAnswerBuilder:
                 entry.status == "indirect" for entry in comparison_coverage.branch_evidence
             ) or plan.reason == "shared_evidence_limited_comparison":
                 lines.append("因此不能把缺失或仅间接支持的分支推断为已被文库完整支持。")
+        elif analysis.intent == QueryIntent.SUMMARY and plan.mode == "full":
+            lines.append("根据当前知识库证据，可作如下总结：")
+        elif analysis.intent == QueryIntent.SUMMARY and plan.mode == "partial":
+            lines.append("当前知识库只能支持有限总结。")
+            if len(support_pack) == 1:
+                lines.append("当前只检索到一条较直接的合格证据，因此以下总结只能覆盖该证据涉及的范围。")
+            elif plan.reason == "summary_abstract_only":
+                lines.append("当前合格证据主要来自摘要层面，缺少更完整的结果或讨论支撑，因此不能视为完整综述。")
+            elif plan.reason in {"summary_single_doc_limited", "summary_low_diversity"}:
+                lines.append("当前证据可以支持部分总结，但证据集中在有限文献或章节中，不能视为完整综述。")
+            else:
+                lines.append("当前知识库只能支持有限总结，因为检索到的合格证据较少。")
         elif plan.mode == "full":
             lines.append("根据当前知识库证据：")
         else:

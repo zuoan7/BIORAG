@@ -16,6 +16,7 @@ class AnswerPlanner:
     def __init__(self) -> None:
         self.last_existence_guardrail: dict[str, object] = {}
         self.last_comparison_coverage_debug: dict[str, object] = {"reason": "not_comparison_intent", "parse_ok": False}
+        self.last_summary_plan_debug: dict[str, object] = {"is_summary": False}
 
     def plan(
         self,
@@ -26,6 +27,7 @@ class AnswerPlanner:
         config: GenerationConfig | None = None,
     ) -> AnswerPlan:
         self.last_comparison_coverage_debug = {"reason": "not_comparison_intent", "parse_ok": False}
+        self.last_summary_plan_debug = {"is_summary": False}
         existence_signal = detect_existence_question(question)
         existence_assessment = evaluate_existence_support(question, support_pack, candidates)
         self.last_existence_guardrail = {
@@ -47,6 +49,8 @@ class AnswerPlanner:
                     reason="existence_no_support",
                     allowed_scope=["insufficient_library_evidence"],
                 )
+            if analysis.intent == QueryIntent.SUMMARY:
+                return AnswerPlan(mode="refuse", reason="summary_no_support", allowed_scope=["supported_summary"])
             return AnswerPlan(mode="refuse", reason="no_support_pack", allowed_scope=[])
 
         comparison_coverage: ComparisonCoverage | None = None
@@ -60,6 +64,8 @@ class AnswerPlanner:
                     "reason": "branch_parse_failed",
                     "parse_ok": False,
                     "branches": list(parse_result.branches) if parse_result else [],
+                    "parse_failure_reason": parse_result.reason if parse_result else "missing_parse_result",
+                    "parser_patterns_tried": list(parse_result.parser_patterns_tried) if parse_result else [],
                 }
             elif not branches:
                 self.last_comparison_coverage_debug = {"reason": "no_valid_branches", "parse_ok": False}
@@ -110,14 +116,70 @@ class AnswerPlanner:
                 comparison_coverage=comparison_coverage,
             )
         elif analysis.intent == QueryIntent.SUMMARY:
-            base_plan = AnswerPlan(
-                mode="full" if len(support_pack) >= 2 else "partial",
-                reason="summary_support_count",
-                covered_branches=covered_branches,
-                missing_branches=missing_branches,
-                allowed_scope=["supported_summary"],
-                comparison_coverage=comparison_coverage,
-            )
+            self.last_summary_plan_debug = _build_summary_plan_debug(support_pack)
+            if not support_pack:
+                base_plan = AnswerPlan(
+                    mode="refuse",
+                    reason="summary_no_support",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary"],
+                    comparison_coverage=comparison_coverage,
+                )
+            elif len(support_pack) == 1:
+                base_plan = AnswerPlan(
+                    mode="partial",
+                    reason="summary_support_count",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary", "limited_summary_single_evidence"],
+                    comparison_coverage=comparison_coverage,
+                )
+            elif self.last_summary_plan_debug.get("insufficient_qualified_summary_support"):
+                base_plan = AnswerPlan(
+                    mode="partial",
+                    reason="summary_support_count",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary", "limited_summary_single_evidence"],
+                    comparison_coverage=comparison_coverage,
+                )
+            elif self.last_summary_plan_debug.get("abstract_only"):
+                base_plan = AnswerPlan(
+                    mode="partial",
+                    reason="summary_abstract_only",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary"],
+                    comparison_coverage=comparison_coverage,
+                )
+            elif self.last_summary_plan_debug.get("single_doc_limited"):
+                base_plan = AnswerPlan(
+                    mode="partial",
+                    reason="summary_single_doc_limited",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary"],
+                    comparison_coverage=comparison_coverage,
+                )
+            elif self.last_summary_plan_debug.get("low_diversity"):
+                base_plan = AnswerPlan(
+                    mode="partial",
+                    reason="summary_low_diversity",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary"],
+                    comparison_coverage=comparison_coverage,
+                )
+            else:
+                base_plan = AnswerPlan(
+                    mode="full",
+                    reason="summary_multi_support",
+                    covered_branches=covered_branches,
+                    missing_branches=missing_branches,
+                    allowed_scope=["supported_summary"],
+                    comparison_coverage=comparison_coverage,
+                )
         elif analysis.intent == QueryIntent.COMPARISON:
             if branches:
                 if comparison_coverage:
@@ -277,3 +339,39 @@ def _is_meaningful_support(item: SupportItem) -> bool:
         return False
     text_length = int(item.candidate.features.get("text_length") or len(item.candidate.text or ""))
     return text_length >= 12 and item.support_score > 0.0
+
+
+def _build_summary_plan_debug(support_pack: list[SupportItem]) -> dict[str, object]:
+    section_buckets = [_summary_section_bucket(item.candidate.section) for item in support_pack]
+    doc_ids = [item.candidate.doc_id for item in support_pack]
+    unique_docs = set(doc_ids)
+    unique_sections = set(section_buckets)
+    abstract_only = bool(section_buckets) and unique_sections == {"abstract"}
+    low_diversity = len(unique_sections) <= 1 and len(unique_docs) <= 1
+    return {
+        "is_summary": True,
+        "support_pack_count": len(support_pack),
+        "doc_count": len(unique_docs),
+        "section_count": len(unique_sections),
+        "abstract_only": abstract_only,
+        "single_doc_limited": len(unique_docs) == 1 and len(support_pack) >= 2,
+        "low_diversity": low_diversity and not abstract_only,
+        "insufficient_qualified_summary_support": any(
+            "insufficient_qualified_summary_support" in item.reasons for item in support_pack
+        ),
+    }
+
+
+def _summary_section_bucket(section: str) -> str:
+    lowered = (section or "").lower()
+    if "result" in lowered and "discussion" in lowered:
+        return "results_and_discussion"
+    if "result" in lowered:
+        return "results"
+    if "discussion" in lowered:
+        return "discussion"
+    if "abstract" in lowered:
+        return "abstract"
+    if "introduction" in lowered:
+        return "introduction"
+    return "other"

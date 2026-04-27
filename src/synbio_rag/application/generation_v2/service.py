@@ -61,12 +61,15 @@ class GenerationV2Service:
             "candidate_ids": [candidate.evidence_id for candidate in candidates],
             "selected_evidence_ids": [item.evidence_id for item in support_pack],
             "citation_binding": citation_debug,
+            "summary_selection": dict(getattr(self.support_selector, "last_summary_selection_debug", {"is_summary": False})),
         }
         comparison_coverage_debug = (
             plan.comparison_coverage.to_dict()
             if plan.comparison_coverage
             else dict(getattr(self.answer_planner, "last_comparison_coverage_debug", {"reason": "not_comparison_intent", "parse_ok": False}))
         )
+        summary_selection_debug = dict(getattr(self.support_selector, "last_summary_selection_debug", {"is_summary": False}))
+        summary_plan_debug = dict(getattr(self.answer_planner, "last_summary_plan_debug", {"is_summary": False}))
         debug = {
             "generation_version": "v2",
             "neighbor_expansion_used": False,
@@ -83,6 +86,8 @@ class GenerationV2Service:
             "validator_debug": validator_debug,
             "existence_guardrail": existence_guardrail,
             "comparison_coverage": comparison_coverage_debug,
+            "summary_selection": summary_selection_debug,
+            "summary_plan": summary_plan_debug,
             "qwen_synthesis": {
                 "enabled": bool(config.v2_use_qwen_synthesis),
                 "attempted": qwen_attempted,

@@ -15,6 +15,21 @@ _PARTIAL_OVERCLAIM_PATTERNS = (
     "可以确定文库中完整包含",
     "两者均已充分证明",
     "可以确认文库中完整包含",
+    "完整比较",
+    "完整回答",
+    "充分证明",
+    "均已充分支持",
+    "可以确定",
+    "完全支持",
+    "文库已经证明",
+    "明确证明两者",
+    "无需额外证据",
+    "已完整覆盖",
+    "fully supported",
+    "complete comparison",
+    "conclusively proves",
+    "sufficient evidence for all",
+    "definitely confirms",
 )
 _EXISTENCE_OVERCLAIM_PATTERNS = (
     "文库中有该详细方案",
@@ -25,13 +40,32 @@ _EXISTENCE_OVERCLAIM_PATTERNS = (
 )
 _LIMITATION_TERMS = ("不足", "缺失", "无法", "不能完整比较", "不能逐分支", "不能确认", "证据限制")
 _INDIRECT_LIMITATION_TERMS = ("间接", "有限比较", "不能完整比较", "不能逐分支", "证据限制")
-_PARTIAL_ABSTENTION_PATTERNS = (
-    "文库中未提供",
-    "文库中没有",
-    "当前知识库中没有",
-    "无法基于当前证据总结",
-    "直接比较证据不足",
+_PARTIAL_LIMITATION_PATTERNS = (
+    "有限比较",
+    "有限回答",
+    "只能支持部分",
+    "当前证据只能",
+    "当前文库只能",
+    "在文库所支持的范围内",
+    "证据不足以",
+    "不能完整",
+    "不能逐分支",
+    "不能逐分支完整比较",
+    "无法完整",
+    "缺乏直接",
+    "仅提供间接",
+    "部分支持",
+    "证据分布不均衡",
+    "尚不能",
+    "不能确认",
+    "limited comparison",
+    "partial support",
+    "insufficient evidence",
+    "indirect evidence",
+    "cannot fully",
+    "not enough evidence",
 )
+_NEGATING_PREFIXES = ("不能", "无法", "尚不能", "不可", "不应", "not ", "cannot ", "can't ")
 
 
 @dataclass
@@ -180,6 +214,8 @@ def validate_synthesized_answer(
         and comparison_coverage.parse_ok
         and allowed_ids
     )
+    comparison_policy = "exact_set" if exact_set_policy else "comparison_allowed_subset"
+    details["comparison_policy"] = comparison_policy
 
     invalid_refs = [ref for ref in output_refs if ref not in support_ids]
     if invalid_refs:
@@ -189,6 +225,7 @@ def validate_synthesized_answer(
     if disallowed_refs:
         flags.append("comparison_disallowed_citation")
         details["disallowed_evidence_ids"] = disallowed_refs
+    details["citation_subset_ok"] = not disallowed_refs if not exact_set_policy else True
 
     if len(answer) > config.v2_qwen_synthesis_max_output_chars:
         flags.append("output_too_long")
@@ -211,10 +248,21 @@ def validate_synthesized_answer(
                 flags.append("missing_direct_branch_citation")
                 break
 
-    if plan.mode == "partial" and any(pattern in answer for pattern in _PARTIAL_OVERCLAIM_PATTERNS):
+    if plan.mode == "partial" and _find_non_negated_patterns(answer, _PARTIAL_OVERCLAIM_PATTERNS):
         flags.append("partial_overclaim")
-    if plan.mode == "partial" and any(pattern in answer for pattern in _PARTIAL_ABSTENTION_PATTERNS):
-        flags.append("partial_abstention_tone")
+    partial_limit_terms_found = [pattern for pattern in _PARTIAL_LIMITATION_PATTERNS if pattern in answer]
+    partial_overclaim_terms_found = _find_non_negated_patterns(answer, _PARTIAL_OVERCLAIM_PATTERNS)
+    details["partial_limit_terms_found"] = partial_limit_terms_found
+    details["partial_overclaim_terms_found"] = partial_overclaim_terms_found
+    if plan.mode == "partial":
+        partial_tone_ok = bool(partial_limit_terms_found) and not partial_overclaim_terms_found
+        if not partial_tone_ok:
+            flags.append("partial_abstention_tone")
+            details["partial_tone_decision"] = "fail"
+        else:
+            details["partial_tone_decision"] = "pass"
+    else:
+        details["partial_tone_decision"] = "not_applicable"
 
     if plan.reason == "existence_weak_support" and any(pattern in answer for pattern in _EXISTENCE_OVERCLAIM_PATTERNS):
         flags.append("existence_overclaim")
@@ -351,3 +399,16 @@ def _extract_evidence_ids(answer: str) -> list[str]:
         if evidence_id not in ordered:
             ordered.append(evidence_id)
     return ordered
+
+
+def _find_non_negated_patterns(text: str, patterns: tuple[str, ...]) -> list[str]:
+    found: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(re.escape(pattern), text or "", flags=re.IGNORECASE):
+            prefix = (text or "")[max(0, match.start() - 8) : match.start()].lower()
+            if any(neg.lower() in prefix for neg in _NEGATING_PREFIXES):
+                continue
+            if pattern not in found:
+                found.append(pattern)
+            break
+    return found

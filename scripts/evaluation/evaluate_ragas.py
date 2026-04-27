@@ -628,6 +628,8 @@ def is_effective_refusal(item: dict[str, Any]) -> bool:
     final_answer_mode = get_final_answer_mode(item)
     if final_answer_mode == "limited_partial_compare":
         return False
+    if final_answer_mode in {"partial", "full"} and get_generation_v2_debug(item):
+        return False
     if final_answer_mode == "refuse":
         return True
     if get_should_refuse_final(item):

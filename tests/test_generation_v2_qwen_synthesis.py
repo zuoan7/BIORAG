@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from src.synbio_rag.application.generation_v2.models import AnswerPlan, EvidenceCandidate, SupportItem
-from src.synbio_rag.application.generation_v2.qwen_synthesizer import QwenSynthesizer
+from src.synbio_rag.application.generation_v2.models import (
+    AnswerPlan,
+    BranchEvidence,
+    ComparisonCoverage,
+    EvidenceCandidate,
+    SupportItem,
+)
+from src.synbio_rag.application.generation_v2.qwen_synthesizer import QwenSynthesizer, validate_synthesized_answer
 from src.synbio_rag.application.generation_v2.service import GenerationV2Service
 from src.synbio_rag.domain.config import GenerationConfig
 from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
@@ -170,6 +176,34 @@ def _service_with(
     return service
 
 
+def _comparison_coverage(*, allowed_ids: list[str], missing_branches: list[str] | None = None) -> ComparisonCoverage:
+    missing = missing_branches or []
+    covered = ["branch_a"] if missing else ["branch_a", "branch_b"]
+    branch_evidence = [
+        BranchEvidence(
+            branch="branch_a",
+            status="direct",
+            evidence_ids=["E1"],
+            primary_evidence_ids=["E1"],
+        ),
+        BranchEvidence(
+            branch="branch_b",
+            status="indirect" if missing else "direct",
+            evidence_ids=["E2"],
+            primary_evidence_ids=["E2"],
+        ),
+    ]
+    return ComparisonCoverage(
+        parse_ok=True,
+        branches=["branch_a", "branch_b"],
+        branch_evidence=branch_evidence,
+        covered_branches=covered,
+        missing_branches=missing,
+        allowed_citation_evidence_ids=allowed_ids,
+        reason="branch_partial_support" if missing else "all_branches_direct",
+    )
+
+
 def test_qwen_synthesis_disabled_skips_client_and_reports_debug() -> None:
     service = _service_with(
         qwen_output=None,
@@ -318,6 +352,171 @@ def test_qwen_synthesis_partial_non_existence_cannot_shift_to_refusal_tone() -> 
 
     assert result.debug["qwen_synthesis"]["fallback_used"] is True
     assert "partial_abstention_tone" in result.debug["qwen_synthesis"]["validation_flags"]
+
+
+def test_validate_synthesized_answer_allows_partial_comparison_with_limit_terms() -> None:
+    support_pack = [_support_item("E1"), _support_item("E2", doc_id="doc_0002")]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        covered_branches=["branch_a", "branch_b"],
+        missing_branches=[],
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可进行有限比较：关于分支A，证据显示相关结果 [E1]；关于分支B，当前证据提供部分支持 [E2]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is True
+    assert flags == []
+    details = validate_synthesized_answer.last_details
+    assert "在文库所支持的范围内" in details["partial_limit_terms_found"]
+    assert "有限比较" in details["partial_limit_terms_found"]
+    assert details["partial_tone_decision"] == "pass"
+    assert details["comparison_policy"] == "comparison_allowed_subset"
+    assert details["citation_subset_ok"] is True
+
+
+def test_validate_synthesized_answer_rejects_partial_without_limit_terms() -> None:
+    support_pack = [_support_item("E1"), _support_item("E2", doc_id="doc_0002")]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "证据显示两类分支分别具有相关结果 [E1][E2]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "partial_abstention_tone" in flags
+    assert validate_synthesized_answer.last_details["partial_tone_decision"] == "fail"
+
+
+def test_validate_synthesized_answer_rejects_partial_with_overclaim_terms() -> None:
+    support_pack = [_support_item("E1"), _support_item("E2", doc_id="doc_0002")]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可以完整比较，两者均已充分证明 [E1][E2]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "partial_abstention_tone" in flags
+    assert "partial_overclaim" in flags
+    details = validate_synthesized_answer.last_details
+    assert "可以完整比较" in details["partial_overclaim_terms_found"] or "完整比较" in details["partial_overclaim_terms_found"]
+
+
+def test_validate_synthesized_answer_keeps_comparison_allowed_subset_strict() -> None:
+    support_pack = [
+        _support_item("E1"),
+        _support_item("E2", doc_id="doc_0002"),
+        _support_item("E3", doc_id="doc_0003"),
+    ]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可进行有限比较 [E3]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "comparison_disallowed_citation" in flags
+    assert validate_synthesized_answer.last_details["disallowed_evidence_ids"] == ["E3"]
+
+
+def test_validate_synthesized_answer_ent007_style_partial_comparison_passes() -> None:
+    support_pack = [
+        _support_item("E1"),
+        _support_item("E3", doc_id="doc_0003"),
+        _support_item("E4", doc_id="doc_0004"),
+    ]
+    coverage = ComparisonCoverage(
+        parse_ok=True,
+        branches=["调控 E. coli 唾液酸代谢", "被改造成 Neu5Ac 传感器"],
+        branch_evidence=[
+            BranchEvidence(branch="调控 E. coli 唾液酸代谢", status="direct", evidence_ids=["E3", "E4"], primary_evidence_ids=["E4"]),
+            BranchEvidence(branch="被改造成 Neu5Ac 传感器", status="direct", evidence_ids=["E1"], primary_evidence_ids=["E1"]),
+        ],
+        covered_branches=["调控 E. coli 唾液酸代谢", "被改造成 Neu5Ac 传感器"],
+        missing_branches=[],
+        allowed_citation_evidence_ids=["E3", "E4", "E1"],
+        reason="all_branches_direct",
+    )
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        covered_branches=coverage.covered_branches,
+        comparison_coverage=coverage,
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可进行有限比较：天然调控分支的证据显示相关机制 [E3][E4]；工程应用分支有直接传感器证据 [E1]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E3][E4][E1]",
+        existence_guardrail={},
+    )
+
+    assert ok is True
+    assert flags == []
+
+
+def test_validate_synthesized_answer_ent084_style_disallowed_citation_still_fails() -> None:
+    support_pack = [
+        _support_item("E1"),
+        _support_item("E2", doc_id="doc_0002"),
+        _support_item("E3", doc_id="doc_0003"),
+        _support_item("E4", doc_id="doc_0004"),
+    ]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可进行有限比较 [E1][E3][E4]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "comparison_disallowed_citation" in flags
 
 
 def test_qwen_synthesis_existence_weak_support_cannot_claim_full_existence() -> None:
