@@ -66,6 +66,16 @@ REFERENCE_SECTION_PATTERN = re.compile(
     re.I,
 )
 
+_METADATA_HEADINGS = {
+    "acknowledgements", "acknowledgments", "funding", "data availability",
+    "author contributions", "competing interests", "competing interest",
+    "conflict of interest", "conflicts of interest",
+    "corresponding author", "corresponding authors",
+    "associated content", "author information", "supporting information",
+    "references", "bibliography", "literature cited", "works cited",
+    "supplementary material", "supplementary data", "supplementary information",
+}
+
 NOISE_LINE_PATTERNS = [
     re.compile(r"^\s*\d+\s*$"),
     re.compile(r"^\s*doi\s*:", re.I),
@@ -96,7 +106,7 @@ HEADER_FOOTER_PATTERN = re.compile(
 )
 
 HYPHEN_BREAK_PATTERN = re.compile(r"(\w)-\s+(\w)")
-LEADING_MARKER_PATTERN = re.compile(r"^\s*(?:[#>*\-]+)\s*")
+LEADING_MARKER_PATTERN = re.compile(r"^\s*(?:[#>*\-■▪►●→▸▹◆◇⬛]+)\s*")
 TITLE_EXPLICIT_PATTERN = re.compile(r"^\s*(?:title|article)\s*:\s*(.+)$", re.I)
 PAGE_MARKER_PATTERN = re.compile(r"^\s*(?:page\s+)?\d+\s*(?:of|/)\s*\d+\s*$", re.I)
 DOWNLOADED_LINE_PATTERN = re.compile(r"^\s*downloaded\s+via\b", re.I)
@@ -675,45 +685,84 @@ def chunk_by_blocks(
         bpage = block.get("page", 1)
 
         if btype in ("section_heading", "subsection_heading"):
-            # 保存当前 section group
-            if current_blocks:
-                section_groups.append({
-                    "section": current_section,
-                    "section_path": list(current_section_path),
-                    "blocks": current_blocks,
-                })
-            # 开启新 section
             heading_text = btext.lstrip("#").strip()
-            if btype == "section_heading":
+            normalized = _normalize_heading_line(heading_text)
+            standard_name = _match_section_title(normalized)
+
+            is_metadata = normalized.lower().strip().rstrip(".") in _METADATA_HEADINGS
+
+            if standard_name:
+                # 保存当前 section group
+                if current_blocks:
+                    section_groups.append({
+                        "section": current_section,
+                        "section_path": list(current_section_path),
+                        "blocks": current_blocks,
+                    })
+                heading_text = standard_name
+                if btype == "section_heading":
+                    current_section = heading_text
+                    current_section_path = [heading_text]
+                else:
+                    if current_section_path:
+                        if len(current_section_path) > 1:
+                            current_section_path[-1] = heading_text
+                        else:
+                            current_section_path.append(heading_text)
+                    else:
+                        current_section_path = [heading_text]
+                    current_section = heading_text
+                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                continue
+            elif is_metadata:
+                if skip_references:
+                    continue
+                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                continue
+            elif current_section_path:
+                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                continue
+            else:
+                if current_blocks:
+                    section_groups.append({
+                        "section": current_section,
+                        "section_path": list(current_section_path),
+                        "blocks": current_blocks,
+                    })
                 current_section = heading_text
                 current_section_path = [heading_text]
-            else:
-                # subsection: 保留 parent section
-                if current_section_path:
-                    # 替换最后一个 subsection 或追加
-                    if len(current_section_path) > 1:
-                        current_section_path[-1] = heading_text
-                    else:
-                        current_section_path.append(heading_text)
-                else:
-                    current_section_path = [heading_text]
-                current_section = heading_text
-            # heading block 也作为内容进入 chunk（标记 section）
-            current_blocks = [{"type": btype, "text": btext, "page": bpage}]
-            continue
+                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                continue
 
         if btype == "title":
-            # 保存当前 group
-            if current_blocks:
-                section_groups.append({
-                    "section": current_section,
-                    "section_path": list(current_section_path),
-                    "blocks": current_blocks,
-                })
-            current_section = "Title"
-            current_section_path = ["Title"]
-            current_blocks = [{"type": btype, "text": btext, "page": bpage}]
-            continue
+            title_text = btext.lstrip("#").strip()
+            title_normalized = _normalize_heading_line(title_text)
+            title_as_section = _match_section_title(title_normalized)
+            if title_as_section:
+                if current_blocks:
+                    section_groups.append({
+                        "section": current_section,
+                        "section_path": list(current_section_path),
+                        "blocks": current_blocks,
+                    })
+                current_section = title_as_section
+                current_section_path = [title_as_section]
+                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                continue
+            elif current_section_path:
+                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                continue
+            else:
+                if current_blocks:
+                    section_groups.append({
+                        "section": current_section,
+                        "section_path": list(current_section_path),
+                        "blocks": current_blocks,
+                    })
+                current_section = "Title"
+                current_section_path = ["Title"]
+                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                continue
 
         if btype == "references":
             if skip_references:
@@ -829,8 +878,9 @@ def _aggregate_blocks_into_chunks(
     chunk_overlap: int,
 ) -> list[list[dict]]:
     """
-    将 blocks 聚合成 chunk group 列表，每个 group 的总 token 数不超过 chunk_size。
-    heading block 总是开启新 group（除非前面没有内容）。
+    将 blocks 合并为段落级 chunk groups。
+    heading 附着到后续正文，不独立成 chunk；
+    相邻 paragraph blocks 按 chunk_size 累加合并。
     """
     if not blocks:
         return []
@@ -840,22 +890,16 @@ def _aggregate_blocks_into_chunks(
     current_tokens = 0
 
     for block in blocks:
-        btype = block["type"]
         block_tokens = count_tokens(block["text"])
 
-        # heading 开启新 chunk（如果当前 group 有内容）
-        if btype in ("section_heading", "subsection_heading") and current:
+        if current_tokens + block_tokens > chunk_size and current_tokens > 0:
             groups.append(current)
-            overlap_blocks = _get_overlap_blocks(current, chunk_overlap)
-            current = overlap_blocks
-            current_tokens = sum(count_tokens(b["text"]) for b in current)
-
-        # 如果加入当前 block 会超限，且当前 group 有内容
-        if current_tokens + block_tokens > chunk_size and current:
-            groups.append(current)
-            overlap_blocks = _get_overlap_blocks(current, chunk_overlap)
-            current = overlap_blocks
-            current_tokens = sum(count_tokens(b["text"]) for b in current)
+            overlap_text = _get_overlap_text_from_blocks(current, chunk_overlap)
+            current = []
+            current_tokens = 0
+            if overlap_text:
+                current.append({"type": "overlap", "text": overlap_text, "page": block["page"]})
+                current_tokens = count_tokens(overlap_text)
 
         current.append(block)
         current_tokens += block_tokens
@@ -866,19 +910,15 @@ def _aggregate_blocks_into_chunks(
     return groups
 
 
-def _get_overlap_blocks(blocks: list[dict], overlap_tokens: int) -> list[dict]:
-    """从 blocks 尾部提取 overlap 文本对应的 blocks。"""
-    if not blocks:
-        return []
-
-    # 从最后一个 block 取 overlap
-    last = blocks[-1]
-    words = last["text"].split()
-    if len(words) > overlap_tokens:
-        overlap_text = " ".join(words[-overlap_tokens:])
-        return [{"type": last["type"], "text": overlap_text, "page": last["page"]}]
-    else:
-        return [last]
+def _get_overlap_text_from_blocks(blocks: list[dict], overlap_tokens: int) -> str:
+    """从 blocks 列表末尾提取 overlap_tokens 个 token 的文本。"""
+    if not blocks or overlap_tokens <= 0:
+        return ""
+    all_text = " ".join(b["text"] for b in blocks if b["type"] != "overlap")
+    words = all_text.split()
+    if len(words) <= overlap_tokens:
+        return ""
+    return " ".join(words[-overlap_tokens:])
 
 
 # ============================================================

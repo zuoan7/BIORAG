@@ -5,6 +5,34 @@
 
 ---
 
+## 0. Retrieval 改进后新基线（2026-04-28 Phase 1+2+2b）
+
+### 改进内容
+
+1. **评测标签修正（Phase 1）**：修正 `expected_sections` 中与索引标签不一致的条目（如 `"Full Text"` → `"Results and Discussion"`），消除 5/7 的假阳性 section_miss。
+2. **Section 识别改进（Phase 2）**：`chunk_by_blocks()` 中对 heading 做标准化映射（`"■ INTRODUCTION"` → `"Introduction"`），title block 如匹配标准 section 则按 section 处理，metadata heading 静默跳过。
+3. **Chunk 粒度修复（Phase 2b）**：去掉 heading 强制开新 chunk 的逻辑，非标准 title 归入 parent section，恢复段落级检索粒度。
+
+### 新基线指标
+
+| 指标 | 旧值 | 新值 | 变化 |
+|------|------|------|------|
+| `doc_id_hit_rate` | 0.9412 | **1.0** | +5.9pp |
+| `section_hit_rate` | 0.4118 | **0.7647** | +35.3pp |
+| `section_miss` count | 7 | **3** | -57% |
+| `doc_miss` count | 1 | **0** | -100% |
+| `route_match_rate` | 0.85 | 0.85 | — |
+| `answer_mode_distribution` | full=5, partial=13, refuse=2 | full=5, partial=13, refuse=2 | — |
+| Chunk 总数 | 7267 | **10747** | +48%（block-based 路径） |
+| `<50 token` chunks 占比 | — | 2.4% | 正常 |
+| 单 section 文档占比 | 29.4% | **7.4%** | -75% |
+
+### 剩余 3 个 section_miss
+
+待排查，可能是 rerank 排序问题或标签仍有偏差。
+
+---
+
 ## 1. 当前 smoke20 指标基线
 
 数据来源：`reports/evaluation/ad_hoc/generation_v2_stage2e01_neighbor_gate_calibration/20260427_175109/v2_stage2d1_baseline.json`
