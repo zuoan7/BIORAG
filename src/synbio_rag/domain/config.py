@@ -49,8 +49,8 @@ class RetrievalConfig:
     cjk_query_bm25_weight: float = 0.25
     comparison_query_weight: float = 1.1
     comparison_subquery_weight: float = 0.9
-    comparison_max_chunks_per_doc: int = 1
-    comparison_rerank_max_chunks_per_doc: int = 1
+    comparison_max_chunks_per_doc: int = 3
+    comparison_rerank_max_chunks_per_doc: int = 3
     title_keyword_boost: float = 0.08
     table_text_boost: float = 0.10
     table_caption_boost: float = 0.06
