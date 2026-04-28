@@ -98,7 +98,8 @@ def answer_mode_distribution(records: list[dict[str, Any]]) -> dict[str, int]:
 def qwen_fallback_reason_distribution(records: list[dict[str, Any]]) -> dict[str, int]:
     counter: Counter[str] = Counter()
     for item in records:
-        qwen_debug = ((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2", {}).get("qwen_synthesis") or {}
+        qwen_debug = ((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2") or {}
+        qwen_debug = qwen_debug.get("qwen_synthesis") or {}
         reason = str(qwen_debug.get("fallback_reason") or "")
         if reason:
             counter[reason] += 1
@@ -108,7 +109,8 @@ def qwen_fallback_reason_distribution(records: list[dict[str, Any]]) -> dict[str
 def qwen_validation_flag_distribution(records: list[dict[str, Any]]) -> dict[str, int]:
     counter: Counter[str] = Counter()
     for item in records:
-        qwen_debug = ((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2", {}).get("qwen_synthesis") or {}
+        qwen_debug = ((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2") or {}
+        qwen_debug = qwen_debug.get("qwen_synthesis") or {}
         for flag in qwen_debug.get("validation_flags") or []:
             counter[str(flag)] += 1
     return dict(sorted(counter.items()))
@@ -165,7 +167,7 @@ def failure_samples(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if category == "ok":
             continue
         raw_record = item.get("raw_record") or {}
-        gen_debug = (raw_record.get("debug") or {}).get("generation_v2", {}) or {}
+        gen_debug = (raw_record.get("debug") or {}).get("generation_v2") or {}
         failures.append(
             {
                 "id": item.get("id"),
@@ -313,12 +315,12 @@ def run_group(group_key: str, label: str, dataset_path: Path, records: list[dict
         "qwen_used_count": sum(
             1
             for item in enriched
-            if (((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2", {}).get("qwen_synthesis") or {}).get("used_qwen")
+            if ((((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2") or {}).get("qwen_synthesis") or {}).get("used_qwen")
         ),
         "qwen_fallback_count": sum(
             1
             for item in enriched
-            if (((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2", {}).get("qwen_synthesis") or {}).get("fallback_used")
+            if ((((item.get("raw_record") or {}).get("debug") or {}).get("generation_v2") or {}).get("qwen_synthesis") or {}).get("fallback_used")
         ),
         "qwen_fallback_reason_distribution": qwen_fallback_reason_distribution(enriched),
         "qwen_validation_flag_distribution": qwen_validation_flag_distribution(enriched),
@@ -341,7 +343,7 @@ def build_focus_samples(groups: dict[str, list[dict[str, Any]]]) -> dict[str, An
                 if item.get("id") != sample_id:
                     continue
                 raw = item.get("raw_record") or {}
-                gen_debug = (raw.get("debug") or {}).get("generation_v2", {}) or {}
+                gen_debug = (raw.get("debug") or {}).get("generation_v2") or {}
                 payload[sample_id][group_key] = {
                     "id": sample_id,
                     "question": item.get("question"),

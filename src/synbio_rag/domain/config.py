@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -107,9 +108,40 @@ class ToolConfig:
     max_results: int = 3
 
 
+_GENERATION_V2_PROFILES: dict[str, dict[str, bool]] = {
+    "stable": {
+        "v2_use_qwen_synthesis": False,
+        "v2_enable_comparison_coverage": False,
+        "v2_enable_neighbor_audit": False,
+    },
+    "qwen": {
+        "v2_use_qwen_synthesis": True,
+        "v2_enable_comparison_coverage": False,
+        "v2_enable_neighbor_audit": False,
+    },
+    "comparison": {
+        "v2_use_qwen_synthesis": True,
+        "v2_enable_comparison_coverage": True,
+        "v2_enable_neighbor_audit": False,
+    },
+    "debug": {
+        "v2_use_qwen_synthesis": True,
+        "v2_enable_comparison_coverage": True,
+        "v2_enable_neighbor_audit": True,
+    },
+}
+
+# These flags must NEVER be set to True via profile or env — hard guard enforces this.
+_GENERATION_V2_FORBIDDEN_FLAGS: frozenset[str] = frozenset({
+    "v2_enable_neighbor_promotion",
+    "v2_include_neighbor_context_in_qwen",
+})
+
+
 @dataclass
 class GenerationConfig:
-    version: str = "old"
+    version: str = "v2"
+    v2_profile: str = "stable"
     v2_use_qwen_synthesis: bool = False
     v2_enable_comparison_coverage: bool = False
     v2_qwen_synthesis_timeout_seconds: int = 30
@@ -122,6 +154,15 @@ class GenerationConfig:
     v2_max_support_comparison: int = 6
     v2_min_support_score: float = 0.0
     v2_require_citation: bool = True
+    v2_enable_neighbor_audit: bool = False
+    v2_neighbor_window: int = 1
+    v2_max_neighbors_per_seed: int = 2
+    v2_neighbor_promotion_dry_run: bool = True
+    v2_enable_neighbor_promotion: bool = False
+    v2_include_neighbor_context_in_qwen: bool = False
+    v2_neighbor_score_decay_distance1: float = 0.45
+    v2_neighbor_score_decay_distance2: float = 0.25
+    v2_neighbor_min_promotion_score: float = 0.05
 
 
 @dataclass
@@ -377,18 +418,26 @@ class Settings:
         settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
         settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
         settings.generation.version = get_value("GENERATION_VERSION", settings.generation.version).strip().lower()
-        settings.generation.v2_use_qwen_synthesis = _parse_bool(
-            get_value(
-                "GENERATION_V2_USE_QWEN_SYNTHESIS",
-                str(settings.generation.v2_use_qwen_synthesis),
+        # Profile: sets defaults for experimental toggles. Explicit env vars override afterwards.
+        profile_raw = get_value("GENERATION_V2_PROFILE", settings.generation.v2_profile).strip().lower()
+        if profile_raw not in _GENERATION_V2_PROFILES:
+            warnings.warn(
+                f"Unknown GENERATION_V2_PROFILE={profile_raw!r}; falling back to 'stable'.",
+                stacklevel=2,
             )
-        )
-        settings.generation.v2_enable_comparison_coverage = _parse_bool(
-            get_value(
-                "GENERATION_V2_ENABLE_COMPARISON_COVERAGE",
-                str(settings.generation.v2_enable_comparison_coverage),
-            )
-        )
+            profile_raw = "stable"
+        settings.generation.v2_profile = profile_raw
+        _apply_profile(settings.generation, profile_raw)
+        # Explicit env vars can override non-dangerous flags set by profile.
+        _env_key = "GENERATION_V2_USE_QWEN_SYNTHESIS"
+        if _env_key in os.environ or _env_key in env_file:
+            settings.generation.v2_use_qwen_synthesis = _parse_bool(get_value(_env_key, "false"))
+        _env_key = "GENERATION_V2_ENABLE_COMPARISON_COVERAGE"
+        if _env_key in os.environ or _env_key in env_file:
+            settings.generation.v2_enable_comparison_coverage = _parse_bool(get_value(_env_key, "false"))
+        _env_key = "GENERATION_V2_ENABLE_NEIGHBOR_AUDIT"
+        if _env_key in os.environ or _env_key in env_file:
+            settings.generation.v2_enable_neighbor_audit = _parse_bool(get_value(_env_key, "false"))
         settings.generation.v2_qwen_synthesis_timeout_seconds = int(
             get_value(
                 "GENERATION_V2_QWEN_SYNTHESIS_TIMEOUT_SECONDS",
@@ -449,6 +498,33 @@ class Settings:
                 str(settings.generation.v2_require_citation),
             )
         )
+        settings.generation.v2_neighbor_window = int(
+            get_value("GENERATION_V2_NEIGHBOR_WINDOW", str(settings.generation.v2_neighbor_window))
+        )
+        settings.generation.v2_max_neighbors_per_seed = int(
+            get_value("GENERATION_V2_MAX_NEIGHBORS_PER_SEED", str(settings.generation.v2_max_neighbors_per_seed))
+        )
+        settings.generation.v2_neighbor_promotion_dry_run = _parse_bool(
+            get_value("GENERATION_V2_NEIGHBOR_PROMOTION_DRY_RUN", str(settings.generation.v2_neighbor_promotion_dry_run))
+        )
+        settings.generation.v2_neighbor_score_decay_distance1 = float(
+            get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE1", str(settings.generation.v2_neighbor_score_decay_distance1))
+        )
+        settings.generation.v2_neighbor_score_decay_distance2 = float(
+            get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE2", str(settings.generation.v2_neighbor_score_decay_distance2))
+        )
+        settings.generation.v2_neighbor_min_promotion_score = float(
+            get_value("GENERATION_V2_NEIGHBOR_MIN_PROMOTION_SCORE", str(settings.generation.v2_neighbor_min_promotion_score))
+        )
+        # Read forbidden flags so the hard guard can emit a warning if someone set them.
+        settings.generation.v2_enable_neighbor_promotion = _parse_bool(
+            get_value("GENERATION_V2_ENABLE_NEIGHBOR_PROMOTION", "false")
+        )
+        settings.generation.v2_include_neighbor_context_in_qwen = _parse_bool(
+            get_value("GENERATION_V2_INCLUDE_NEIGHBOR_CONTEXT_IN_QWEN", "false")
+        )
+        # Hard guard: forbidden flags must always remain False regardless of env.
+        _enforce_forbidden_flags(settings.generation)
         settings.round8.enable_round8_policy = _parse_bool(
             get_value("ROUND8_ENABLE_ROUND8_POLICY", str(settings.round8.enable_round8_policy))
         )
@@ -531,3 +607,22 @@ def _resolve_local_path(value: str) -> str:
 
 def _parse_bool(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _apply_profile(gen: "GenerationConfig", profile: str) -> None:
+    """Apply profile defaults to GenerationConfig. Called before explicit env overrides."""
+    flags = _GENERATION_V2_PROFILES.get(profile, _GENERATION_V2_PROFILES["stable"])
+    gen.v2_use_qwen_synthesis = flags["v2_use_qwen_synthesis"]
+    gen.v2_enable_comparison_coverage = flags["v2_enable_comparison_coverage"]
+    gen.v2_enable_neighbor_audit = flags["v2_enable_neighbor_audit"]
+
+
+def _enforce_forbidden_flags(gen: "GenerationConfig") -> None:
+    """Hard guard: ensure forbidden flags are never True regardless of env/profile."""
+    for flag in _GENERATION_V2_FORBIDDEN_FLAGS:
+        if getattr(gen, flag, False):
+            warnings.warn(
+                f"GENERATION_V2 hard guard: {flag} cannot be True; forcing to False.",
+                stacklevel=2,
+            )
+            setattr(gen, flag, False)

@@ -9,6 +9,7 @@ from .answer_planner import AnswerPlanner
 from .citation_binder import CitationBinder
 from .evidence_ledger import EvidenceLedgerBuilder
 from .models import GenerationV2Result
+from .neighbor_audit import NeighborAuditEngine
 from .qwen_synthesizer import QwenSynthesizer
 from .support_selector import SupportPackSelector
 from .validator import FinalValidator
@@ -19,6 +20,7 @@ class GenerationV2Service:
         self,
         llm_config: ModelEndpointConfig | None = None,
         synthesizer: QwenSynthesizer | None = None,
+        neighbor_audit_engine: NeighborAuditEngine | None = None,
     ) -> None:
         self.ledger_builder = EvidenceLedgerBuilder()
         self.support_selector = SupportPackSelector()
@@ -27,6 +29,8 @@ class GenerationV2Service:
         self.synthesizer = synthesizer or QwenSynthesizer(llm_config)
         self.citation_binder = CitationBinder()
         self.validator = FinalValidator()
+        # optional neighbor audit engine; None means "no corpus index available"
+        self.neighbor_audit_engine: NeighborAuditEngine | None = neighbor_audit_engine
 
     def run(
         self,
@@ -57,6 +61,28 @@ class GenerationV2Service:
         answer, plan, validator_debug = self.validator.validate(answer, citations, plan, support_pack, config)
         qwen_output_evidence_ids = citation_debug.get("ordered_evidence_ids", [])
 
+        # neighbor audit (dry-run only; never mutates support_pack/citations/answer)
+        if self.neighbor_audit_engine is not None and config.v2_enable_neighbor_audit:
+            neighbor_audit_result = self.neighbor_audit_engine.run(
+                question=question,
+                analysis=analysis,
+                seed_chunks=seed_chunks,
+                candidates=candidates,
+                config=config,
+                plan=plan,
+            )
+        else:
+            from .neighbor_audit import NeighborAuditResult
+            neighbor_audit_result = NeighborAuditResult(
+                enabled=False,
+                window=config.v2_neighbor_window,
+                promotion_enabled=config.v2_enable_neighbor_promotion,
+                promotion_dry_run=config.v2_neighbor_promotion_dry_run,
+                candidate_count=0,
+                dry_run_promoted_count=0,
+                excluded_count=0,
+            )
+
         support_selection_debug = {
             "candidate_ids": [candidate.evidence_id for candidate in candidates],
             "selected_evidence_ids": [item.evidence_id for item in support_pack],
@@ -69,6 +95,17 @@ class GenerationV2Service:
             else dict(getattr(self.answer_planner, "last_comparison_coverage_debug", {"reason": "not_comparison_intent", "parse_ok": False}))
         )
         summary_selection_debug = dict(getattr(self.support_selector, "last_summary_selection_debug", {"is_summary": False}))
+        # 当最终为 refuse 且原因属于 no-support 类时，覆写 summary_selection 避免与 summary_plan 冲突
+        _refuse_no_support_reasons = {"no_support_pack", "existence_no_support", "no_support", "empty_support", "summary_no_support"}
+        if plan.mode == "refuse" and (
+            plan.reason in _refuse_no_support_reasons
+            or (not support_pack and summary_selection_debug.get("is_summary"))
+        ):
+            summary_selection_debug = {
+                "is_summary": summary_selection_debug.get("is_summary", False),
+                "skipped": True,
+                "skip_reason": "refuse_or_existence_no_support",
+            }
         summary_plan_debug = dict(getattr(self.answer_planner, "last_summary_plan_debug", {"is_summary": False}))
         debug = {
             "generation_version": "v2",
@@ -127,6 +164,7 @@ class GenerationV2Service:
             "answer_plan": plan.to_dict(),
             "candidates": [candidate.to_dict() for candidate in candidates],
             "history_turn_count": len(history or []),
+            "neighbor_audit": neighbor_audit_result.to_dict(),
         }
         return GenerationV2Result(
             answer=answer,

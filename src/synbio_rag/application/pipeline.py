@@ -14,6 +14,7 @@ from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
 from .context_builder import ContextBuilder
 from .generation_v2 import GenerationV2Service
+from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_service import QwenChatGenerator
 from .neighbor_expansion import ChunkNeighborExpander
 from .rerank_service import QwenReranker
@@ -61,7 +62,17 @@ class SynBioRAGPipeline:
             temperature=settings.llm.temperature,
             round8_config=settings.round8,
         )
-        self.generator_v2 = GenerationV2Service(settings.llm)
+        # Build neighbor audit engine from the same corpus index as neighbor_expander.
+        # _ensure_loaded is lazy; we call it once here so the index is ready.
+        self.neighbor_expander._ensure_loaded()
+        _audit_engine: NeighborAuditEngine | None = None
+        if self.neighbor_expander._by_id:
+            _audit_engine = NeighborAuditEngine(
+                chunk_index=dict(self.neighbor_expander._by_id),
+                position_index=dict(self.neighbor_expander._positions),
+                doc_chunks=dict(self.neighbor_expander._doc_chunks),
+            )
+        self.generator_v2 = GenerationV2Service(settings.llm, neighbor_audit_engine=_audit_engine)
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
         self.external_tools = ExternalToolManager(settings.tools)
 

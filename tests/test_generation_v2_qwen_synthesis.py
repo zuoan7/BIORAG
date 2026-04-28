@@ -591,6 +591,162 @@ def test_qwen_synthesis_preserves_comparison_partial_with_citations() -> None:
     assert len(result.citations) > 0
 
 
+# ── Stage 2D.1: summary partial validator 测试 ──────────────────────────────
+
+def test_validate_summary_partial_with_limit_terms_passes() -> None:
+    """summary partial 输出含明确限制语 → validator 通过，partial_tone_category=summary"""
+    support_pack = [_support_item("E1")]
+    plan = AnswerPlan(mode="partial", reason="summary_support_count")
+
+    ok, flags = validate_synthesized_answer(
+        "当前知识库仅提供有限支持，仅检索到一条直接相关证据，因此以下总结仅基于该证据所能覆盖的范围。"
+        "现有证据指出异源蛋白表达会对宿主造成代谢负担，表现为比生长速率下降 [E1]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="证据表明代谢负担存在 [E1]",
+        existence_guardrail={},
+    )
+
+    assert ok is True
+    assert flags == []
+    details = validate_synthesized_answer.last_details
+    assert len(details["partial_limit_terms_found"]) > 0
+    assert details["partial_tone_decision"] == "pass"
+    assert details["partial_tone_category"] == "summary"
+
+
+def test_validate_summary_partial_without_limit_terms_fails() -> None:
+    """summary partial 输出无限制语 → 触发 partial_abstention_tone"""
+    support_pack = [_support_item("E1")]
+    plan = AnswerPlan(mode="partial", reason="summary_support_count")
+
+    ok, flags = validate_synthesized_answer(
+        "该机制已被证实：氧化戊糖磷酸途径通量提高促进了 NADPH 再生，从而为重组蛋白折叠提供更多还原力 [E1]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="证据表明代谢负担存在 [E1]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "partial_abstention_tone" in flags
+    assert validate_synthesized_answer.last_details["partial_tone_decision"] == "fail"
+
+
+def test_validate_summary_partial_with_overclaim_fails() -> None:
+    """summary partial 含 overclaim → validator 拒绝，即使含限制语前缀"""
+    support_pack = [_support_item("E1")]
+    plan = AnswerPlan(mode="partial", reason="summary_support_count")
+
+    ok, flags = validate_synthesized_answer(
+        "证据有限，但可以完整总结该机制：机制已经完整阐明，所有环节均已充分证明 [E1]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="证据表明代谢负担存在 [E1]",
+        existence_guardrail={},
+    )
+
+    assert ok is False
+    assert "partial_overclaim" in flags
+
+
+def test_validate_summary_partial_tone_category_comparison_unchanged() -> None:
+    """comparison partial 含 comparison 限制语 → partial_tone_category=comparison"""
+    support_pack = [_support_item("E1"), _support_item("E2", doc_id="doc_0002")]
+    plan = AnswerPlan(
+        mode="partial",
+        reason="branch_partial_support",
+        covered_branches=["branch_a", "branch_b"],
+        missing_branches=[],
+        comparison_coverage=_comparison_coverage(allowed_ids=["E1", "E2"]),
+    )
+
+    ok, flags = validate_synthesized_answer(
+        "在文库所支持的范围内，可进行有限比较：关于分支A，证据显示相关结果 [E1]；关于分支B，部分支持 [E2]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="根据当前知识库证据，只能进行有限比较 [E1][E2]",
+        existence_guardrail={},
+    )
+
+    assert ok is True
+    details = validate_synthesized_answer.last_details
+    assert details["partial_tone_category"] == "comparison"
+
+
+def test_validate_summary_partial_debug_has_tone_category() -> None:
+    """validation_details 应包含 partial_tone_category 字段"""
+    support_pack = [_support_item("E1")]
+    plan = AnswerPlan(mode="partial", reason="summary_support_count")
+
+    validate_synthesized_answer(
+        "证据有限，当前知识库仅提供有限支持，现有研究结果 [E1]。",
+        plan,
+        support_pack,
+        GenerationConfig(v2_use_qwen_synthesis=True),
+        extractive_answer="[E1]",
+        existence_guardrail={},
+    )
+
+    details = validate_synthesized_answer.last_details
+    assert "partial_tone_category" in details
+
+
+# ── Stage 2D.1: summary debug skip 测试 ─────────────────────────────────────
+
+def test_service_summary_selection_skipped_on_existence_refuse() -> None:
+    """existence/no-support refusal 场景下 summary_selection debug 应有 skipped=True"""
+    from src.synbio_rag.application.generation_v2.models import EvidenceCandidate
+    from src.synbio_rag.domain.schemas import QueryIntent
+
+    service = _service_with(
+        qwen_output=None,
+        plan=AnswerPlan(mode="refuse", reason="existence_no_support"),
+        support_pack=[],
+        extractive_answer="当前知识库证据不足，无法确认。",
+        existence_guardrail={"is_existence_question": True, "support_status": "no_support"},
+    )
+
+    result = service.run(
+        question="文库中是否有关于 PPP 通量提升的详细方案？",
+        analysis=_analysis(QueryIntent.SUMMARY),
+        seed_chunks=[_chunk()],
+        config=GenerationConfig(v2_use_qwen_synthesis=True),
+    )
+
+    ss = result.debug["summary_selection"]
+    sp = result.debug["summary_plan"]
+    assert ss.get("skipped") is True
+    assert "skip_reason" in ss
+    # summary_selection 与 summary_plan 不冲突：两者均应 is_summary 一致或 skipped 有解释
+    if sp.get("is_summary") is False:
+        assert ss.get("is_summary") is False or ss.get("skipped") is True
+
+
+def test_service_answer_mode_unchanged_on_refuse() -> None:
+    """debug 修复不能改变最终 answer_mode"""
+    service = _service_with(
+        qwen_output=None,
+        plan=AnswerPlan(mode="refuse", reason="no_support_pack"),
+        support_pack=[],
+        extractive_answer="当前知识库不足以回答该问题。",
+    )
+
+    result = service.run(
+        question="总结某机制",
+        analysis=_analysis(),
+        seed_chunks=[_chunk()],
+        config=GenerationConfig(v2_use_qwen_synthesis=True),
+    )
+
+    assert result.debug["answer_mode"] == "refuse"
+    assert result.debug["summary_selection"].get("skipped") is True
+
+
 def test_qwen_synthesis_preserves_existence_guardrail_language() -> None:
     service = _service_with(
         qwen_output="当前文库只能提供间接或弱相关证据，不能确认文库中包含用户所要求的资料/数据/方案。现有背景证据如下 [E1]",

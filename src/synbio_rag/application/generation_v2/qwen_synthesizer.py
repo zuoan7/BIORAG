@@ -41,6 +41,7 @@ _EXISTENCE_OVERCLAIM_PATTERNS = (
 _LIMITATION_TERMS = ("不足", "缺失", "无法", "不能完整比较", "不能逐分支", "不能确认", "证据限制")
 _INDIRECT_LIMITATION_TERMS = ("间接", "有限比较", "不能完整比较", "不能逐分支", "证据限制")
 _PARTIAL_LIMITATION_PATTERNS = (
+    # comparison 限制语（保留 Stage 2C.3 行为）
     "有限比较",
     "有限回答",
     "只能支持部分",
@@ -64,7 +65,61 @@ _PARTIAL_LIMITATION_PATTERNS = (
     "indirect evidence",
     "cannot fully",
     "not enough evidence",
+    # summary 限制语（Stage 2D.1 新增）
+    "有限总结",
+    "有限支持",
+    "当前知识库仅提供",
+    "当前知识库只能支持有限总结",
+    "仅检索到一条",
+    "仅有一条",
+    "只检索到一条",
+    "一条直接相关证据",
+    "以下总结仅基于",
+    "只能覆盖该证据涉及的范围",
+    "尚不足以完整阐明",
+    "不足以完整阐明",
+    "未直接说明",
+    "未涉及",
+    "暂未涵盖",
+    "尚无其他证据",
+    "缺少更细化",
+    "不能视为完整综述",
+    "不能完整总结",
+    "只能覆盖部分",
+    "证据较少",
+    "证据有限",
+    "limited summary",
+    "limited support",
+    "only one direct evidence",
+    "based only on this evidence",
+    "insufficient to fully explain",
+    "does not directly explain",
+    "not covered",
+    "cannot fully summarize",
+    "partial evidence",
 )
+
+# summary 限制语子集（用于 partial_tone_category 分类）
+_SUMMARY_LIMITATION_PATTERNS = frozenset({
+    "有限总结", "有限支持", "当前知识库仅提供", "当前知识库只能支持有限总结",
+    "仅检索到一条", "仅有一条", "只检索到一条", "一条直接相关证据",
+    "以下总结仅基于", "只能覆盖该证据涉及的范围", "尚不足以完整阐明",
+    "不足以完整阐明", "未直接说明", "未涉及", "暂未涵盖",
+    "尚无其他证据", "缺少更细化", "不能视为完整综述", "不能完整总结",
+    "只能覆盖部分", "证据较少", "证据有限",
+    "limited summary", "limited support", "only one direct evidence",
+    "based only on this evidence", "insufficient to fully explain",
+    "does not directly explain", "not covered", "cannot fully summarize",
+    "partial evidence",
+})
+
+# comparison 限制语子集（用于 partial_tone_category 分类）
+_COMPARISON_LIMITATION_PATTERNS = frozenset({
+    "有限比较", "有限回答", "只能支持部分", "当前证据只能", "当前文库只能",
+    "在文库所支持的范围内", "证据不足以", "不能完整", "不能逐分支",
+    "不能逐分支完整比较", "无法完整", "缺乏直接", "仅提供间接",
+    "证据分布不均衡", "limited comparison", "cannot fully", "not enough evidence",
+})
 _NEGATING_PREFIXES = ("不能", "无法", "尚不能", "不可", "不应", "not ", "cannot ", "can't ")
 
 
@@ -261,8 +316,19 @@ def validate_synthesized_answer(
             details["partial_tone_decision"] = "fail"
         else:
             details["partial_tone_decision"] = "pass"
+        # 分类命中的限制语类型
+        found_set = set(partial_limit_terms_found)
+        if found_set & _SUMMARY_LIMITATION_PATTERNS:
+            details["partial_tone_category"] = "summary"
+        elif found_set & _COMPARISON_LIMITATION_PATTERNS:
+            details["partial_tone_category"] = "comparison"
+        elif found_set:
+            details["partial_tone_category"] = "generic"
+        else:
+            details["partial_tone_category"] = "not_applicable"
     else:
         details["partial_tone_decision"] = "not_applicable"
+        details["partial_tone_category"] = "not_applicable"
 
     if plan.reason == "existence_weak_support" and any(pattern in answer for pattern in _EXISTENCE_OVERCLAIM_PATTERNS):
         flags.append("existence_overclaim")
