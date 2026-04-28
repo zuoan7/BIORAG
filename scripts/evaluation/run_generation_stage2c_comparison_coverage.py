@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from scripts.evaluation.evaluate_ragas import (
     build_failure_diagnostics,
     build_raw_records,
+    compute_retrieval_ledger_summary,
     evaluate_retrieval,
     get_effective_final_answer_mode,
     get_refusal_reason,
@@ -214,6 +215,28 @@ def build_markdown(summary: dict[str, Any]) -> str:
             )
     else:
         lines.append("- None")
+    ledger = summary.get("retrieval_ledger") or {}
+    if ledger:
+        lines.extend([
+            "",
+            "## Retrieval Ledger (diagnostic)",
+            "",
+            "Pipeline decomposition: candidate (retrieval+rerank) → support_pack (evidence selection) → citation (final answer)",
+            "",
+            "| Stage | doc_hit_rate | section_hit_rate |",
+            "|---|---|---|",
+            f"| candidate | `{ledger.get('candidate_doc_hit_rate')}` | `{ledger.get('candidate_section_hit_rate')}` |",
+            f"| support_pack | `{ledger.get('support_doc_hit_rate')}` | `{ledger.get('support_section_hit_rate')}` |",
+            f"| citation | `{ledger.get('citation_doc_hit_rate')}` | `{ledger.get('citation_section_hit_rate')}` |",
+            "",
+            f"doc_status_distribution: `{json.dumps(ledger.get('doc_status_distribution'), ensure_ascii=False)}`",
+            f"section_status_distribution: `{json.dumps(ledger.get('section_status_distribution'), ensure_ascii=False)}`",
+            f"section_label_issue_count: `{ledger.get('section_label_issue_count')}`",
+        ])
+        if ledger.get("section_label_issue_ids"):
+            lines.append(f"section_label_issue_ids: {', '.join(f'`{i}`' for i in ledger['section_label_issue_ids'])}")
+        lines.append("")
+
     lines.extend(["", "## Failures", ""])
     if summary["failure_samples"]:
         for sample in summary["failure_samples"]:
@@ -300,6 +323,9 @@ def run_group(group_key: str, label: str, dataset_path: Path, records: list[dict
         item["retrieval_eval"]["final_answer_mode"] = get_effective_final_answer_mode(item)
 
     diagnostics = build_failure_diagnostics(enriched)
+    raw_records = [item.get("raw_record") for item in enriched]
+    ledger_summary = compute_retrieval_ledger_summary(raw_records)
+
     summary = {
         "group": group_key,
         "label": label,
@@ -327,7 +353,8 @@ def run_group(group_key: str, label: str, dataset_path: Path, records: list[dict
         "failure_category_distribution": dict(sorted(Counter(failure_category(item) for item in enriched if failure_category(item) != "ok").items())),
         "failure_samples": failure_samples(enriched),
         "diagnostics": diagnostics,
-        "raw_records": [item.get("raw_record") for item in enriched],
+        "raw_records": raw_records,
+        "retrieval_ledger": ledger_summary,
     }
     for key in ("refuse", "partial", "full"):
         summary["mode_counts"].setdefault(key, 0)

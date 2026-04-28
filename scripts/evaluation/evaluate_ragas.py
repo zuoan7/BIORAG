@@ -1769,47 +1769,258 @@ def build_raw_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         generation_v2 = get_generation_v2_debug(item)
         support_pack = generation_v2.get("support_pack") or []
         citations = api_response.get("citations") or []
-        raw_records.append(
-            {
-                "id": item.get("id"),
-                "question": item.get("question"),
-                "route": api_response.get("route"),
-                "expected_route": retrieval_eval.get("expected_route"),
-                "doc_hit": bool((retrieval_eval.get("doc_id_metrics") or {}).get("hit")),
-                "section_hit": bool((retrieval_eval.get("section_metrics") or {}).get("hit")),
-                "answer_mode": get_effective_final_answer_mode(item),
-                "citation_count": normalize_int(retrieval_eval.get("citation_count")),
-                "failure_category": retrieval_eval.get("failure_type"),
-                "answer_preview": get_answer_preview(item),
-                "support_pack_count": get_support_pack_count(item),
-                "debug": {
-                    "generation_v2": generation_v2 or None,
-                },
-                "support_pack": [
-                    {
-                        "evidence_id": support.get("evidence_id"),
-                        "chunk_id": support.get("chunk_id"),
-                        "doc_id": support.get("doc_id"),
-                        "section": support.get("section"),
-                        "support_score": support.get("support_score"),
-                        "reasons": support.get("reasons"),
-                    }
-                    for support in support_pack
-                ],
-                "citations": [
-                    {
-                        "chunk_id": citation.get("chunk_id"),
-                        "doc_id": citation.get("doc_id"),
-                        "section": citation.get("section"),
-                        "page": [citation.get("page_start"), citation.get("page_end")],
-                        "quote": citation.get("quote"),
-                    }
-                    for citation in citations
-                ],
-                "validator_debug": generation_v2.get("validator_debug") or {},
-            }
-        )
+        meta = item.get("dataset_meta") or {}
+        raw = {
+            "id": item.get("id"),
+            "question": item.get("question"),
+            "route": api_response.get("route"),
+            "expected_route": retrieval_eval.get("expected_route"),
+            "doc_hit": bool((retrieval_eval.get("doc_id_metrics") or {}).get("hit")),
+            "section_hit": bool((retrieval_eval.get("section_metrics") or {}).get("hit")),
+            "answer_mode": get_effective_final_answer_mode(item),
+            "citation_count": normalize_int(retrieval_eval.get("citation_count")),
+            "failure_category": retrieval_eval.get("failure_type"),
+            "answer_preview": get_answer_preview(item),
+            "support_pack_count": get_support_pack_count(item),
+            "debug": {
+                "generation_v2": generation_v2 or None,
+            },
+            "support_pack": [
+                {
+                    "evidence_id": support.get("evidence_id"),
+                    "chunk_id": support.get("chunk_id"),
+                    "doc_id": support.get("doc_id"),
+                    "section": support.get("section"),
+                    "support_score": support.get("support_score"),
+                    "reasons": support.get("reasons"),
+                }
+                for support in support_pack
+            ],
+            "citations": [
+                {
+                    "chunk_id": citation.get("chunk_id"),
+                    "doc_id": citation.get("doc_id"),
+                    "section": citation.get("section"),
+                    "page": [citation.get("page_start"), citation.get("page_end")],
+                    "quote": citation.get("quote"),
+                }
+                for citation in citations
+            ],
+            "validator_debug": generation_v2.get("validator_debug") or {},
+        }
+        raw["retrieval_ledger"] = build_retrieval_ledger(raw, meta)
+        raw_records.append(raw)
     return raw_records
+
+
+def build_retrieval_ledger(
+    raw_record: dict[str, Any],
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Decompose doc/section hit into retrieval stages (diagnostic only).
+
+    Stages:
+      - candidate: chunks returned by retrieval+rerank (generation input pool)
+      - support:   evidence selected by generation_v2 (support_pack)
+      - citation:  final citations in answer (existing doc_hit / section_hit)
+
+    Returns empty dict for old pipeline (no generation_v2 debug).
+    """
+    gv2 = (raw_record.get("debug") or {}).get("generation_v2") or {}
+    candidates = gv2.get("candidates") or []
+    support_pack = raw_record.get("support_pack") or []
+    citations = raw_record.get("citations") or []
+
+    expected_doc_ids = set(normalize_list(meta.get("expected_doc_ids")))
+    accepted_doc_ids = set(normalize_list(meta.get("accepted_doc_ids")))
+    eligible_docs = expected_doc_ids | accepted_doc_ids
+    expected_sections = set(normalize_list(meta.get("expected_sections")))
+
+    candidate_docs = sorted({str(c.get("doc_id") or "").strip() for c in candidates if c.get("doc_id")})
+    candidate_sections = sorted({str(c.get("section") or "").strip() for c in candidates if c.get("section")})
+    support_docs = sorted({str(s.get("doc_id") or "").strip() for s in support_pack if s.get("doc_id")})
+    support_sections = sorted({str(s.get("section") or "").strip() for s in support_pack if s.get("section")})
+    citation_docs = sorted({str(c.get("doc_id") or "").strip() for c in citations if c.get("doc_id")})
+    citation_sections = sorted({str(c.get("section") or "").strip() for c in citations if c.get("section")})
+
+    candidate_doc_hit = bool(eligible_docs & set(candidate_docs)) if eligible_docs else None
+    candidate_section_hit = bool(expected_sections & set(candidate_sections)) if expected_sections else None
+    support_doc_hit = bool(eligible_docs & set(support_docs)) if eligible_docs else None
+    support_section_hit = bool(expected_sections & set(support_sections)) if expected_sections else None
+    citation_doc_hit = bool(eligible_docs & set(citation_docs)) if eligible_docs else None
+    citation_section_hit = bool(expected_sections & set(citation_sections)) if expected_sections else None
+
+    doc_status = _classify_pipeline_status(eligible_docs, candidate_docs, support_docs, citation_docs)
+    section_status = _classify_pipeline_status(expected_sections, candidate_sections, support_sections, citation_sections)
+
+    # Section label diagnostics: are expected sections matchable against what's in the index?
+    section_label_issue = _diagnose_section_labels(expected_sections, candidate_sections, citation_sections)
+
+    return {
+        "candidate_doc_ids": candidate_docs,
+        "candidate_sections": candidate_sections,
+        "support_doc_ids": support_docs,
+        "support_sections": support_sections,
+        "citation_doc_ids": citation_docs,
+        "citation_sections": citation_sections,
+        "expected_doc_ids": sorted(eligible_docs),
+        "expected_sections": sorted(expected_sections),
+        "candidate_doc_hit": candidate_doc_hit,
+        "candidate_section_hit": candidate_section_hit,
+        "support_doc_hit": support_doc_hit,
+        "support_section_hit": support_section_hit,
+        "citation_doc_hit": citation_doc_hit,
+        "citation_section_hit": citation_section_hit,
+        "doc_status": doc_status,
+        "section_status": section_status,
+        "section_label_issue": section_label_issue,
+    }
+
+
+def _classify_pipeline_status(
+    expected: set[str],
+    candidate_items: list[str],
+    support_items: list[str],
+    citation_items: list[str],
+) -> str:
+    """Classify why an expected item did/didn't reach citations."""
+    if not expected:
+        return "no_expected"
+    candidate_set = set(candidate_items)
+    support_set = set(support_items)
+    citation_set = set(citation_items)
+
+    expected_in_candidate = bool(expected & candidate_set)
+    expected_in_support = bool(expected & support_set)
+    expected_in_citation = bool(expected & citation_set)
+
+    if expected_in_citation:
+        return "retrieved_and_cited"
+    if expected_in_support:
+        return "in_support_not_cited"
+    if expected_in_candidate:
+        return "in_candidates_not_selected"
+    return "not_retrieved"
+
+
+def _diagnose_section_labels(
+    expected_sections: set[str],
+    candidate_sections: list[str],
+    citation_sections: list[str],
+) -> dict[str, Any]:
+    """Flag potential section label mismatches without modifying the dataset."""
+    if not expected_sections:
+        return {"issue": False, "reason": ""}
+
+    all_actual = set(candidate_sections) | set(citation_sections)
+    expected_lower = {s.lower().strip() for s in expected_sections}
+    actual_lower = {s.lower().strip() for s in all_actual}
+
+    # Flags for known problematic labels
+    fuzzy_flags: list[str] = []
+    for exp in expected_sections:
+        exp_lower = exp.lower().strip()
+        if exp_lower == "full text":
+            fuzzy_flags.append(f"expected_section='Full Text' (chunks rarely have this label)")
+        elif exp_lower in ("results", "discussion") and "results and discussion" in actual_lower:
+            fuzzy_flags.append(f"expected_section='{exp}' but chunks use 'Results and Discussion'")
+        elif exp_lower == "results and discussion":
+            if "results" in actual_lower and "results and discussion" not in actual_lower:
+                fuzzy_flags.append(f"expected_section='Results and Discussion' but chunks use 'Results' only")
+
+    matched = expected_lower & actual_lower
+    near_matches: list[str] = []
+    for exp in expected_sections:
+        exp_lower = exp.lower().strip()
+        if exp_lower in actual_lower:
+            continue
+        for act in all_actual:
+            act_lower = act.lower().strip()
+            if exp_lower in act_lower or act_lower in exp_lower:
+                near_matches.append(f"'{exp}' ≈ '{act}'")
+                break
+
+    return {
+        "issue": bool(fuzzy_flags) or (not matched and bool(near_matches)),
+        "matched_in_actual": sorted(matched),
+        "fuzzy_flags": fuzzy_flags,
+        "near_matches": near_matches,
+    }
+
+
+def compute_retrieval_ledger_summary(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate retrieval ledger diagnostics across samples."""
+    candidate_doc_hits = 0
+    candidate_doc_total = 0
+    candidate_section_hits = 0
+    candidate_section_total = 0
+    support_doc_hits = 0
+    support_doc_total = 0
+    support_section_hits = 0
+    support_section_total = 0
+    citation_doc_hits = 0
+    citation_doc_total = 0
+    citation_section_hits = 0
+    citation_section_total = 0
+
+    doc_status_counts: dict[str, int] = {}
+    section_status_counts: dict[str, int] = {}
+    section_label_issue_ids: list[str] = []
+
+    for raw in raw_records:
+        ledger = raw.get("retrieval_ledger")
+        if not ledger:
+            continue
+
+        if ledger.get("candidate_doc_hit") is not None:
+            candidate_doc_total += 1
+            if ledger["candidate_doc_hit"]:
+                candidate_doc_hits += 1
+        if ledger.get("candidate_section_hit") is not None:
+            candidate_section_total += 1
+            if ledger["candidate_section_hit"]:
+                candidate_section_hits += 1
+        if ledger.get("support_doc_hit") is not None:
+            support_doc_total += 1
+            if ledger["support_doc_hit"]:
+                support_doc_hits += 1
+        if ledger.get("support_section_hit") is not None:
+            support_section_total += 1
+            if ledger["support_section_hit"]:
+                support_section_hits += 1
+        if ledger.get("citation_doc_hit") is not None:
+            citation_doc_total += 1
+            if ledger["citation_doc_hit"]:
+                citation_doc_hits += 1
+        if ledger.get("citation_section_hit") is not None:
+            citation_section_total += 1
+            if ledger["citation_section_hit"]:
+                citation_section_hits += 1
+
+        doc_status = ledger.get("doc_status") or "no_ledger"
+        doc_status_counts[doc_status] = doc_status_counts.get(doc_status, 0) + 1
+        section_status = ledger.get("section_status") or "no_ledger"
+        section_status_counts[section_status] = section_status_counts.get(section_status, 0) + 1
+
+        if (ledger.get("section_label_issue") or {}).get("issue"):
+            section_label_issue_ids.append(raw.get("id", ""))
+
+    def _rate(hits: int, total: int) -> float | None:
+        return round(hits / total, 4) if total > 0 else None
+
+    return {
+        "candidate_doc_hit_rate": _rate(candidate_doc_hits, candidate_doc_total),
+        "candidate_section_hit_rate": _rate(candidate_section_hits, candidate_section_total),
+        "support_doc_hit_rate": _rate(support_doc_hits, support_doc_total),
+        "support_section_hit_rate": _rate(support_section_hits, support_section_total),
+        "citation_doc_hit_rate": _rate(citation_doc_hits, citation_doc_total),
+        "citation_section_hit_rate": _rate(citation_section_hits, citation_section_total),
+        "doc_status_distribution": doc_status_counts,
+        "section_status_distribution": section_status_counts,
+        "section_label_issue_count": len(section_label_issue_ids),
+        "section_label_issue_ids": section_label_issue_ids,
+        "sample_count_with_ledger": sum(1 for r in raw_records if r.get("retrieval_ledger")),
+    }
 
 
 def is_generation_failure(retrieval_eval: dict[str, Any], generation_eval: dict[str, Any]) -> bool:
@@ -2109,6 +2320,7 @@ def main() -> int:
     report["diagnostics"] = build_failure_diagnostics(enriched)
     report["abstention_analysis"] = build_abstention_analysis(enriched)
     report["round8_policy_analysis"] = build_round8_policy_analysis(enriched)
+    report["retrieval_ledger"] = compute_retrieval_ledger_summary(report["raw_records"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     run_config_path = output_path.parent / "run_config.json"

@@ -142,6 +142,36 @@ def _comparison_md(summaries: dict[str, dict[str, Any]], verdict: dict[str, Any]
         f"- v2:  `{json.dumps(v2['failure_category_distribution'], ensure_ascii=False)}`",
         "",
     ]
+
+    v2_ledger = (v2 or {}).get("retrieval_ledger") or {}
+    old_ledger = (old or {}).get("retrieval_ledger") or {}
+    if v2_ledger:
+        lines += [
+            "## Retrieval Ledger (v2 diagnostic)",
+            "",
+            "Pipeline: candidate → support_pack → citation",
+            "",
+            "| Stage | v2_doc_hit | v2_section_hit |",
+            "|---|---|---|",
+            f"| candidate | `{v2_ledger.get('candidate_doc_hit_rate')}` | `{v2_ledger.get('candidate_section_hit_rate')}` |",
+            f"| support_pack | `{v2_ledger.get('support_doc_hit_rate')}` | `{v2_ledger.get('support_section_hit_rate')}` |",
+            f"| citation | `{v2_ledger.get('citation_doc_hit_rate')}` | `{v2_ledger.get('citation_section_hit_rate')}` |",
+            "",
+            f"v2 doc_status: `{json.dumps(v2_ledger.get('doc_status_distribution'), ensure_ascii=False)}`",
+            f"v2 section_status: `{json.dumps(v2_ledger.get('section_status_distribution'), ensure_ascii=False)}`",
+            f"v2 section_label_issue_count: `{v2_ledger.get('section_label_issue_count')}`",
+        ]
+        if v2_ledger.get("section_label_issue_ids"):
+            lines.append(f"v2 section_label_issue_ids: {', '.join(f'`{i}`' for i in v2_ledger['section_label_issue_ids'])}")
+        lines.append("")
+    if old_ledger:
+        lines += [
+            "## Retrieval Ledger (old diagnostic)",
+            "",
+            f"old doc_status: `{json.dumps(old_ledger.get('doc_status_distribution'), ensure_ascii=False)}`",
+            f"old section_status: `{json.dumps(old_ledger.get('section_status_distribution'), ensure_ascii=False)}`",
+            "",
+        ]
     return "\n".join(lines)
 
 
