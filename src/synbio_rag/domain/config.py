@@ -72,6 +72,22 @@ class RetrievalConfig:
     section_discussion_bonus: float = 0.28
     section_abstract_bonus: float = 0.0
     section_introduction_penalty: float = -0.05
+    # Post-rerank same-doc body section coverage (Phase 4)
+    same_doc_body_coverage_enabled: bool = False
+    same_doc_body_coverage_intents: list[str] = field(default_factory=lambda: ["factoid"])
+    same_doc_body_coverage_margin: int = 5
+    same_doc_body_coverage_per_doc: int = 1
+    same_doc_body_coverage_max_total: int = 1
+    same_doc_body_coverage_replace_policy: str = "same_doc_non_body"
+    # Phase 5: section group coverage Level 2 (INTRO/METHOD missing)
+    same_doc_section_group_coverage_level2_enabled: bool = False
+    # Same-doc body candidate expansion (Phase 2, not used)
+    same_doc_body_expand_enabled: bool = False
+    same_doc_body_expand_top_docs: int = 5
+    same_doc_body_expand_per_doc: int = 2
+    same_doc_body_expand_max_total: int = 8
+    same_doc_body_expand_min_doc_rank: int = 20
+    same_doc_body_expand_require_missing_body: bool = True
     rerank_score_floor_ratio: float = 0.4
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
@@ -380,6 +396,39 @@ class Settings:
         )
         settings.retrieval.section_introduction_penalty = float(
             get_value("RETRIEVAL_SECTION_INTRODUCTION_PENALTY", str(settings.retrieval.section_introduction_penalty))
+        )
+        settings.retrieval.same_doc_body_coverage_enabled = _parse_bool(
+            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_ENABLED", str(settings.retrieval.same_doc_body_coverage_enabled))
+        )
+        val = get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_INTENTS", "")
+        if val:
+            settings.retrieval.same_doc_body_coverage_intents = [x.strip() for x in val.split(",")]
+        settings.retrieval.same_doc_body_coverage_margin = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MARGIN", str(settings.retrieval.same_doc_body_coverage_margin))
+        )
+        settings.retrieval.same_doc_body_coverage_max_total = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MAX_TOTAL", str(settings.retrieval.same_doc_body_coverage_max_total))
+        )
+        settings.retrieval.same_doc_section_group_coverage_level2_enabled = _parse_bool(
+            get_value("RETRIEVAL_SECTION_GROUP_COVERAGE_LEVEL2_ENABLED", str(settings.retrieval.same_doc_section_group_coverage_level2_enabled))
+        )
+        settings.retrieval.same_doc_body_expand_enabled = _parse_bool(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_ENABLED", str(settings.retrieval.same_doc_body_expand_enabled))
+        )
+        settings.retrieval.same_doc_body_expand_top_docs = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_TOP_DOCS", str(settings.retrieval.same_doc_body_expand_top_docs))
+        )
+        settings.retrieval.same_doc_body_expand_per_doc = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_PER_DOC", str(settings.retrieval.same_doc_body_expand_per_doc))
+        )
+        settings.retrieval.same_doc_body_expand_max_total = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MAX_TOTAL", str(settings.retrieval.same_doc_body_expand_max_total))
+        )
+        settings.retrieval.same_doc_body_expand_min_doc_rank = int(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MIN_DOC_RANK", str(settings.retrieval.same_doc_body_expand_min_doc_rank))
+        )
+        settings.retrieval.same_doc_body_expand_require_missing_body = _parse_bool(
+            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_REQUIRE_MISSING_BODY", str(settings.retrieval.same_doc_body_expand_require_missing_body))
         )
         settings.retrieval.rerank_score_floor_ratio = float(
             get_value("RETRIEVAL_RERANK_SCORE_FLOOR_RATIO", str(settings.retrieval.rerank_score_floor_ratio))

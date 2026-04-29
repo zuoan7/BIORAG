@@ -122,6 +122,62 @@ JOURNAL_PREFIX_PATTERN = re.compile(
     re.I,
 )
 
+# Section fallback: body sections that should exist in a well-structured paper
+_BODY_SECTIONS: set[str] = {
+    "Introduction", "Background", "Methods", "Materials and Methods",
+    "Experimental Section", "Experimental Procedures", "Results",
+    "Results and Discussion", "Discussion", "Conclusion", "Conclusions",
+    "Full Text",
+}
+
+# Fallback heading patterns: used when block-level section_heading metadata is broken.
+# These are more conservative than SECTION_PATTERNS — they require the heading to
+# be a standalone short line, not a substring match in running text.
+_FALLBACK_SECTION_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^\s*(?:#+\s*)?(?:Introduction|INTROD\w+)\s*$"), "Introduction"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Background)\s*$", re.I), "Background"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Materials?\s+and\s+Methods|Methods?\s+and\s+Materials?)\s*$", re.I), "Materials and Methods"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Methods?)\s*$", re.I), "Methods"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Experimental\s+(?:Procedures?|Section|Methods?))\s*$", re.I), "Experimental Procedures"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Results?\s+and\s+Discussion|Discussion\s+and\s+Results?)\s*$", re.I), "Results and Discussion"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Results?)\s*$", re.I), "Results"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Discussion)\s*$", re.I), "Discussion"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Conclusions?)\s*$", re.I), "Conclusion"),
+    (re.compile(r"^\s*(?:#+\s*)?(?:Abstract)\s*$", re.I), "Abstract"),
+]
+
+# Numbered heading: "1. Introduction", "2. Results", "3.1. Discussion" etc.
+_FALLBACK_NUMBERED_HEADING = re.compile(
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s+)(.+?)\s*$"
+)
+
+# Patterns that should NOT be treated as section headings even if they
+# contain section-like keywords.
+_FALSE_HEADING_FILTERS: list[re.Pattern] = [
+    re.compile(r"^\s*(?:#+\s*)?(?:Received|Accepted|Published|Revised)\s*:", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:DOI|ORCID)\s*[:\d]", re.I),
+    re.compile(r"^\s*https?://", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:Correspondence|Corresponding\s+Author)", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:Author\s+Contributions|Funding|Conflict\s+of\s+Interest|Competing\s+Interests)", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:Data\s+Availability|Ethics\s+Statement|Acknowledgments?|Acknowledgements)", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:Supplementary\s+(?:Material|Data|Information|Figure|Table))", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:References|Bibliography|Publisher'?s?\s+Note)", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:FIGURE|TABLE)\s*\d+", re.I),
+    re.compile(r"^\s*(?:#+\s*)?(?:Supporting\s+Information)", re.I),
+    # Reference entry lines: "7. Rabinowitz, M., and Lipmann, F. (1960)..."
+    re.compile(r"^\s*\d+\.\s+[A-Z][a-z'-]+,\s+[A-Z]\.", re.I),
+    # Address/zip code lines: "79104 Freiburg, Germany"
+    re.compile(r"^\s*\d{4,6}\s+\w+,\s+\w+", re.I),
+    # Instrument parameters: "1950 V; and mass range, 20-2000 m/z."
+    re.compile(r"^\s*\d+\s*V\s*;", re.I),
+    # Grant number lines: "2020B020226007), and the..."
+    re.compile(r"^\s*\d{8,}[)）]", re.I),
+    # Figure/panel references in body text: "5A,B). The pykA-knockout..."
+    re.compile(r"^\s*\d+[A-F](?:,[A-F])*[)）]\.?\s+[a-z]", re.I),
+    # Author name lines (3+ capitalized words)
+    re.compile(r"^[A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+){2,}\s*$"),
+]
+
 
 # ============================================================
 # 数据类
@@ -547,6 +603,371 @@ def _match_section_title(line: str) -> Optional[str]:
     return None
 
 
+# ============================================================
+# Section fallback: 修复 index metadata 错误的文档
+# ============================================================
+
+
+def _needs_section_fallback(section_groups: list[dict]) -> bool:
+    """
+    检查文档是否需要 section fallback。
+
+    触发条件:
+    1. body section 的 block 占比 < 10%
+    2. Title/Abstract/Unknown 的 block 占比 > 80%
+
+    满足两个条件才触发，避免影响结构正常的文档。
+    """
+    if not section_groups:
+        return False
+
+    total_blocks = sum(len(sg["blocks"]) for sg in section_groups)
+    if total_blocks < 3:
+        return False
+
+    body_count = sum(
+        len(sg["blocks"]) for sg in section_groups
+        if sg["section"] in _BODY_SECTIONS
+    )
+    title_au_count = sum(
+        len(sg["blocks"]) for sg in section_groups
+        if sg["section"] in ("Title", "Abstract", "Unknown", "")
+    )
+
+    body_ratio = body_count / total_blocks
+    tau_ratio = title_au_count / total_blocks
+
+    return body_ratio < 0.10 and tau_ratio > 0.80
+
+
+def _clean_heading_candidate(text: str) -> str:
+    """清洗 heading 候选文本：去掉 markdown markers 和编号前缀。"""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^\s*#+\s*", "", cleaned)
+    cleaned = re.sub(r"^\s*(?:\d+(?:\.\d+)*\.?)\s*", "", cleaned)
+    return cleaned.strip()
+
+
+def _is_false_heading(text: str) -> bool:
+    """检查文本是否为误标 heading（作者名、地址、元数据等）。"""
+    for pat in _FALSE_HEADING_FILTERS:
+        if pat.search(text):
+            return True
+    return False
+
+
+def _detect_true_section_headings(
+    all_blocks: list[dict],
+) -> list[tuple[int, str]]:
+    """
+    在所有 block 的文本中检测真正的 section heading。
+
+    返回: [(block_index, canonical_section_name), ...]
+    按 block_index 排序。
+    """
+    detections: list[tuple[int, str]] = []
+
+    for i, block in enumerate(all_blocks):
+        text = block["text"].strip()
+        if not text or len(text) > 250:  # heading 不应太长
+            continue
+
+        # 尝试 numbered heading 模式: "1. Introduction" 等
+        nm = _FALLBACK_NUMBERED_HEADING.match(text)
+        candidate = nm.group(1).strip() if nm else text
+
+        # 清洗
+        cleaned = _clean_heading_candidate(candidate)
+        if not cleaned or len(cleaned) > 120:
+            continue
+
+        # 过滤误标
+        if _is_false_heading(cleaned):
+            continue
+
+        # 匹配标准 section
+        for pat, name in _FALLBACK_SECTION_PATTERNS:
+            if pat.match(cleaned):
+                # 额外安全检查：避免匹配到正文中嵌的 section 关键词
+                # "the results showed that..." 不应被识别为 heading
+                if nm or re.match(r"^\s*(?:#+\s*)?[A-Z]", text):
+                    detections.append((i, name))
+                break
+
+    return detections
+
+
+def _apply_fallback_section_grouping(
+    all_blocks: list[dict],
+    detected_headings: list[tuple[int, str]],
+) -> list[dict]:
+    """
+    基于检测到的真实 section heading 重新分组 blocks。
+
+    - 第一个 heading 之前的 blocks → 保持原始 section (Title/Abstract)
+    - heading block 本身 → 作为 section marker
+    - heading 后的 blocks → 归入该 section，直到下一个 heading
+    - References 及之后的 → 标记为 Metadata（跳过）
+    """
+    if len(detected_headings) < 2:
+        return []
+
+    # 按 block_index 排序
+    detected_headings.sort(key=lambda h: h[0])
+
+    # 找到 "References" 类 heading 的边界
+    reference_sections = {"References", "Bibliography", "Supplementary Material"}
+    first_ref_idx: Optional[int] = None
+    for idx, name in detected_headings:
+        if name in reference_sections or _is_false_heading(name):
+            first_ref_idx = idx
+            break
+
+    # 过滤 References 之后的 heading
+    clean_headings = []
+    for idx, name in detected_headings:
+        if first_ref_idx is not None and idx >= first_ref_idx:
+            break
+        if name in reference_sections:
+            break
+        clean_headings.append((idx, name))
+
+    if len(clean_headings) < 2:
+        return []
+
+    groups: list[dict] = []
+    heading_indices = {h[0] for h in clean_headings}
+
+    # 第一个 heading 之前的 blocks → 保持原始分类
+    first_heading_idx = clean_headings[0][0]
+    pre_heading_blocks = [b for i, b in enumerate(all_blocks) if i < first_heading_idx]
+    if pre_heading_blocks:
+        # 尝试识别 Abstract section
+        abstract_idx = None
+        for h_idx, h_name in clean_headings:
+            if h_name == "Abstract":
+                abstract_idx = h_idx
+                break
+
+        if abstract_idx is not None:
+            # Abstract 之前 → Title; Abstract 到下一个 heading → Abstract
+            abstract_heading_idx_in_headings = next(
+                (j for j, (_, name) in enumerate(clean_headings) if name == "Abstract"), None
+            )
+            if abstract_heading_idx_in_headings is not None and abstract_heading_idx_in_headings > 0:
+                # Abstract 不是第一个 heading → 前面的归 Title/Abstract
+                mid_blocks = [b for i, b in enumerate(all_blocks) if i < abstract_idx]
+                abstract_start = clean_headings[abstract_heading_idx_in_headings][0]
+                abstract_blocks_list = [
+                    b for i, b in enumerate(all_blocks)
+                    if abstract_start <= i < (clean_headings[abstract_heading_idx_in_headings + 1][0]
+                                               if abstract_heading_idx_in_headings + 1 < len(clean_headings)
+                                               else len(all_blocks))
+                ]
+            else:
+                # 只保留非 Abstract heading 之前的内容
+                mid_blocks = pre_heading_blocks
+                abstract_blocks_list = []
+        else:
+            mid_blocks = pre_heading_blocks
+            abstract_blocks_list = []
+
+        if mid_blocks:
+            groups.append({
+                "section": "Title",
+                "section_path": ["Title"],
+                "blocks": mid_blocks,
+            })
+        if abstract_blocks_list:
+            groups.append({
+                "section": "Abstract",
+                "section_path": ["Abstract"],
+                "blocks": abstract_blocks_list,
+            })
+
+    # 按 heading 分组
+    for h_pos in range(len(clean_headings)):
+        h_idx, h_name = clean_headings[h_pos]
+        next_idx = clean_headings[h_pos + 1][0] if h_pos + 1 < len(clean_headings) else len(all_blocks)
+
+        section_blocks = []
+        for i in range(h_idx, next_idx):
+            if i < len(all_blocks):
+                section_blocks.append(all_blocks[i])
+
+        if section_blocks:
+            groups.append({
+                "section": h_name,
+                "section_path": [h_name],
+                "blocks": section_blocks,
+            })
+
+    # 如果 fallback 分组后仍然没有 body section，返回空（让调用方使用原始分组）
+    has_body = any(g["section"] in _BODY_SECTIONS for g in groups)
+    if not has_body:
+        return []
+
+    return groups
+
+
+def _apply_generic_fulltext_fallback(
+    section_groups: list[dict],
+    all_blocks: list[dict],
+) -> list[dict]:
+    """
+    Path B fallback: 无法检测到具体 section heading 时使用。
+
+    将误标为 Title/Abstract 的正文 blocks 重新归入 "Full Text" section，
+    使它们能通过 BODY_ANY group 匹配。
+
+    策略:
+    - Title/Abstract section 中的前 2 个 blocks 保留原 section
+    - Title/Abstract section 中剩余的 blocks → 归入 "Full Text"
+    - 后续的非元数据 section → 也归入 "Full Text"
+    """
+    new_groups: list[dict] = []
+    body_blocks: list[dict] = []
+    seen_body = False
+
+    for sg in section_groups:
+        sec_name = sg["section"]
+        blocks = sg["blocks"]
+
+        if sec_name in ("Title", "Abstract") and not seen_body:
+            # 前 2 个 blocks 保留为原 section，其余的进入 Full Text
+            keep = blocks[:2]
+            rest = blocks[2:]
+            if keep:
+                new_groups.append({
+                    "section": sec_name,
+                    "section_path": [sec_name],
+                    "blocks": keep,
+                })
+            if rest:
+                body_blocks.extend(rest)
+                seen_body = True
+        elif sec_name in ("References", "Bibliography"):
+            continue
+        elif _is_false_heading(sec_name):
+            continue
+        else:
+            body_blocks.extend(blocks)
+
+    if body_blocks:
+        filtered = _filter_body_blocks(body_blocks)
+        if filtered:
+            new_groups.append({
+                "section": "Full Text",
+                "section_path": ["Full Text"],
+                "blocks": filtered,
+            })
+
+    if len(new_groups) <= 1 and all(
+        sg["section"] in ("Title", "Abstract") for sg in new_groups
+    ):
+        return []
+
+    return new_groups
+
+
+def _filter_body_blocks(blocks: list[dict]) -> list[dict]:
+    """过滤 body blocks 中的元数据行和 noise。"""
+    result = []
+    for b in blocks:
+        text = b.get("text", "").strip()
+        if len(text) < 20:
+            continue
+        lower = text.lower()
+        if any(kw in lower for kw in (
+            "received:", "accepted:", "published:", "doi:", "http://", "https://",
+            "correspondence", "corresponding author", "equal contribution",
+            "supplementary material", "supporting information",
+        )):
+            continue
+        result.append(b)
+    return result
+
+
+_INLINE_ABSTRACT_RE = re.compile(
+    r"^(.*?)\b(ABSTRACT)\s*:\s*", re.I
+)
+# Standalone ABSTRACT without colon at paragraph start
+_ABSTRACT_NO_COLON_RE = re.compile(
+    r"^(ABSTRACT)\s+(.{30,})", re.I
+)
+
+
+def _split_inline_abstract(
+    btext: str,
+    page_num: int,
+    block: dict,
+) -> list[dict] | None:
+    """检测并拆分 paragraph block 中的 inline ABSTRACT heading。
+
+    处理两种形式:
+    1. "prefix ABSTRACT: content..." (带冒号，可能与前置文本合并)
+    2. "ABSTRACT content..." (无冒号，独立行首)
+    """
+    m = _INLINE_ABSTRACT_RE.match(btext)
+    if m:
+        prefix = m.group(1).strip()
+        abstract_text = btext[m.end():].strip()
+    else:
+        m2 = _ABSTRACT_NO_COLON_RE.match(btext)
+        if m2:
+            prefix = ""
+            abstract_text = m2.group(2).strip()
+        else:
+            return None
+
+    # 安全检查: prefix 太短 → 跳过
+    if prefix and len(prefix) < 3:
+        return None
+    # abstract_text 太短 → 不是真正的 abstract section
+    if len(abstract_text) < 30:
+        return None
+    # prefix 看起来像普通句子 → 不宜拆分
+    # (例如 "in this abstract we..." → 不应拆分)
+    if prefix and re.search(r'(?i)\b(?:in|the|this|an)\s+abstract\b', prefix):
+        return None
+
+    result: list[dict] = []
+    section_path = block.get("section_path", [])
+
+    if prefix:
+        # 过滤掉已知的 metadata 前缀（如 "Supporting Information"）
+        prefix_lower = prefix.lower().strip().rstrip(".")
+        if prefix_lower in _METADATA_HEADINGS:
+            # metadata → 跳过，不保留为 paragraph
+            pass
+        else:
+            result.append({
+                "type": "paragraph",
+                "text": prefix,
+                "section_path": section_path,
+                "page": page_num,
+            })
+
+    # ABSTRACT heading
+    result.append({
+        "type": "section_heading",
+        "text": "ABSTRACT",
+        "section_path": section_path,
+        "page": page_num,
+    })
+
+    # Abstract 正文
+    if abstract_text:
+        result.append({
+            "type": "paragraph",
+            "text": abstract_text,
+            "section_path": section_path,
+            "page": page_num,
+        })
+
+    return result
+
+
 def _infer_intro_abstract_blocks(lines: list[str], pages: Optional[list]) -> list[SectionBlock]:
     paragraphs = [p.strip() for p in "\n".join(lines).split("\n\n") if p.strip()]
     if not paragraphs:
@@ -660,6 +1081,16 @@ def chunk_by_blocks(
                 heading_text = btext.lstrip("#").strip()
                 if REFERENCE_SECTION_PATTERN.match(heading_text):
                     continue
+
+            # 检测 paragraph block 中的 inline ABSTRACT: heading
+            # 例如 "Supporting Information ABSTRACT: Thanks to its ease..."
+            # PDF parser 有时把 ABSTRACT: 和前置内容合并到同一个 paragraph block
+            if btype == "paragraph":
+                split_blocks = _split_inline_abstract(btext, page_num, block)
+                if split_blocks is not None:
+                    all_blocks.extend(split_blocks)
+                    continue
+
             all_blocks.append({
                 "type": btype,
                 "text": btext,
@@ -779,6 +1210,38 @@ def chunk_by_blocks(
             "section_path": list(current_section_path),
             "blocks": current_blocks,
         })
+
+    # Section fallback: 修复 index metadata 错误
+    # 当 PDF parser 的 block-level section_heading 信息不可靠时，
+    # 基于文本内容检测真实 section heading 并重新分组。
+    if _needs_section_fallback(section_groups):
+        detected = _detect_true_section_headings(all_blocks)
+        old_sections = {sg["section"] for sg in section_groups}
+
+        if len(detected) >= 2:
+            # Path A: 检测到足够的标准 section heading → 精确重新分组
+            fallback_groups = _apply_fallback_section_grouping(all_blocks, detected)
+            if fallback_groups:
+                new_sections = {sg["section"] for sg in fallback_groups}
+                body_gained = [s for s in new_sections if s in _BODY_SECTIONS]
+                if body_gained:
+                    print(f"    [fallback:A] {doc_id}: sections {sorted(old_sections)} → "
+                          f"{sorted(new_sections)} (gained: {body_gained})")
+                    section_groups = fallback_groups
+        else:
+            # Path B: 无标准 section heading 可检测，但正文存在且被误标为 Title/Abstract
+            # → 将非标题/非元数据的 blocks 重新标记为 "Full Text"
+            fallback_groups = _apply_generic_fulltext_fallback(section_groups, all_blocks)
+            if fallback_groups:
+                new_sections = {sg["section"] for sg in fallback_groups}
+                full_text_blocks = sum(
+                    len(sg["blocks"]) for sg in fallback_groups
+                    if sg["section"] == "Full Text"
+                )
+                if full_text_blocks > 0:
+                    print(f"    [fallback:B] {doc_id}: sections {sorted(old_sections)} → "
+                          f"{sorted(new_sections)} (Full Text blocks: {full_text_blocks})")
+                    section_groups = fallback_groups
 
     # 对每个 section group 进行分块
     all_chunks: list[Chunk] = []

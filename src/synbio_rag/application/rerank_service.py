@@ -375,6 +375,172 @@ def _apply_rerank_score_floor(chunks: list[RetrievedChunk], config: RetrievalCon
     return [chunk for chunk in chunks if chunk.rerank_score >= floor]
 
 
+_BODY_SECTION_GROUPS: set[str] = {
+    "Introduction", "Background", "Methods", "Materials and Methods",
+    "Experimental Section", "Experimental Procedures", "Results",
+    "Results and Discussion", "Discussion", "Conclusion", "Conclusions",
+    "Full Text",
+}
+
+
+def _section_to_body_group(section: str) -> str:
+    """将 section 名映射到 body group。"""
+    s = section.lower().strip()
+    if s in ("introduction", "background"):
+        return "INTRO"
+    if s in ("methods", "materials and methods", "experimental section",
+             "experimental procedures", "experimental methods"):
+        return "METHOD"
+    if s in ("results", "results and discussion"):
+        return "RESULT"
+    if s in ("discussion", "discussion and results"):
+        return "DISCUSSION"
+    if s in ("conclusion", "conclusions"):
+        return "CONCLUSION"
+    if s == "full text":
+        return "BODY_ANY"
+    if s == "abstract":
+        return "ABSTRACT"
+    if s == "title":
+        return "TITLE"
+    return "UNKNOWN"
+
+
+def _apply_same_doc_body_coverage(
+    selected: list[RetrievedChunk],
+    pre_floor: list[RetrievedChunk],
+    top_k: int,
+    analysis,
+    config,
+) -> list[RetrievedChunk]:
+    """在 rerank final selection 之后，为高置信 doc 补回缺失的 body section chunk。
+
+    两层检查:
+    1. doc 在 selected 中完全没有 body → 替换非 body chunk
+    2. doc 有 body 但缺失特定 section groups (INTRO/METHOD) → 替换非 body chunk 补入缺失 group
+    预算内替换，仅 factoid。
+    """
+    intent = getattr(analysis, "intent", None) if analysis else None
+    intent_name = str(intent).split(".")[-1].lower() if intent else ""
+    allowed_intents = config.same_doc_body_coverage_intents or ["factoid"]
+    if intent_name not in allowed_intents:
+        return selected
+
+    margin = config.same_doc_body_coverage_margin
+    max_total = config.same_doc_body_coverage_max_total
+
+    pre_floor_ranked: dict[str, int] = {}
+    for rank, c in enumerate(pre_floor):
+        pre_floor_ranked[c.chunk_id] = rank
+
+    docs_in_selected: dict[str, list[int]] = {}
+    for idx, c in enumerate(selected):
+        docs_in_selected.setdefault(c.doc_id, []).append(idx)
+
+    # victim 查找: 同 doc 的非 body chunk（优先 Title，其次 Abstract）
+    def _find_victim(doc_id: str) -> int | None:
+        for i in docs_in_selected.get(doc_id, []):
+            sec = selected[i].section
+            if sec == "Title":
+                return i
+        for i in docs_in_selected.get(doc_id, []):
+            if sec == "Abstract":
+                return i
+        return None
+
+    replaced = 0
+
+    # === Level 1: doc 完全没有 body section ===
+    for doc_id, indices in docs_in_selected.items():
+        if replaced >= max_total:
+            break
+        has_body = any(selected[i].section in _BODY_SECTION_GROUPS for i in indices)
+        if has_body:
+            continue
+        victim_idx = _find_victim(doc_id)
+        if victim_idx is None:
+            continue
+        best = _pick_best_body(pre_floor, doc_id, selected, pre_floor_ranked, top_k, margin)
+        if best:
+            _apply_replacement(selected, victim_idx, best, doc_id, top_k)
+            replaced += 1
+
+    # === Level 2: doc 有 body section 但缺失特定 groups (INTRO/METHOD) ===
+    if config.same_doc_section_group_coverage_level2_enabled and replaced < max_total:
+        # 需要被覆盖的目标 groups
+        target_groups = {"INTRO", "METHOD"}
+        for doc_id, indices in docs_in_selected.items():
+            if replaced >= max_total:
+                break
+            # 计算 selected 中已覆盖的 groups
+            covered_groups = set()
+            for i in indices:
+                g = _section_to_body_group(selected[i].section)
+                if g not in ("TITLE", "ABSTRACT", "UNKNOWN"):
+                    covered_groups.add(g)
+            missing_groups = target_groups - covered_groups
+            if not missing_groups:
+                continue
+
+            # 在 pre_floor 中找缺失 group 的最佳 chunk
+            best = None
+            best_rank = None
+            for c in pre_floor:
+                if c.doc_id != doc_id:
+                    continue
+                if any(c.chunk_id == s.chunk_id for s in selected):
+                    continue
+                g = _section_to_body_group(c.section)
+                if g not in missing_groups:
+                    continue
+                rank = pre_floor_ranked.get(c.chunk_id, 999)
+                if rank < top_k + margin:
+                    if best is None or rank < best_rank:
+                        best = c
+                        best_rank = rank
+
+            if best is None:
+                continue
+
+            victim_idx = _find_victim(doc_id)
+            if victim_idx is None:
+                continue
+
+            _apply_replacement(selected, victim_idx, best, doc_id, top_k)
+            replaced += 1
+
+    return selected
+
+
+def _pick_best_body(pre_floor, doc_id, selected, pre_floor_ranked, top_k, margin):
+    """从 pre_floor 中选同 doc 的最佳 body chunk。"""
+    best = None
+    best_rank = None
+    for c in pre_floor:
+        if c.doc_id != doc_id or c.section not in _BODY_SECTION_GROUPS:
+            continue
+        if any(c.chunk_id == s.chunk_id for s in selected):
+            continue
+        rank = pre_floor_ranked.get(c.chunk_id, 999)
+        if rank < top_k + margin:
+            if best is None or rank < best_rank:
+                best = c
+                best_rank = rank
+    return best
+
+
+def _apply_replacement(selected, victim_idx, new_chunk, doc_id, top_k):
+    """替换 selected 中的 victim chunk。"""
+    victim = selected[victim_idx]
+    new_chunk.metadata["added_by_body_coverage"] = True
+    new_chunk.metadata["body_coverage_reason"] = (
+        f"doc {doc_id} in top-{top_k} but missing body coverage"
+    )
+    new_chunk.metadata["body_coverage_victim"] = victim.chunk_id
+    victim.metadata["dropped_by_body_coverage"] = True
+    selected[victim_idx] = new_chunk
+
+
 def _finalize_rerank(
     question: str,
     chunks: list[RetrievedChunk],
@@ -398,14 +564,24 @@ def _finalize_rerank(
         )
         return final
     chunks.sort(key=_sort_key, reverse=True)
+    pre_floor = list(chunks)
     chunks = _apply_rerank_score_floor(chunks, config)
-    return _apply_comparison_coverage_selection(
+    final = _apply_comparison_coverage_selection(
         chunks=chunks,
         queries=queries or [question],
         analysis=analysis,
         config=config,
         top_k=top_k,
     )
+    if config.same_doc_body_coverage_enabled:
+        final = _apply_same_doc_body_coverage(
+            selected=final,
+            pre_floor=pre_floor,
+            top_k=len(final),
+            analysis=analysis,
+            config=config,
+        )
+    return final
 
 
 def _build_rerank_queries(question: str, analysis: QueryAnalysis | None) -> list[str]:

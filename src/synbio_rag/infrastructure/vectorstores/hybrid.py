@@ -120,8 +120,18 @@ class HybridRetriever:
         boosted = _apply_title_keyword_boost(fused, question, self.config)
         boosted = _apply_structure_marker_boost(boosted, question, self.config)
         diversified = _apply_comparison_diversity(boosted, limit, analysis, self.config)
-        self.last_debug["rrf_hits"] = _serialize_hits(diversified[:5], "fusion_score")
-        return diversified
+        expanded = _apply_same_doc_body_expansion(
+            diversified=diversified,
+            dense_results=dense_results,
+            bm25_results=sparse_results,
+            config=self.config,
+            question=question,
+            bm25_retriever=self.bm25_retriever,
+        )
+        self.last_debug["rrf_hits"] = _serialize_hits(expanded[:5], "fusion_score")
+        self.last_debug["same_doc_body_expand_enabled"] = self.config.same_doc_body_expand_enabled
+        self.last_debug["same_doc_body_expand_added"] = len(expanded) - len(diversified)
+        return expanded
 
 
 def reciprocal_rank_fusion_multi(
@@ -382,6 +392,129 @@ def _apply_structure_marker_boost(
         reverse=True,
     )
     return boosted
+
+
+_BODY_EXPAND_SECTIONS: set[str] = {
+    "Introduction", "Background", "Methods", "Materials and Methods",
+    "Experimental Section", "Experimental Procedures", "Results",
+    "Results and Discussion", "Discussion", "Conclusion", "Conclusions",
+    "Full Text",
+}
+
+
+def _apply_same_doc_body_expansion(
+    diversified: list[RetrievedChunk],
+    dense_results: list[RetrievedChunk],
+    bm25_results: list[RetrievedChunk],
+    config,
+    question: str = "",
+    bm25_retriever=None,
+) -> list[RetrievedChunk]:
+    """在 hybrid results 中为缺少 body section 的 doc 补入同文档 body chunks。
+
+    优先级: dense/BM25 raw results (免费) > BM25 filtered query (一次查询)
+    """
+    if not config.same_doc_body_expand_enabled:
+        return diversified
+
+    expanded = list(diversified)
+    existing_ids = {c.chunk_id for c in expanded}
+
+    docs_in_results: dict[str, int] = {}
+    for rank, c in enumerate(diversified):
+        if c.doc_id not in docs_in_results:
+            docs_in_results[c.doc_id] = rank
+
+    docs_with_body: set[str] = set()
+    body_count_per_doc: dict[str, int] = {}
+    for c in diversified:
+        if c.section in _BODY_EXPAND_SECTIONS:
+            docs_with_body.add(c.doc_id)
+            body_count_per_doc[c.doc_id] = body_count_per_doc.get(c.doc_id, 0) + 1
+
+    docs_need_expand: list[tuple[str, int]] = []
+    for doc_id, rank in docs_in_results.items():
+        body_c = body_count_per_doc.get(doc_id, 0)
+        # Expand if: doc missing body sections OR has very few body chunks (< 3)
+        needs_body = (
+            not config.same_doc_body_expand_require_missing_body
+            or doc_id not in docs_with_body
+            or body_c < 3
+        )
+        if needs_body and rank < config.same_doc_body_expand_min_doc_rank:
+            docs_need_expand.append((doc_id, rank))
+    docs_need_expand.sort(key=lambda x: x[1])
+    docs_need_expand = docs_need_expand[:config.same_doc_body_expand_top_docs]
+
+    if not docs_need_expand:
+        return expanded
+
+    expand_doc_set = {d[0] for d in docs_need_expand}
+
+    # Phase A: scan dense/BM25 raw results for body chunks
+    candidate_pool: dict[str, list[RetrievedChunk]] = {}
+    for source_results in [dense_results, bm25_results]:
+        for c in source_results:
+            if c.doc_id in expand_doc_set and c.section in _BODY_EXPAND_SECTIONS:
+                if c.chunk_id not in existing_ids:
+                    candidate_pool.setdefault(c.doc_id, []).append(c)
+
+    # Phase B: for docs still missing body chunks, query BM25 with doc_id filter
+    if bm25_retriever is not None:
+        from ...domain.schemas import QueryFilters
+        for doc_id, _ in docs_need_expand:
+            if doc_id in candidate_pool and len(candidate_pool[doc_id]) >= config.same_doc_body_expand_per_doc:
+                continue
+            try:
+                body_section_list = sorted(_BODY_EXPAND_SECTIONS)
+                extra = bm25_retriever.search(
+                    question,
+                    limit=config.same_doc_body_expand_per_doc * 3,
+                    filters=QueryFilters(
+                        doc_ids=[doc_id],
+                        sections=body_section_list,
+                    ),
+                )
+                for c in extra:
+                    if c.section in _BODY_EXPAND_SECTIONS and c.chunk_id not in existing_ids:
+                        candidate_pool.setdefault(doc_id, []).append(c)
+            except Exception:
+                pass
+
+    for doc_chunks in candidate_pool.values():
+        doc_chunks.sort(
+            key=lambda c: (max(c.vector_score, c.bm25_score * 0.01), c.vector_score, c.bm25_score),
+            reverse=True,
+        )
+
+    added_total = 0
+    per_doc_added: dict[str, int] = {}
+    for doc_id, doc_rank in docs_need_expand:
+        if added_total >= config.same_doc_body_expand_max_total:
+            break
+        chunks = candidate_pool.get(doc_id, [])
+        for bc in chunks:
+            if per_doc_added.get(doc_id, 0) >= config.same_doc_body_expand_per_doc:
+                break
+            if added_total >= config.same_doc_body_expand_max_total:
+                break
+            if bc.chunk_id in existing_ids:
+                continue
+
+            new_chunk = _clone_chunk(bc)
+            new_chunk.metadata["added_by_same_doc_body_expand"] = True
+            new_chunk.metadata["expansion_reason"] = (
+                f"doc {doc_id} ranked {doc_rank} in hybrid but missing body section"
+            )
+            new_chunk.metadata["source_doc_signal_rank"] = doc_rank
+            new_chunk.metadata["body_section"] = bc.section
+            new_chunk.metadata["expansion_score"] = max(bc.vector_score, bc.bm25_score * 0.01)
+            expanded.append(new_chunk)
+            existing_ids.add(bc.chunk_id)
+            added_total += 1
+            per_doc_added[doc_id] = per_doc_added.get(doc_id, 0) + 1
+
+    return expanded
 
 
 def _clone_chunk(chunk: RetrievedChunk) -> RetrievedChunk:

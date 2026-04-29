@@ -105,6 +105,12 @@ def _verdict(old: dict[str, Any], v2: dict[str, Any]) -> dict[str, Any]:
             "threshold": round(float(old["section_hit_rate"] or 0) - SECTION_MARGIN, 4),
             "pass": float(v2["section_hit_rate"] or 0) >= float(old["section_hit_rate"] or 0) - SECTION_MARGIN,
         },
+        "section_norm_hit (primary)": {
+            "old": old.get("section_norm_hit_rate"),
+            "v2":  v2.get("section_norm_hit_rate"),
+            "threshold": round(float(old.get("section_norm_hit_rate") or 0) - SECTION_MARGIN, 4),
+            "pass": float(v2.get("section_norm_hit_rate") or 0) >= float(old.get("section_norm_hit_rate") or 0) - SECTION_MARGIN,
+        },
     }
     overall = all(c["pass"] for c in checks.values())
     return {"checks": checks, "overall_pass": overall}

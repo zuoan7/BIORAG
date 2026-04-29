@@ -389,11 +389,13 @@ def fetch_answers(
                         "expected_behavior": str(item.get("expected_behavior") or "").strip(),
                         "expected_doc_ids": normalize_list(item.get("expected_doc_ids") or item.get("doc_ids")),
                         "accepted_doc_ids": normalize_list(item.get("accepted_doc_ids")),
+                        "related_doc_ids": normalize_list(item.get("related_doc_ids")),
                         "doc_ids": normalize_list(item.get("doc_ids")),
                         "expected_source_files": normalize_list(item.get("expected_source_files")),
                         "accepted_source_files": normalize_list(item.get("accepted_source_files")),
                         "source_files": normalize_list(item.get("source_files")),
                         "expected_sections": normalize_list(item.get("expected_sections")),
+                        "expected_section_groups": normalize_list(item.get("expected_section_groups")),
                         "expected_route": (item.get("expected_route") or "").strip(),
                         "accepted_routes": normalize_list(item.get("accepted_routes")),
                         "expected_min_citations": int(item.get("expected_min_citations", 0) or 0),
@@ -504,6 +506,63 @@ def overlap_metrics(expected: list[str], actual: list[str]) -> dict[str, float |
         "expected": sorted(expected_set),
         "actual": sorted(actual_set),
         "matched": overlap,
+        "hit": hit,
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+    }
+
+
+_SECTION_TO_GROUP: dict[str, str] = {
+    "Title": "TITLE",
+    "Abstract": "ABSTRACT",
+    "Introduction": "INTRO",
+    "Background": "INTRO",
+    "Results": "RESULT",
+    "Results and Discussion": "RESULT",
+    "Discussion": "DISCUSSION",
+    "Conclusion": "CONCLUSION",
+    "Conclusions": "CONCLUSION",
+    "Methods": "METHOD",
+    "Materials and Methods": "METHOD",
+    "Experimental Section": "METHOD",
+    "Experimental Procedures": "METHOD",
+    "Full Text": "BODY_ANY",
+}
+
+
+def _section_to_group(section: str) -> str:
+    return _SECTION_TO_GROUP.get(section, "UNKNOWN")
+
+
+def overlap_metrics_grouped(
+    expected_sections: list[str],
+    expected_groups: list[str],
+    actual_sections: list[str],
+) -> dict[str, float | list[str] | bool]:
+    """Compute section hit using group-level matching (normalized / primary metric)."""
+    expected_set = {item for item in expected_sections if item}
+    if not expected_set:
+        return {
+            "expected": sorted(expected_set),
+            "actual": sorted(actual_sections),
+            "matched": [],
+            "hit": False,
+            "precision": 0.0,
+            "recall": 0.0,
+        }
+    actual_groups = {_section_to_group(s) for s in actual_sections if s}
+    exp_groups = set(expected_groups)
+    overlap_groups = sorted(exp_groups & actual_groups)
+    matched_sections = sorted(
+        s for s in expected_set if _section_to_group(s) in actual_groups
+    )
+    precision = len(overlap_groups) / len(actual_groups) if actual_groups else 0.0
+    recall = len(overlap_groups) / len(exp_groups) if exp_groups else 0.0
+    hit = bool(overlap_groups)
+    return {
+        "expected": sorted(expected_set),
+        "actual": sorted(actual_sections),
+        "matched": matched_sections,
         "hit": hit,
         "precision": round(precision, 4),
         "recall": round(recall, 4),
@@ -1291,6 +1350,9 @@ def evaluate_retrieval(
     source_recall_values: list[float] = []
     section_hit_values: list[float] = []
     section_precision_values: list[float] = []
+    section_norm_hit_values: list[float] = []
+    section_norm_precision_values: list[float] = []
+    section_norm_recall_values: list[float] = []
     section_recall_values: list[float] = []
     evidence_coverage_values: list[float] = []
     branch_count_values: list[float] = []
@@ -1335,6 +1397,11 @@ def evaluate_retrieval(
             actual_source_files,
         )
         section_metrics = overlap_metrics(meta["expected_sections"], actual_sections)
+        section_group_metrics = overlap_metrics_grouped(
+            meta["expected_sections"],
+            meta.get("expected_section_groups") or [],
+            actual_sections,
+        )
         evidence_metrics = evaluate_evidence_coverage(
             reference=item.get("reference") or "",
             contexts=item.get("retrieved_contexts") or [],
@@ -1405,6 +1472,10 @@ def evaluate_retrieval(
             section_hit_values.append(1.0 if section_metrics["hit"] else 0.0)
             section_precision_values.append(float(section_metrics["precision"]))
             section_recall_values.append(float(section_metrics["recall"]))
+            # Group-level (normalized) section hit — primary metric
+            section_norm_hit_values.append(1.0 if section_group_metrics["hit"] else 0.0)
+            section_norm_precision_values.append(float(section_group_metrics["precision"]))
+            section_norm_recall_values.append(float(section_group_metrics["recall"]))
         if isinstance(evidence_metrics.get("evidence_coverage"), (int, float)):
             evidence_coverage_values.append(float(evidence_metrics["evidence_coverage"]))
         if isinstance(branch_metrics.get("branch_count"), int) and branch_metrics["branch_count"] > 0:
@@ -1441,6 +1512,9 @@ def evaluate_retrieval(
         "section_hit_rate": mean_or_none(section_hit_values),
         "section_precision_avg": mean_or_none(section_precision_values),
         "section_recall_avg": mean_or_none(section_recall_values),
+        "section_norm_hit_rate": mean_or_none(section_norm_hit_values),
+        "section_norm_precision_avg": mean_or_none(section_norm_precision_values),
+        "section_norm_recall_avg": mean_or_none(section_norm_recall_values),
         "evidence_coverage_avg": mean_or_none(evidence_coverage_values),
         "evidence_coverage_zero_rate": mean_or_none([1.0 if value == 0.0 else 0.0 for value in evidence_coverage_values]),
         "branch_count_avg": mean_or_none(branch_count_values),
