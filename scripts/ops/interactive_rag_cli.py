@@ -35,8 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="交互式测试 SynBio RAG API")
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8000",
-        help="RAG API 地址，默认: http://127.0.0.1:8000",
+        default="http://127.0.0.1:9000",
+        help="RAG API 地址，默认: http://127.0.0.1:9000",
     )
     parser.add_argument("--session-id", default=None, help="初始会话 ID")
     parser.add_argument("--tenant-id", default="default", help="租户 ID")
@@ -251,7 +251,7 @@ def main() -> int:
         except Exception as exc:
             print(f"healthcheck 失败: {type(exc).__name__}: {exc}")
             print("请先确认 RAG 服务已启动，例如:")
-            print("  uvicorn app.main:app --host 0.0.0.0 --port 8000")
+            print("  uvicorn app.main:app --host 0.0.0.0 --port 9000")
             return 1
 
         print(HELP_TEXT)

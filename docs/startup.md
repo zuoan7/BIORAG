@@ -27,19 +27,19 @@ cp config/settings.example.env .env
 启动命令：
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 9000
 ```
 
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:9000/healthz
 ```
 
 问答接口：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/ask \
+curl -X POST http://127.0.0.1:9000/v1/ask \
   -H "Content-Type: application/json" \
   -d '{
     "question": "总结 CRISPR 在细菌基因调控中的应用",
@@ -54,19 +54,19 @@ curl -X POST http://127.0.0.1:8000/v1/ask \
 如果希望把 rerank 从主服务中拆出去，先启动 reranker：
 
 ```bash
-uvicorn app.reranker_main:app --host 0.0.0.0 --port 8001
+uvicorn app.reranker_main:app --host 0.0.0.0 --port 9001
 ```
 
 然后在 `.env` 中配置：
 
 ```bash
-RERANKER_SERVICE_URL=http://127.0.0.1:8001
+RERANKER_SERVICE_URL=http://127.0.0.1:9001
 ```
 
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8001/healthz
+curl http://127.0.0.1:9001/healthz
 ```
 
 ## 4. 知识库构建命令
@@ -129,7 +129,7 @@ python scripts/evaluation/run_ragas_regression.py --label round4_retrieval
 python scripts/ops/interactive_rag_cli.py
 ```
 
-如果主服务不在 `8000`，可以显式指定地址：
+如果主服务不在 `9000`，可以显式指定地址：
 
 ```bash
 python scripts/ops/interactive_rag_cli.py --base-url http://127.0.0.1:8002
@@ -157,6 +157,6 @@ python scripts/ops/interactive_rag_cli.py --debug
 - 现在代码会按项目根目录解析本地路径，避免因为启动目录不同导致 `.env`、`runtime/logs/`、`data/`、`runtime/vectorstores/milvus/`、`models/` 路径错误。
 - 离线评测数据默认放在 `data/eval/datasets/`，报告默认输出到 `reports/evaluation/`，并以时间戳新文件归档，不直接覆盖历史结果。
 - `run_validation_suite.py` 默认使用 `enterprise_ragas_smoke20.json` 作为最小验证集，`enterprise_ragas_eval_v1.json` 作为全量验证集。
-- 如果 `8000` 或 `8001` 端口已被占用，`uvicorn` 会直接报端口冲突，需要换端口或先停掉旧进程。
+- 如果 `9000` 或 `9001` 端口已被占用，`uvicorn` 会直接报端口冲突，需要换端口或先停掉旧进程。
 - 如果知识库未构建完成，服务可以启动，但 `/v1/ask` 可能在检索阶段报错或返回空结果。
 - 如果使用 QWEN/OpenAI-compatible 接口，需要在 `.env` 里配置对应的 `API_BASE` 和 `API_KEY`。

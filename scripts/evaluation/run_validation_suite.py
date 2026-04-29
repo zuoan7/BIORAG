@@ -66,8 +66,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8000",
-        help="RAG API 地址，默认: http://127.0.0.1:8000",
+        default="http://127.0.0.1:9000",
+        help="RAG API 地址，默认: http://127.0.0.1:9000",
     )
     parser.add_argument(
         "--judge-model",
