@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from ...domain.schemas import QueryAnalysis, QueryIntent
 from .guardrails import detect_existence_question
 from .models import AnswerPlan, SupportItem
@@ -89,8 +91,18 @@ class ExtractiveAnswerBuilder:
             elif plan.reason:
                 lines.append(f"证据限制：{plan.reason}。")
 
-        for item in support_pack[:3]:
-            lines.append(f"{_summarize(item)} [{item.evidence_id}]")
+        # Phase 9: summary route — produce structured supported claims instead of raw evidence snippets
+        if analysis.intent == QueryIntent.SUMMARY:
+            claims, limitations = _build_summary_claims(support_pack, plan)
+            lines.append("")
+            lines.extend(claims)
+            if limitations:
+                lines.append("")
+                lines.append("证据限制：")
+                lines.extend(f"- {lim}" for lim in limitations)
+        else:
+            for item in support_pack[:3]:
+                lines.append(f"{_summarize(item)} [{item.evidence_id}]")
         return "\n".join(lines)
 
 
@@ -100,3 +112,145 @@ def _summarize(item: SupportItem) -> str:
         text = text[:157].rstrip() + "..."
     section = item.candidate.section or "unknown"
     return f"{section} 证据显示：{text}"
+
+
+# ── Phase 9: Summary supported-claims builder ────────────────────
+
+_CLAIM_SECTION_PRIORITY = {
+    "abstract": 0, "conclusion": 0, "conclusions": 0,
+    "results and discussion": 1, "results": 2, "discussion": 3,
+    "introduction": 4, "background": 4,
+}
+
+_BIBLIOGRAPHY_SECTIONS = {"references", "bibliography", "acknowledgements", "author information"}
+
+
+def _build_summary_claims(
+    support_pack: list[SupportItem],
+    plan: AnswerPlan,
+) -> tuple[list[str], list[str]]:
+    """Build structured supported claims and evidence limitations for summary route.
+
+    Returns (claims, limitations) where each claim is a simple sentence
+    with a citation marker, and each limitation is a one-line caveat.
+    """
+    claims: list[str] = []
+    limitations: list[str] = []
+
+    # Rank items by section quality (prefer summary sections)
+    ranked = sorted(
+        support_pack,
+        key=lambda item: (
+            _CLAIM_SECTION_PRIORITY.get(
+                (item.candidate.section or "").lower(), 5
+            ),
+            -(item.support_score or 0),
+        ),
+    )
+
+    # Track which docs and sections are covered
+    covered_docs: set[str] = set()
+    covered_sections: set[str] = set()
+    seen_text_fingerprints: set[str] = set()
+
+    max_claims = min(len(ranked), 5)
+    claim_count = 0
+
+    for item in ranked:
+        if claim_count >= max_claims:
+            break
+
+        section = (item.candidate.section or "").lower()
+        doc_id = item.candidate.doc_id or ""
+
+        # Skip bibliography/reference sections
+        if any(bib in section for bib in _BIBLIOGRAPHY_SECTIONS):
+            continue
+
+        # Skip near-duplicate claims (text overlap > 80%)
+        text = " ".join((item.candidate.text or "").replace("\n", " ").split())
+        fingerprint = " ".join(text.split()[:10])  # first 10 words as fingerprint
+        if fingerprint in seen_text_fingerprints:
+            continue
+        seen_text_fingerprints.add(fingerprint)
+
+        # Build a concise claim from the evidence
+        claim_text = _make_claim(text, section, doc_id, item.evidence_id)
+        if claim_text:
+            claims.append(claim_text)
+            claim_count += 1
+            covered_docs.add(doc_id)
+            covered_sections.add(section)
+
+    # Build limitations
+    if len(support_pack) == 0:
+        limitations.append("未检索到合格证据。")
+    elif len(support_pack) <= 2:
+        limitations.append(f"仅有 {len(support_pack)} 条合格证据，覆盖面有限。")
+    elif plan.mode == "partial":
+        limitations.append("当前证据不足以构成完整综述。")
+
+    if covered_sections and all(s in {"introduction", "background"} for s in covered_sections):
+        limitations.append("主要证据来自 Introduction/Background，缺少 Results 原文支撑。")
+
+    if plan.mode == "partial" and plan.reason == "summary_abstract_only":
+        limitations.append("证据主要来自摘要，缺少详细结果或讨论。")
+
+    return claims, limitations
+
+
+def _make_claim(text: str, section: str, doc_id: str, evidence_id: str) -> str | None:
+    """Extract a concise claim from evidence text. Returns a one-sentence claim with citation.
+
+    Conservative: if text is too fragmented or bibliography-like, return None.
+    """
+    # Clean text
+    text = " ".join(text.replace("\n", " ").split())
+    if len(text) < 30:
+        return None
+
+    # Skip bibliography-like content
+    if _is_bibliography_line(text):
+        return None
+
+    # Build short claim: truncate to a reasonable sentence length
+    # Try to end at a sentence boundary
+    claim = text[:200].rstrip()
+    # Find last sentence-ending punctuation within range
+    for sep in [". ", "。", ".\n", ".\r"]:
+        last_dot = claim.rfind(sep)
+        if last_dot > 60:
+            claim = claim[:last_dot + len(sep)].rstrip()
+            break
+    else:
+        if len(text) > 200:
+            claim = text[:197].rstrip() + "..."
+
+    # Add section+source label
+    section_label = _section_short(section)
+    source = f"[{doc_id}]" if doc_id else ""
+    return f"- {section_label}: {claim} [{evidence_id}] {source}".strip()
+
+
+def _section_short(section: str) -> str:
+    """Short section label for claims."""
+    mapping = {
+        "abstract": "摘要", "conclusion": "结论", "conclusions": "结论",
+        "results": "结果", "discussion": "讨论",
+        "results and discussion": "结果与讨论",
+        "introduction": "引言", "background": "背景",
+        "methods": "方法", "materials and methods": "方法",
+    }
+    return mapping.get(section.lower(), section)
+
+
+def _is_bibliography_line(text: str) -> bool:
+    """Check if text looks like a bibliography/reference entry."""
+    lowered = text.lower()
+    if lowered.startswith("http") or lowered.startswith("doi"):
+        return True
+    if re.match(r"^\d+\.\s", lowered):  # numbered reference
+        return True
+    if re.match(r"^\[\d+\]", lowered):  # [1] style reference
+        return True
+    return False

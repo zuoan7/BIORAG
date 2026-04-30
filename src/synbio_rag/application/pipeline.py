@@ -3,10 +3,14 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
+from collections import Counter
+
+from pymilvus import MilvusClient
+
 from ..domain.confidence import ConfidenceScorer
 from ..domain.config import Settings
 from ..domain.router import QueryRouter
-from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGResponse
+from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGResponse, RetrievedChunk
 from ..infrastructure.embedding.bge import BGEM3Embedder
 from ..infrastructure.external_tools.literature_search import ExternalToolManager
 from ..infrastructure.vectorstores.bm25 import BM25Retriever
@@ -97,6 +101,25 @@ class SynBioRAGPipeline:
             analysis=analysis,
         )
         seed_chunks = reranked[: self.settings.retrieval.final_top_k]
+
+        # Phase 7C: summary section supplement — boost Abstract/Conclusion from top docs
+        summary_supplement_debug = _build_empty_supplement_debug()
+        if (self.settings.generation.version == "v2"
+                and analysis.intent.value == "summary"
+                and seed_chunks):
+            # Get Milvus client — works for both MilvusRetriever and HybridRetriever
+            milvus_retriever = getattr(self.retriever, "dense_retriever", self.retriever)
+            milvus_client = getattr(milvus_retriever, "client", None)
+            seed_chunks, summary_supplement_debug = _supplement_summary_sections(
+                question=question,
+                seed_chunks=seed_chunks,
+                milvus_client=milvus_client,
+                collection_name=self.settings.retrieval.collection_name,
+                max_docs=3,
+                max_per_doc=2,
+                max_total=5,
+            )
+
         if self.settings.generation.version == "v2":
             final_chunks = seed_chunks
             confidence = self.confidence_scorer.score(seed_chunks)
@@ -107,6 +130,9 @@ class SynBioRAGPipeline:
                 config=self.settings.generation,
                 history=history if self.settings.generation.v2_use_history else None,
             )
+            # Merge supplement debug into generation debug (always, for diagnostics)
+            gv2_debug = gen_result.debug
+            gv2_debug["summary_section_supplement"] = summary_supplement_debug
             return RAGResponse(
                 answer=gen_result.answer,
                 confidence=confidence,
@@ -245,3 +271,168 @@ def _build_filter_plan(filters: QueryFilters | None) -> list[tuple[str, QueryFil
         seen.add(key)
         deduped.append((name, candidate))
     return deduped
+
+
+# ── Phase 7C: Summary section supplement ─────────────────────────
+
+_SUMMARY_SECTIONS = {"abstract", "conclusion", "conclusions"}
+_SUMMARY_LIKE_TITLE_PATTERNS = {"summary", "conclusion", "outlook", "perspective", "overview"}
+
+
+def _build_empty_supplement_debug() -> dict:
+    return {
+        "enabled": False,
+        "used": False,
+        "reason": "",
+        "doc_ids": [],
+        "chunk_ids": [],
+        "sections": [],
+        "count": 0,
+        "source": "",
+        "abstract_or_conclusion_available_count": 0,
+        "abstract_or_conclusion_added_count": 0,
+    }
+
+
+def _supplement_summary_sections(
+    *,
+    question: str,
+    seed_chunks: list[RetrievedChunk],
+    milvus_client,
+    collection_name: str,
+    max_docs: int = 3,
+    max_per_doc: int = 2,
+    max_total: int = 5,
+) -> tuple[list[RetrievedChunk], dict]:
+    """Supplement seed_chunks with Abstract/Conclusion chunks from top documents.
+
+    Only affects summary route. Identifies top docs in seed_chunks,
+    queries Milvus for Abstract/Conclusion chunks from those docs,
+    and appends them to the seed_chunk list.
+    """
+    if milvus_client is None:
+        return seed_chunks, _build_empty_supplement_debug()
+
+    # Identify top documents by chunk count
+    doc_counts: Counter[str] = Counter()
+    for chunk in seed_chunks:
+        if chunk.doc_id:
+            doc_counts[chunk.doc_id] += 1
+    top_docs = [doc for doc, _ in doc_counts.most_common(max_docs)]
+
+    # Check which top docs already have Abstract/Conclusion in seed_chunks
+    existing_abs_conc = set()
+    for chunk in seed_chunks:
+        section_lower = (chunk.section or "").lower()
+        if section_lower in _SUMMARY_SECTIONS and chunk.doc_id in top_docs:
+            existing_abs_conc.add(chunk.doc_id)
+
+    # Docs that need supplement
+    missing_docs = [d for d in top_docs if d not in existing_abs_conc]
+    if not missing_docs:
+        return seed_chunks, _build_empty_supplement_debug()
+
+    supplemental_chunks: list[RetrievedChunk] = []
+    added_doc_ids: list[str] = []
+    added_chunk_ids: list[str] = []
+    added_sections: list[str] = []
+    abstract_conc_available = 0
+
+    for doc_id in missing_docs[:max_docs]:
+        if len(supplemental_chunks) >= max_total:
+            break
+        doc_supplement_count = 0
+        for section in ("Abstract", "Conclusion", "Conclusions"):
+            if doc_supplement_count >= max_per_doc or len(supplemental_chunks) >= max_total:
+                break
+            filter_expr = f'doc_id == "{doc_id}" and section == "{section}"'
+            try:
+                results = milvus_client.query(
+                    collection_name=collection_name,
+                    filter=filter_expr,
+                    output_fields=[
+                        "chunk_id", "doc_id", "source_file", "title",
+                        "section", "page_start", "page_end", "chunk_index", "text",
+                    ],
+                    limit=2,
+                )
+            except Exception:
+                continue
+
+            for hit in (results or []):
+                text = hit.get("text") or ""
+                if len(text) < 20:
+                    continue
+                # Skip bibliography-like chunks
+                if _is_bibliography_like(text):
+                    continue
+                abstract_conc_available += 1
+
+                # Check if already in seed_chunks
+                chunk_id = hit.get("chunk_id", "")
+                if any(c.chunk_id == chunk_id for c in seed_chunks):
+                    continue
+
+                chunk = RetrievedChunk(
+                    chunk_id=chunk_id,
+                    doc_id=hit.get("doc_id", ""),
+                    source_file=hit.get("source_file", ""),
+                    title=hit.get("title", ""),
+                    section=hit.get("section", ""),
+                    text=text,
+                    page_start=hit.get("page_start"),
+                    page_end=hit.get("page_end"),
+                    chunk_index=hit.get("chunk_index"),
+                    vector_score=0.0,
+                    bm25_score=0.0,
+                    rerank_score=None,
+                    fusion_score=None,
+                    metadata={},
+                )
+                supplemental_chunks.append(chunk)
+                added_doc_ids.append(doc_id)
+                added_chunk_ids.append(chunk_id)
+                added_sections.append(hit.get("section", ""))
+                doc_supplement_count += 1
+
+    if not supplemental_chunks:
+        debug = {
+            "enabled": True,
+            "used": False,
+            "reason": f"no_abstract_conclusion_found_for_missing_docs:{','.join(missing_docs[:3])}",
+            "doc_ids": missing_docs[:3],
+            "chunk_ids": [],
+            "sections": [],
+            "count": 0,
+            "source": "retrieved_doc",
+            "abstract_or_conclusion_available_count": abstract_conc_available,
+            "abstract_or_conclusion_added_count": 0,
+        }
+        return seed_chunks, debug
+
+    all_chunks = list(seed_chunks) + supplemental_chunks
+    debug = {
+        "enabled": True,
+        "used": True,
+        "reason": f"supplemented_abstract_conclusion_from_{len(missing_docs)}_docs",
+        "doc_ids": added_doc_ids,
+        "chunk_ids": added_chunk_ids,
+        "sections": added_sections,
+        "count": len(supplemental_chunks),
+        "source": "retrieved_doc",
+        "abstract_or_conclusion_available_count": abstract_conc_available,
+        "abstract_or_conclusion_added_count": len(supplemental_chunks),
+    }
+    return all_chunks, debug
+
+
+def _is_bibliography_like(text: str) -> bool:
+    """Detect bibliography/reference-list chunks (avoid supplementing with these)."""
+    lowered = text.lower()
+    doi_count = lowered.count("https://doi.org")
+    if doi_count >= 2:
+        return True
+    et_al_count = lowered.count("et al.")
+    if et_al_count >= 3:
+        return True
+    return False

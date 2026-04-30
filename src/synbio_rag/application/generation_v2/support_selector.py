@@ -56,6 +56,9 @@ class SupportPackSelector:
         elif "reference" in section_type or "bibliograph" in section_type:
             score -= 0.30
             reasons.append("section_penalty:references")
+        if _is_bibliography_like(candidate.text):
+            score -= 0.25
+            reasons.append("section_penalty:bibliography_like")
         for feature_name, bonus in (
             ("has_numeric", 0.08),
             ("has_result_terms", 0.10),
@@ -201,6 +204,13 @@ class SupportPackSelector:
                 item.reasons.append("insufficient_summary_support")
 
         finalized = self._finalize(selected, "summary_selection")
+
+        # Diagnostic counts
+        selected_sections = [_summary_section_bucket(item.candidate.section) for item in finalized]
+        abstract_concl_count = sum(1 for s in selected_sections if s in ("abstract", "conclusion", "conclusions"))
+        fragment_body_count = sum(1 for s in selected_sections if s in ("results", "discussion", "introduction"))
+        bibliography_count = sum(1 for item in finalized if item.candidate.features.get("bibliography_like"))
+
         debug = {
             "is_summary": True,
             "candidate_count": len(scored),
@@ -210,9 +220,14 @@ class SupportPackSelector:
             "max_support": config.v2_max_support_summary,
             "selected_evidence_ids": [item.evidence_id for item in finalized],
             "excluded": excluded,
-            "section_distribution": dict(Counter(_summary_section_bucket(item.candidate.section) for item in finalized)),
+            "section_distribution": dict(Counter(selected_sections)),
             "doc_distribution": dict(Counter(item.candidate.doc_id for item in finalized)),
             "insufficient_qualified_summary_support": insufficient_qualified,
+            "summary_section_boost_applied": True,
+            "summary_source_section_distribution": dict(Counter(selected_sections)),
+            "abstract_or_conclusion_support_count": abstract_concl_count,
+            "fragmentary_body_support_count": fragment_body_count,
+            "bibliography_like_chunk_count": bibliography_count,
         }
         return finalized, debug
 
@@ -375,18 +390,34 @@ def _summary_rank_key(item: SupportItem) -> tuple[int, int, int, float]:
 
 
 def _section_priority(section: str) -> int:
+    """Summary route section priority: Abstract/Conclusion > Results+Discussion > Results > Discussion > Intro > other.
+
+    Reason: summary answers should be grounded in summary-level sections (Abstract/Conclusion)
+    rather than fragmented body-text (Results/Discussion/Introduction). Body sections are still
+    eligible but rank lower, preventing them from pushing out more synthesis-friendly evidence.
+    """
     lowered = (section or "").lower()
-    if "result" in lowered and "discussion" in lowered:
-        return 0
-    if "result" in lowered:
-        return 1
-    if "discussion" in lowered:
-        return 2
+    # Summary-level sections (highest priority for synthesis)
     if "abstract" in lowered:
+        return 0
+    if "conclusion" in lowered:
+        return 1
+    # Combined result+discussion — still good
+    if "result" in lowered and "discussion" in lowered:
+        return 2
+    # Standalone results — moderate
+    if "result" in lowered:
         return 3
-    if "introduction" in lowered:
+    # Standalone discussion — lower
+    if "discussion" in lowered:
         return 4
-    return 5
+    # Introduction — background, not synthesis-friendly
+    if "introduction" in lowered:
+        return 5
+    # Reference/bibliography lists — lowest
+    if "reference" in lowered or "bibliograph" in lowered:
+        return 7
+    return 6
 
 
 def _evaluate_summary_quality(
@@ -497,3 +528,25 @@ def _token_overlap_ratio(left: str, right: str) -> float:
     if not left_tokens or not right_tokens:
         return 0.0
     return len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+
+
+def _is_bibliography_like(text: str) -> bool:
+    """Detect bibliography/reference-list chunks (DOI URLs, citation lists, author lists)."""
+    if not text:
+        return False
+    lowered = text.lower()
+    doi_count = len(re.findall(r"https?://doi\.org", lowered))
+    if doi_count >= 2:
+        return True
+    # Many author-year patterns in sequence → likely bibliography
+    et_al_patterns = len(re.findall(r"et\s+al\.?\s*,?\s*\d{4}", lowered))
+    if et_al_patterns >= 3:
+        return True
+    # Long sequence of references like "[1]...[2]...[3]..."
+    ref_tags = len(re.findall(r"\[\d+(?:,\s*\d+)*\]", lowered))
+    if ref_tags >= 5:
+        return True
+    # Dense http URLs (reference link farms)
+    if lowered.count("http") > 10:
+        return True
+    return False
