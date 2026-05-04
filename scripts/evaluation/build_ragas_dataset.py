@@ -313,17 +313,42 @@ def build_ragas_records(enriched: list[dict[str, Any]],
 
 
 _ABSTAIN_PATTERNS = (
-    "证据不足", "无法可靠作答", "当前知识库中没有",
-    "当前检索到的证据与问题直接相关性不足", "没有检索到可支撑",
-    "缺少交叉证据", "无法完成完整对比", "证据覆盖不足",
-    "文库中未提供", "文库中没有",
+    "证据不足，无法",
+    "无法可靠作答",
+    "当前知识库中没有",
+    "当前检索到的证据与问题直接相关性不足",
+    "没有检索到可支撑",
+    "缺少交叉证据",
+    "无法完成完整对比",
+    "证据覆盖不足",
+    "文库中未提供",
+    "文库中没有",
+)
+
+# Weak patterns that only count as refusal if answer has NO claims structure
+_REFUSAL_WEAK_PATTERNS = (
+    "证据不足",
+    "不能视为完整综述",
 )
 
 
 def _is_abstention(response: str) -> bool:
+    """Check if answer is a genuine refusal (no substantive claims).
+
+    Strong patterns always count as refusal.
+    Weak patterns (e.g. in evidence-limitations caveats) only count if answer
+    has no claim structure (bullet points with citations).
+    """
     if not response or not response.strip():
         return True
-    return any(p in response for p in _ABSTAIN_PATTERNS)
+    # Strong refusal signals
+    if any(p in response for p in _ABSTAIN_PATTERNS):
+        return True
+    # Weak patterns: only if no structured claims present
+    has_claims = "- " in response and "[" in response
+    if not has_claims:
+        return any(p in response for p in _REFUSAL_WEAK_PATTERNS)
+    return False
 
 
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
