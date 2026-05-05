@@ -259,6 +259,8 @@ Introduction 证据显示：another raw text... [E2]
 
 **代码基线**：`fix/generation` 分支，领先 main 4 个 commit。
 
+精确指标和可执行命令以 `docs/evaluation/current_baseline.md` 为准。
+
 ---
 
 ## 11. 当前 Scope Freeze

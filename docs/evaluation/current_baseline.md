@@ -23,6 +23,44 @@
 
 ---
 
+## 1.1 Phase 11E runtime-stable baseline candidate
+
+Phase 11E 是 Hotfix 11D-b 之后的 runtime-stable baseline candidate。它**不替代** Phase 9 accepted baseline；Phase 9 accepted baseline 仍然是当前 accepted quality baseline。
+
+Phase 11E candidate 的作用是记录一个已修复 API collection error 的可运行候选口径：
+
+- 修复对象：`src/synbio_rag/application/pipeline.py::_supplement_summary_sections`
+- 问题：`RetrievedChunk` schema 不支持顶层 `chunk_index` 参数
+- 修复方式：移除 `chunk_index=...`，并将该值保留到 `metadata["chunk_index"]`
+- 结果：`ent_021` 不再触发 API 500，完整 smoke100 API collection `error_count=0`
+
+Phase 11E 完整 smoke100 输出目录：
+
+`results/ragas/smoke100_20260505_151754/`
+
+| 指标 | Phase 11E candidate |
+|------|---------------------|
+| faithfulness | `0.6742` |
+| answer_relevancy | `0.3087` |
+| raw_p0_count | `10` |
+| rule_review_candidate_count | `11` |
+| noise_adjusted_p0_count | `9` |
+| qwen_citation_loss_count | `0` |
+| false_refusal | `0` |
+| new_hallucination | `0` |
+| API collection error_count | `0` |
+| zero_citation_count | `0` |
+
+不直接替代 Phase 9 的原因：
+
+- `rule_review_candidate_count = 11` vs Phase 9 `8`，仍有 warning
+- `noise_adjusted_p0_count = 9` vs Phase 9 `3`，仍有 warning
+- 本候选基线只证明 runtime 500 已收敛，不证明质量口径优于或等价于 Phase 9 accepted baseline
+
+术语说明：后续报告中不要把 `rule_review_candidate_count` 简写为 calibrated P0。`rule_review_candidate_count` 是规则生成的 P0 review candidate 数量，不保证是 `raw_p0_count` 的子集。
+
+---
+
 ## 2. 本轮主要修复内容
 
 本轮不是单纯修检索，而是从 Phase 4 到 Phase 9 的完整优化过程：
@@ -45,6 +83,7 @@
 | 配置项 | 值 |
 |--------|-----|
 | `generation.version` | `v2` |
+| `GENERATION_V2_PROFILE` | `stable`（显式 env 覆盖下列两个实验开关） |
 | `v2_use_qwen_synthesis` | `true` |
 | `v2_enable_comparison_coverage` | `true` |
 | `v2_enable_neighbor_audit` | `false` |
@@ -71,6 +110,16 @@
 | `GENERATION_V2_USE_QWEN_SYNTHESIS` | 开启 Qwen synthesis（当前 `true`） |
 | `GENERATION_V2_ENABLE_COMPARISON_COVERAGE` | 开启 comparison coverage（当前 `true`） |
 | `BIORAG_RERANK_MODE` | 设为 `local` 使用本地 BGE reranker |
+
+**RAGAS judge / embedding 口径**：
+
+| 配置项 | 值 |
+|--------|-----|
+| judge model | `qwen-plus`（`RAGAS_JUDGE_MODEL` 未设置时的默认值） |
+| judge API | `QWEN_CHAT_API_BASE` / `QWEN_CHAT_API_KEY` |
+| embedding provider | `local_bge` |
+| embedding model | `models/BAAI/bge-m3` |
+| embedding dim | `1024` |
 
 ---
 
@@ -134,9 +183,99 @@ python scripts/evaluation/generate_review_candidates.py \
   --output-dir results/ragas/smoke100_<timestamp>/
 ```
 
-### 4.5 数据集路径
+### 4.5 Phase 11B / 11C 一键 smoke100 回归
 
-主评测集：`data/eval/datasets/enterprise_ragas_eval_v1.json`（100 条）
+Phase 11B 新增一键评测工具，封装：
+
+1. build responses / RAGAS dataset
+2. run RAGAS
+3. merge project metrics
+4. generate review candidates
+5. generate warning-only baseline regression report
+
+默认 `--preset stable` 回归配置：不开启 comparison profile，不开启 Qwen synthesis，不开启 neighbor audit / promotion。该口径用于稳定评测工具链，不可直接当作 Phase 9 baseline 退化结论。
+
+Phase 9 accepted baseline 复现必须使用 `--preset phase9_accepted`。该 preset 会显式打印并写入 manifest：
+
+- dataset path / sha256 / sample_count / sample IDs 校验
+- generation profile
+- Qwen synthesis flag
+- comparison coverage flag
+- neighbor audit / promotion flags
+- base-url
+- timestamp
+- 是否与 Phase 9 baseline 可比
+
+`run_smoke100_regression.py` 只支持一个 `--base-url`。如需使用 `9010` 等临时端口，应同时传入 `--port 9010` 和 `--base-url http://127.0.0.1:9010`；不要在同一命令中传两个 `--base-url`。
+
+Phase 9 可比复现：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset phase9_accepted \
+  --base-url http://127.0.0.1:9000
+```
+
+Phase 9 可比复现并由脚本临时启动 API 服务：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset phase9_accepted \
+  --start-server \
+  --base-url http://127.0.0.1:9000
+```
+
+如果 API 服务已经用对应配置启动：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset stable \
+  --base-url http://127.0.0.1:9000
+```
+
+如果需要脚本临时启动并在结束后停止 API 服务：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset stable \
+  --start-server \
+  --base-url http://127.0.0.1:9000
+```
+
+输出目录：`results/ragas/smoke100_<timestamp>/`
+
+关键输出：
+
+| 文件 | 说明 |
+|------|------|
+| `smoke100_pipeline_manifest.json` | 本次一键流程配置与命令记录 |
+| `ragas_scores.jsonl` | 原始 RAGAS per-sample 结果 |
+| `ragas_summary.json` / `ragas_summary.md` | RAGAS 汇总 |
+| `ragas_eval_joined.jsonl` | RAGAS 与项目指标合并结果 |
+| `human_review_candidates_calibrated.csv` | review candidates 与规则生成优先级 |
+| `calibration_summary.json` | raw P0 / rule-review candidate 汇总；不要将 `rule_review_candidate_count` 当作人工 calibrated P0 |
+| `baseline_regression_report.json` / `.md` | Phase 9 baseline warning-only 回归对比，含 Phase 10B noise ledger 排除明细 |
+
+### 4.6 数据集路径
+
+Phase 9 accepted baseline 的文档历史名为：`data/eval/datasets/enterprise_ragas_eval_v1.json`（100 条）。
+
+当前工作区该文件已不存在；`archive/backups/enterprise_ragas_eval_v1.json.bak_before_final_dataset_cleanup` 是 final dataset cleanup 之前的备份，不等同于 Phase 9 accepted baseline 使用的最终 smoke100 口径。
+
+当前 canonical smoke100 数据集为：
+
+`data/eval/datasets/enterprise_ragas_smoke100.json`
+
+manifest / provenance：
+
+| 字段 | 值 |
+|------|-----|
+| sample_count | `100` |
+| sample IDs | `ent_001` 到 `ent_100` |
+| sha256 | `1e413d826dad87ad324dfa6cf9d2a6fe4897d6a5a55cacad54455aeaf1e4230e` |
+| Phase 9 output match | `results/ragas/smoke100_20260504_214135/ragas_scores.jsonl` 的 question、expected_doc_ids、expected_section_groups 与该文件一致；`ent_021` 因 API collection error 在输出中保留为空 reference/route/scenario |
+
+`--preset phase9_accepted` 使用上述 canonical 文件；如果该文件缺失，脚本会停止，不会 fallback 后继续声称是 Phase 9 baseline 对比。`--preset stable` 可保留 fallback 行为，但 regression report 会标记为 non-comparable run。
 
 ---
 

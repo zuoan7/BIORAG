@@ -2,6 +2,33 @@
 
 面向合成生物学领域的知识问答 RAG 服务。支持论文知识库的语义检索、混合检索（Dense + BM25）、重排序与证据约束生成。
 
+## 当前项目状态
+
+当前 accepted baseline 是 **Phase 9 accepted baseline**。
+
+权威基线文档：[docs/evaluation/current_baseline.md](docs/evaluation/current_baseline.md)
+
+smoke100 结果目录：`results/ragas/smoke100_20260504_214135/`
+
+当前另有 **Phase 11E runtime-stable baseline candidate**，结果目录为 `results/ragas/smoke100_20260505_151754/`。该候选只代表 Hotfix 11D-b 后 API collection error 已收敛，不替代 Phase 9 accepted quality baseline。
+
+核心指标：
+
+| 指标 | 当前值 |
+|------|--------|
+| faithfulness | 0.6886 |
+| answer_relevancy | 0.3185 |
+| calibrated P0 | 8 |
+| false_refusal | 0 |
+| 新增 hallucination | 0 |
+| Qwen citation loss | 0 |
+
+当前不建议继续修 RAG 主链路。Phase 10B 剩余真实 backlog 尚未达到触发条件，Fix C、comparison guardrail、summary detail evidence fix、KB section labeling / re-chunking、secondary judge、retrieval/rerank 参数调整和 Qwen prompt 调整均保持冻结。
+
+评测报告中的 `rule_review_candidate_count` 不应再称为 calibrated P0；它是规则生成的 P0 review candidate 数量，不保证是 `raw_p0_count` 的子集。
+
+下一阶段推荐方向是文档和 README 整理；后续评测命令以 [docs/evaluation/current_baseline.md](docs/evaluation/current_baseline.md) 为准。
+
 ## 核心特性
 
 - **混合检索**: Dense（BGE-M3）+ BM25 + RRF 融合
@@ -92,6 +119,29 @@ bge-service/
 
 ## 评测
 
+当前 smoke100 / quick check 命令以 [docs/evaluation/current_baseline.md](docs/evaluation/current_baseline.md) 为准。
+
+Phase 11B 一键 smoke100 回归：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset phase9_accepted \
+  --base-url http://127.0.0.1:9000
+```
+
+如果需要脚本临时启动 API 服务：
+
+```bash
+python scripts/evaluation/run_smoke100_regression.py \
+  --preset phase9_accepted \
+  --start-server \
+  --base-url http://127.0.0.1:9000
+```
+
+工具只接受一个 `--base-url`。默认 `stable` preset 是工具链回归口径；复现 Phase 9 accepted baseline 请显式使用 `--preset phase9_accepted`。
+
+下面的 prototype-v1 smoke100 内容保留为历史记录。
+
 ### smoke100 门禁
 
 ```bash
@@ -143,6 +193,10 @@ python scripts/evaluation/run_generation_smoke100.py
 
 ## 文档
 
+- [文档索引](docs/README.md)
+- [当前评测基线](docs/evaluation/current_baseline.md)
+- [Phase 4–10B 复盘报告](docs/reports/phase4_to_10b_review.md)
+- [Phase 11 下一阶段规划](docs/reports/phase11_next_stage_plan.md)
 - [启动说明](docs/startup.md)
 - [最终修复总结](results/final/BIORAG_Prototype_v1_Retrieval_Fix_Summary.md)
 

@@ -382,12 +382,11 @@ def _supplement_summary_sections(
                     text=text,
                     page_start=hit.get("page_start"),
                     page_end=hit.get("page_end"),
-                    chunk_index=hit.get("chunk_index"),
                     vector_score=0.0,
                     bm25_score=0.0,
                     rerank_score=None,
                     fusion_score=None,
-                    metadata={},
+                    metadata={"chunk_index": hit.get("chunk_index")},
                 )
                 supplemental_chunks.append(chunk)
                 added_doc_ids.append(doc_id)

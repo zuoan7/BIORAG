@@ -31,7 +31,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DATASET_PATH = ROOT / "data/eval/datasets/enterprise_ragas_eval_v1.json"
+_PREFERRED_DATASET_PATH = ROOT / "data/eval/datasets/enterprise_ragas_eval_v1.json"
+_FALLBACK_DATASET_PATH = ROOT / "data/eval/datasets/enterprise_ragas_smoke100.json"
+DATASET_PATH = _PREFERRED_DATASET_PATH if _PREFERRED_DATASET_PATH.exists() else _FALLBACK_DATASET_PATH
 OUTPUT_DIR = ROOT / "results/ragas"
 
 _SECTION_TO_GROUP: dict[str, str] = {
