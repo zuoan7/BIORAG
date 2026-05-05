@@ -29,9 +29,10 @@ import json
 import re
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 # ============================================================
@@ -145,12 +146,14 @@ FALSE_HEADING_DETECT_PATTERNS = [
 # ============================================================
 
 FIGURE_CAPTION_PATTERN = re.compile(
-    r"^(?:Supplementary\s+)?(?:Fig\.?|Figure)\s+S?\d+",
+    r"^(?:Supplementary\s+)?(?:Fig\.?|Figure)\s+S?\d+[A-Za-z]?"
+    r"(?:\s*[\.\:\-]|\s|$)",
     re.I,
 )
 
 TABLE_CAPTION_PATTERN = re.compile(
-    r"^(?:Supplementary\s+)?Table\s+S?\d+",
+    r"^(?:Supplementary\s+)?Table\s+S?\d+[A-Za-z]?"
+    r"(?:\s*[\.\:\-]|\s|$)",
     re.I,
 )
 
@@ -243,6 +246,11 @@ METADATA_HEADING_PATTERNS = [
 ]
 
 METADATA_LINE_PATTERNS = [
+    re.compile(r"^\s*journal\s+pre-proof\s*$", re.I),
+    re.compile(r"^\s*this\s+is\s+a\s+pdf\s+file\s+of\s+an\s+article\b", re.I),
+    re.compile(r"^\s*PII\s*:\s*", re.I),
+    re.compile(r"^\s*to\s+appear\s+in\s*:\s*", re.I),
+    re.compile(r"^\s*(?:received|revised|accepted)\s+date\s*:\s*", re.I),
     re.compile(r"^\s*contents\s+lists\s+available\s+at\s+", re.I),
     re.compile(r"^\s*journal\s+homepage\s*:\s*", re.I),
     re.compile(r"^\s*available\s+online\b", re.I),
@@ -257,6 +265,34 @@ METADATA_LINE_PATTERNS = [
     re.compile(r"^\s*(?:scientific\s+reports|carbohydrate\s+polymers)\b", re.I),
     re.compile(r"^\s*[A-Z]\.\s*[A-Za-z][A-Za-z\-\s]+et\s+al\.?\s*$", re.I),
 ]
+
+FRONT_MATTER_METADATA_PATTERNS = [
+    re.compile(r"^\s*PII\s*:\s*", re.I),
+    re.compile(r"^\s*DOI\s*:\s*", re.I),
+    re.compile(r"^\s*to\s+appear\s+in\s*:\s*", re.I),
+    re.compile(r"^\s*(?:received|revised|accepted)\s+date\s*:\s*", re.I),
+    re.compile(r"^\s*journal\s+homepage\s*:\s*", re.I),
+    re.compile(r"^\s*contents\s+lists\s+available\s+at\s+", re.I),
+    re.compile(r"^\s*(?:\*+\s*)?corresponding\s+author\b", re.I),
+    re.compile(r"^\s*e-?mail\s+addresses?\s*:", re.I),
+    re.compile(r"^\s*(?:department|university|institute|school|college|faculty|laboratory|centre|center)\b", re.I),
+    re.compile(r"\b(?:postal\s+code|zip\s+code)\b", re.I),
+    re.compile(r"^\s*graphical\s+abstract\s*$", re.I),
+    re.compile(r"^\s*highlights?\s*$", re.I),
+    re.compile(r"^\s*author\s+statement\s*$", re.I),
+    re.compile(r"^\s*cr?edi?t\s+authorship\s+contribution\s+statement\s*$", re.I),
+    re.compile(r"^\s*please\s+cite\s+this\s+article\s+as\b", re.I),
+]
+
+JOURNAL_PREPROOF_CLEAN_PATTERNS = [
+    re.compile(r"^\s*journal\s+pre-proof\s*$", re.I),
+    re.compile(r"^\s*this\s+is\s+a\s+pdf\s+file\s+of\s+an\s+article\b", re.I),
+    re.compile(r"^\s*PII\s*:\s*", re.I),
+    re.compile(r"^\s*to\s+appear\s+in\s*:\s*", re.I),
+]
+
+UNICODE_SPACE_CHARS_RE = re.compile(r"[\u00a0\u202f\u2009\u2007]")
+DASH_CHARS_RE = re.compile(r"[\u2013\u2014\u2212]")
 
 METADATA_HEADING_TEXT_PATTERN = re.compile(
     r"^(?:"
@@ -293,6 +329,62 @@ TABLE_UNIT_PATTERN = re.compile(
 )
 
 DNA_SEQUENCE_PATTERN = re.compile(r"\b[ACGT]{10,}\b", re.I)
+
+ACCESS_BANNER_PATTERN = re.compile(
+    r"\b(?:"
+    r"downloaded\s+from|downloaded\s+by|access\s+provided\s+by|accessed\s+by|"
+    r"at\s+[A-Za-z][A-Za-z .,&'-]{3,80}\s+on\s+(?:"
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+\d{1,2},\s+\d{4}"
+    r")\b",
+    re.I,
+)
+
+CORRESPONDENCE_METADATA_PATTERN = re.compile(
+    r"^\s*(?:[*†‡§y]\s*)?(?:"
+    r"correspondence\s*:|"
+    r"corresponding\s+author\b|"
+    r"to\s+whom\s+correspondence\s+should\s+be\s+addressed\b|"
+    r"correspondence\s+may\s+also\s+be\s+addressed\b|"
+    r"e-?mail(?:\s+addresses?)?\s*:|"
+    r"current\s+address\s*:|present\s+address\s*:|co-first\s+authors?\b"
+    r")",
+    re.I,
+)
+
+NUMBERED_AFFILIATION_PATTERN = re.compile(
+    r"^\s*\d{1,2}\s+(?:"
+    r"department|university|institute|laborator(?:y|ies)|division|center|centre|"
+    r"faculty|school|college|hospital"
+    r")\b",
+    re.I,
+)
+
+INSTITUTION_WORD_PATTERN = re.compile(
+    r"\b(?:"
+    r"department|university|institute|laborator(?:y|ies)|division|center|centre|"
+    r"faculty|school|college|hospital|biosustainability|biorefining|technology"
+    r")\b",
+    re.I,
+)
+
+ADDRESS_HINT_PATTERN = re.compile(
+    r"\b(?:"
+    r"china|usa|u\.s\.a\.|denmark|sweden|france|netherlands|germany|japan|"
+    r"belgium|italy|spain|turkey|canada|australia|kingdom|states|"
+    r"\d{4,6}|@"
+    r")\b",
+    re.I,
+)
+
+BODY_SENTENCE_CONTINUATION_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"at|and|that|which|while|with|however|therefore|these|this|the|"
+    r"particularly|in\s+addition"
+    r")\b",
+    re.I,
+)
 
 # 参考文献条目模式（编号 + 作者 + 年份/期刊）
 REFERENCE_ENTRY_PATTERN = re.compile(
@@ -376,12 +468,152 @@ def is_metadata_heading_text(text: str) -> bool:
     return any(pat.match(heading) for pat in METADATA_LINE_PATTERNS)
 
 
-def is_metadata_line(text: str) -> bool:
+def normalize_pdf_text(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = UNICODE_SPACE_CHARS_RE.sub(" ", text)
+    text = DASH_CHARS_RE.sub("-", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def normalize_metadata_text(text: str) -> str:
+    return normalize_pdf_text(text).lower()
+
+
+def _bbox_values(metadata: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    bbox = metadata.get("bbox") or []
+    if len(bbox) < 4:
+        return None
+    try:
+        return float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_marginal_bbox(metadata: dict[str, Any]) -> bool:
+    bbox = _bbox_values(metadata)
+    if bbox is None:
+        return False
+    x0, y0, x1, y1 = bbox
+    width = max(0.1, x1 - x0)
+    height = max(0.1, y1 - y0)
+    return width < 35 or height / width >= 4 or x0 < 35 or x0 >= 560
+
+
+def is_front_matter_page(page_num: int, total_pages: int = 0) -> bool:
+    del total_pages
+    return page_num <= 3
+
+
+def is_front_matter_metadata_line(text: str, page_num: int, total_pages: int = 0) -> bool:
+    if not is_front_matter_page(page_num, total_pages):
+        return False
+    stripped = normalize_pdf_text(text)
+    return any(pat.match(stripped) for pat in FRONT_MATTER_METADATA_PATTERNS)
+
+
+def is_journal_preproof_clean_noise(text: str) -> bool:
+    stripped = normalize_pdf_text(text)
+    return any(pat.match(stripped) for pat in JOURNAL_PREPROOF_CLEAN_PATTERNS)
+
+
+def looks_like_front_matter_affiliation_metadata(
+    text: str,
+    page_num: int,
+    metadata: dict[str, Any],
+) -> tuple[bool, str]:
+    stripped = normalize_pdf_text(text)
+    normalized = normalize_metadata_text(stripped)
+    if not stripped:
+        return False, ""
+
+    if CORRESPONDENCE_METADATA_PATTERN.match(stripped):
+        return True, "correspondence_metadata"
+
+    if page_num > 3:
+        return False, ""
+
+    words = stripped.split()
+    short_line = len(words) <= 12 or len(stripped) <= 110
+    has_institution = bool(INSTITUTION_WORD_PATTERN.search(stripped))
+    has_address_hint = bool(ADDRESS_HINT_PATTERN.search(stripped))
+    narrow_or_side = _is_marginal_bbox(metadata)
+
+    if NUMBERED_AFFILIATION_PATTERN.match(stripped):
+        return True, "numbered_affiliation"
+    if re.match(r"^\s*\d{1,2}\s+", stripped) and has_institution and short_line:
+        return True, "numbered_affiliation"
+    if has_institution and short_line and (has_address_hint or narrow_or_side or normalized.endswith(",")):
+        return True, "institution_address_sidebar"
+    if re.match(r"^\s*(?:full\s+list\s+of\s+author\s+information|co-first\s+authors?)\b", stripped, re.I):
+        return True, "author_affiliation_note"
+
+    return False, ""
+
+
+def looks_like_marginal_access_banner(
+    text: str,
+    metadata: dict[str, Any],
+    repeated_keys: set[str] | None = None,
+) -> tuple[bool, str]:
+    stripped = normalize_pdf_text(text)
+    normalized = normalize_metadata_text(stripped)
+    if not stripped or not ACCESS_BANNER_PATTERN.search(stripped):
+        return False, ""
+    if repeated_keys and normalized in repeated_keys:
+        return True, "repeated_access_banner"
+    if _is_marginal_bbox(metadata):
+        return True, "marginal_access_banner"
+    return False, ""
+
+
+def collect_repeated_metadata_keys(raw_pages: list[dict]) -> set[str]:
+    page_hits: dict[str, set[int]] = {}
+    for page in raw_pages:
+        page_num = int(page.get("page") or 0)
+        for block in page.get("blocks", []) or []:
+            if not isinstance(block, dict):
+                continue
+            text = normalize_pdf_text(block.get("text", ""))
+            normalized = normalize_metadata_text(text)
+            if not normalized or len(normalized) > 180:
+                continue
+            if ACCESS_BANNER_PATTERN.search(text):
+                page_hits.setdefault(normalized, set()).add(page_num)
+    return {key for key, pages in page_hits.items() if len(pages) >= 3}
+
+
+def is_page_number_or_line_number(raw_block: dict[str, Any], text: str) -> bool:
+    stripped = normalize_pdf_text(text)
+    if not stripped.isdigit() or len(stripped) > 4:
+        return False
+    bbox = raw_block.get("bbox") or []
+    if len(bbox) >= 4:
+        y0 = float(bbox[1])
+        y1 = float(bbox[3])
+        x0 = float(bbox[0])
+        if y0 < 80 or y1 > 700 or x0 < 36:
+            return True
+    return len(stripped) <= 3
+
+
+def is_metadata_line(text: str, page_num: int | None = None, total_pages: int = 0) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
     if stripped.isdigit() and len(stripped) <= 3:
         return True
+    if page_num is not None and is_front_matter_metadata_line(stripped, page_num, total_pages):
+        return True
+    if page_num is not None and not is_front_matter_page(page_num, total_pages):
+        front_only = (
+            r"^\s*DOI\s*:",
+            r"^\s*(?:received|revised|accepted)(?:\s+date)?\b",
+            r"^\s*journal\s+homepage\s*:",
+            r"^\s*contents\s+lists\s+available\s+at\s+",
+        )
+        if any(re.match(pat, stripped, re.I) for pat in front_only):
+            return False
     return any(pat.match(stripped) for pat in METADATA_LINE_PATTERNS)
 
 
@@ -418,6 +650,26 @@ def looks_like_body_paragraph(text: str) -> bool:
     return True
 
 
+def looks_like_body_sentence_continuation(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    lowered = stripped.lower()
+    if not BODY_SENTENCE_CONTINUATION_PATTERN.match(stripped):
+        return False
+    if detect_table_caption(stripped) or detect_figure_caption(stripped):
+        return False
+    sentence_signal = bool(re.search(r"[,.!?](?:\s|$)", stripped))
+    citation_signal = bool(re.search(r"\[\d{1,3}\]", stripped))
+    verb_signal = bool(re.search(
+        r"\b(?:is|are|was|were|be|been|being|has|have|had|reaching|using|"
+        r"shown|found|reported|observed|demonstrated|produced|contains?)\b",
+        lowered,
+    ))
+    tabular_signal = bool(DNA_SEQUENCE_PATTERN.search(stripped)) or len(TABLE_UNIT_PATTERN.findall(stripped)) >= 6
+    if tabular_signal and not (sentence_signal and verb_signal):
+        return False
+    return sentence_signal and (citation_signal or verb_signal or len(stripped.split()) >= 10)
+
+
 def looks_like_table_text(text: str) -> bool:
     stripped = _normalize_table_text_candidate(text)
     lowered = stripped.lower()
@@ -433,6 +685,8 @@ def looks_like_table_text(text: str) -> bool:
     if is_numbered_reference_entry(stripped):
         return False
     if looks_like_body_paragraph(stripped):
+        return False
+    if looks_like_body_sentence_continuation(stripped):
         return False
     if lowered in {"references", "bibliography"}:
         return True
@@ -611,10 +865,11 @@ def _is_reference_like_paragraph(text: str, page_num: int, total_pages: int) -> 
 @dataclass
 class Block:
     block_id: str
-    type: str  # title | abstract | section_heading | subsection_heading | paragraph | figure_caption | table_caption | table_text | references | metadata | noise
+    type: str  # title | section_heading | subsection_heading | paragraph | figure_caption | table_caption | table_text | references | metadata | noise | image
     text: str
     section_path: list[str] = field(default_factory=list)
     page: int = 1
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -1312,6 +1567,265 @@ def process_page_text(
     return blocks, cleaned_text, section_path, in_references
 
 
+def _trim_recent_block_types(recent_block_types: list[str]) -> None:
+    if len(recent_block_types) > 20:
+        del recent_block_types[:len(recent_block_types)-20]
+
+
+def _append_recent_block_type(recent_block_types: list[str], block_type: str) -> None:
+    recent_block_types.append(block_type)
+    _trim_recent_block_types(recent_block_types)
+
+
+def _source_metadata(raw_block: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "block_id",
+        "type",
+        "bbox",
+        "column",
+        "reading_order",
+        "size",
+        "is_bold",
+        "is_italic",
+        "block_no",
+        "line_no",
+    ]
+    metadata: dict[str, Any] = {}
+    for key in keys:
+        if key in raw_block:
+            metadata["source_block_id" if key == "block_id" else f"source_block_type" if key == "type" else key] = raw_block[key]
+    raw_metadata = raw_block.get("metadata")
+    if isinstance(raw_metadata, dict) and raw_metadata:
+        metadata["source_metadata"] = raw_metadata
+        for key, value in raw_metadata.items():
+            if key.startswith("image_") or key in {
+                "xref",
+                "smask",
+                "bpc",
+                "colorspace",
+                "alt_colorspace",
+                "ext",
+                "xres",
+                "yres",
+                "transform",
+                "referencer",
+            }:
+                metadata[key] = value
+    return metadata
+
+
+def _make_clean_block(
+    raw_block: dict[str, Any],
+    page_num: int,
+    block_idx: int,
+    block_type: str,
+    text: str,
+    section_path: list[str],
+    metadata_extra: Optional[dict[str, Any]] = None,
+) -> Block:
+    metadata = _source_metadata(raw_block)
+    if metadata_extra:
+        metadata.update(metadata_extra)
+    return Block(
+        block_id=raw_block.get("block_id", f"p{page_num}_b{block_idx:04d}"),
+        type=block_type,
+        text=text,
+        section_path=list(section_path),
+        page=page_num,
+        metadata=metadata,
+    )
+
+
+def _classify_v4_text_block(
+    text: str,
+    raw_block: dict[str, Any],
+    page_num: int,
+    total_pages: int,
+    in_references: bool,
+    recent_block_types: list[str],
+    repeated_metadata_keys: set[str] | None = None,
+) -> str:
+    stripped = normalize_pdf_text(text)
+    if not stripped:
+        return "noise"
+    if is_page_number_or_line_number(raw_block, stripped):
+        return "noise"
+    if is_journal_preproof_clean_noise(stripped):
+        return "metadata"
+    if looks_like_marginal_access_banner(stripped, raw_block, repeated_metadata_keys)[0]:
+        return "metadata"
+    if looks_like_front_matter_affiliation_metadata(stripped, page_num, raw_block)[0]:
+        return "metadata"
+    if is_front_matter_metadata_line(stripped, page_num, total_pages):
+        return "metadata"
+    if is_metadata_heading_text(stripped):
+        return "metadata"
+    if is_metadata_line(stripped, page_num, total_pages):
+        return "metadata"
+    if detect_figure_caption(stripped):
+        return "figure_caption"
+    if detect_table_caption(stripped):
+        return "table_caption"
+    if is_references_heading(stripped, recent_block_types):
+        return "section_heading"
+    if in_references:
+        exit_type = should_exit_references(stripped)
+        if exit_type is not None:
+            return "section_heading"
+        return "references"
+    if page_num >= max(1, int(total_pages * 0.65)) and _is_reference_like_paragraph(stripped, page_num, total_pages):
+        return "references"
+    if is_valid_section_heading(stripped):
+        return "section_heading"
+    if re.match(r"^\d+\.\d+\.?\s+\w+", stripped) and len(stripped.split()) <= 15:
+        return "subsection_heading"
+
+    size = raw_block.get("size")
+    if page_num == 1 and isinstance(size, (int, float)) and float(size) >= 11.0 and len(stripped.split()) >= 2:
+        return "title"
+    if bool(raw_block.get("is_bold")) and len(stripped.split()) <= 15:
+        if re.match(r"^\d+\.?\s+[A-Z]", stripped):
+            return "section_heading"
+        if re.match(r"^\d+\.\d+\.?\s+\w+", stripped):
+            return "subsection_heading"
+
+    return classify_line_type(stripped, in_references, recent_block_types)
+
+
+def process_page_blocks_v4(
+    page_data: dict,
+    page_num: int,
+    block_index_start: int,
+    counters: ProcessingCounters,
+    section_path: list[str] | None,
+    in_references: bool,
+    total_pages: int,
+    recent_block_types: list[str],
+    repeated_metadata_keys: set[str] | None = None,
+) -> tuple[list[Block], str, list[str], bool]:
+    """Convert parsed_raw_v4 blocks into parsed_clean blocks without passing through type=text."""
+    if section_path is None:
+        section_path = []
+
+    raw_blocks = sorted(
+        page_data.get("blocks", []) or [],
+        key=lambda b: (
+            int(b.get("reading_order", 10**9) or 10**9),
+            float((b.get("bbox") or [0, 0, 0, 0])[1] if len(b.get("bbox") or []) >= 2 else 0.0),
+            float((b.get("bbox") or [0, 0, 0, 0])[0] if len(b.get("bbox") or []) >= 1 else 0.0),
+        ),
+    )
+
+    blocks: list[Block] = []
+    block_idx = block_index_start
+
+    for raw_block in raw_blocks:
+        raw_type = raw_block.get("type", "text")
+        if raw_type == "image":
+            block = _make_clean_block(raw_block, page_num, block_idx, "image", "", section_path)
+            blocks.append(block)
+            counters.total_blocks += 1
+            block_idx += 1
+            continue
+
+        text = normalize_pdf_text(raw_block.get("text", ""))
+        text, fix_count = fix_broken_words(text)
+        counters.fixed_broken_words += fix_count
+        if not text:
+            continue
+
+        if raw_type != "text" and raw_type in {
+            "title", "section_heading", "subsection_heading", "paragraph", "figure_caption",
+            "table_caption", "table_text", "references", "metadata", "noise",
+        }:
+            block_type = raw_type
+        else:
+            block_type = _classify_v4_text_block(
+                text, raw_block, page_num, total_pages, in_references, recent_block_types,
+                repeated_metadata_keys,
+            )
+
+        if block_type == "section_heading":
+            heading_text = text.lstrip("#").strip()
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
+            if is_references_heading(heading_text, recent_block_types):
+                in_references = True
+            section_path = [heading_text]
+        elif block_type == "subsection_heading":
+            heading_text = text.lstrip("#").strip()
+            if section_path:
+                if len(section_path) > 1 and SUBSECTION_NUMBER_PATTERN.match(section_path[-1]):
+                    section_path[-1] = heading_text
+                else:
+                    section_path.append(heading_text)
+            else:
+                section_path = [heading_text]
+            exit_type = should_exit_references(heading_text)
+            if exit_type is not None:
+                in_references = False
+        elif block_type == "title":
+            section_path = [text.lstrip("#").strip()]
+        elif block_type == "references":
+            in_references = True
+
+        if in_references and block_type == "paragraph":
+            if looks_like_marginal_access_banner(text, raw_block, repeated_metadata_keys)[0]:
+                block_type = "metadata"
+            elif looks_like_front_matter_affiliation_metadata(text, page_num, raw_block)[0]:
+                block_type = "metadata"
+            else:
+                exit_type = should_exit_references(text)
+                if exit_type is None:
+                    block_type = "references"
+                    counters.detected_references_blocks += 1
+                else:
+                    in_references = False
+
+        if block_type == "figure_caption":
+            counters.detected_figure_captions += 1
+        elif block_type == "table_caption":
+            counters.detected_table_captions += 1
+        elif block_type == "references":
+            counters.detected_references_blocks += 1
+
+        if block_type == "table_caption":
+            caption_text, tail = split_table_caption_tail(text)
+            block = _make_clean_block(raw_block, page_num, block_idx, "table_caption", caption_text, section_path)
+            blocks.append(block)
+            counters.total_blocks += 1
+            block_idx += 1
+            _append_recent_block_type(recent_block_types, "table_caption")
+            if tail:
+                tail_block = _make_clean_block(
+                    raw_block,
+                    page_num,
+                    block_idx,
+                    "table_text",
+                    tail,
+                    section_path,
+                    {"derived_from": "table_caption_tail"},
+                )
+                tail_block.block_id = f"{block.block_id}_tabletail"
+                blocks.append(tail_block)
+                counters.detected_table_text_blocks += 1
+                counters.total_blocks += 1
+                block_idx += 1
+                _append_recent_block_type(recent_block_types, "table_text")
+            continue
+
+        block = _make_clean_block(raw_block, page_num, block_idx, block_type, text, section_path)
+        blocks.append(block)
+        counters.total_blocks += 1
+        block_idx += 1
+        if block_type not in {"noise", "metadata", "image"}:
+            _append_recent_block_type(recent_block_types, block_type)
+
+    cleaned_text = rebuild_page_text(blocks)
+    return blocks, cleaned_text, section_path, in_references
+
+
 def rebuild_page_text(blocks: list[Block]) -> str:
     """从 blocks 重建页面文本"""
     parts = []
@@ -1330,6 +1844,8 @@ def rebuild_page_text(blocks: list[Block]) -> str:
             parts.append(f"[TABLE] {block.text}")
         elif block.type == "references":
             parts.append(block.text)
+        elif block.type in ("metadata", "noise", "image"):
+            continue
         else:
             parts.append(block.text)
     return "\n\n".join(parts)
@@ -1338,6 +1854,8 @@ def rebuild_page_text(blocks: list[Block]) -> str:
 def _post_process_table_and_metadata(
     all_blocks: list[Block],
     counters: ProcessingCounters,
+    total_pages: int = 0,
+    repeated_metadata_keys: set[str] | None = None,
 ) -> list[Block]:
     expanded_blocks: list[Block] = []
 
@@ -1353,6 +1871,7 @@ def _post_process_table_and_metadata(
                     text=tail,
                     section_path=list(block.section_path),
                     page=block.page,
+                    metadata={**block.metadata, "derived_from": "table_caption_tail"},
                 ))
                 counters.detected_table_text_blocks += 1
             continue
@@ -1367,6 +1886,14 @@ def _post_process_table_and_metadata(
     for block in expanded_blocks:
         text = block.text.strip()
         heading_text = text.lstrip("#").strip()
+
+        if text and block.type not in {"metadata", "noise", "image"}:
+            if looks_like_marginal_access_banner(text, block.metadata, repeated_metadata_keys)[0]:
+                block.type = "metadata"
+            elif looks_like_front_matter_affiliation_metadata(text, block.page, block.metadata)[0]:
+                block.type = "metadata"
+            elif block.type == "table_text" and looks_like_body_sentence_continuation(text):
+                block.type = "paragraph"
 
         if table_context_active:
             too_far = block.page > table_context_page + 1 or table_context_blocks > 40
@@ -1387,25 +1914,35 @@ def _post_process_table_and_metadata(
             else:
                 metadata_context = None
         elif metadata_context == "nomenclature":
-            if block.type == "paragraph" and (looks_like_nomenclature_entry(text) or is_metadata_line(text)):
+            if block.type == "paragraph" and (looks_like_nomenclature_entry(text) or is_metadata_line(text, block.page, total_pages)):
                 block.type = "metadata"
             elif block.type in ("section_heading", "subsection_heading", "table_caption", "figure_caption"):
                 metadata_context = None
             elif block.type == "paragraph" and looks_like_body_paragraph(text):
                 metadata_context = None
         elif metadata_context in {"a r t i c l e i n f o", "keywords", "keyword"}:
-            if block.type == "paragraph" and (is_metadata_line(text) or not looks_like_body_paragraph(text)):
+            if block.type == "paragraph" and (is_metadata_line(text, block.page, total_pages) or not looks_like_body_paragraph(text)):
                 block.type = "metadata"
             else:
                 metadata_context = None
 
-        if block.type == "paragraph" and is_metadata_line(text):
+        if block.type == "paragraph" and is_metadata_line(text, block.page, total_pages):
             block.type = "metadata"
 
-        if table_context_active and block.type == "paragraph" and looks_like_table_text(text):
+        if (
+            table_context_active
+            and block.type == "paragraph"
+            and looks_like_table_text(text)
+            and not looks_like_body_sentence_continuation(text)
+        ):
             block.type = "table_text"
             counters.detected_table_text_blocks += 1
-        elif not table_context_active and block.type == "paragraph" and is_strong_standalone_table_text(text):
+        elif (
+            not table_context_active
+            and block.type == "paragraph"
+            and is_strong_standalone_table_text(text)
+            and not looks_like_body_sentence_continuation(text)
+        ):
             block.type = "table_text"
             counters.detected_table_text_blocks += 1
 
@@ -1612,12 +2149,25 @@ def process_document(
     source_file = raw_data.get("source_file", input_path.name)
     total_pages = raw_data.get("total_pages", 0)
     raw_pages = raw_data.get("pages", [])
+    parser_stage = raw_data.get("parser_stage", "")
 
     # 检查是否已有 blocks（兼容旧格式）
     has_blocks = any(
         isinstance(p, dict) and "blocks" in p and p["blocks"]
         for p in raw_pages
     )
+    raw_block_types = [
+        block.get("type")
+        for page in raw_pages if isinstance(page, dict)
+        for block in (page.get("blocks", []) or [])
+        if isinstance(block, dict)
+    ]
+    raw_text_block_count = sum(1 for block_type in raw_block_types if block_type == "text")
+    use_v4_block_adapter = (
+        parser_stage == "parsed_raw_v4"
+        or (raw_text_block_count > 0 and raw_text_block_count >= len(raw_block_types) * 0.5)
+    )
+    repeated_metadata_keys = collect_repeated_metadata_keys(raw_pages) if use_v4_block_adapter else set()
 
     clean_pages: list[dict] = []
     all_blocks: list[Block] = []
@@ -1629,8 +2179,9 @@ def process_document(
     for page_data in raw_pages:
         page_num = page_data.get("page", 0)
         page_text = page_data.get("text", "")
+        page_blocks_raw = page_data.get("blocks", []) or []
 
-        if not page_text.strip():
+        if not page_text.strip() and not page_blocks_raw:
             clean_pages.append({
                 "page": page_num,
                 "text": "",
@@ -1639,7 +2190,28 @@ def process_document(
             continue
 
         # 如果已有 blocks，直接使用（合并断词修复）
-        if has_blocks and page_data.get("blocks"):
+        if has_blocks and page_blocks_raw:
+            if use_v4_block_adapter:
+                blocks, cleaned_text, section_path, in_references = process_page_blocks_v4(
+                    page_data,
+                    page_num,
+                    global_block_idx,
+                    counters,
+                    section_path,
+                    in_references,
+                    total_pages,
+                    recent_block_types,
+                    repeated_metadata_keys,
+                )
+                global_block_idx += len(blocks)
+                clean_pages.append({
+                    "page": page_num,
+                    "text": cleaned_text,
+                    "blocks": [asdict(b) for b in blocks],
+                })
+                all_blocks.extend(blocks)
+                continue
+
             blocks = []
             for raw_block in page_data["blocks"]:
                 text = raw_block.get("text", "")
@@ -1774,7 +2346,7 @@ def process_document(
         })
         all_blocks.extend(blocks)
 
-    all_blocks = _post_process_table_and_metadata(all_blocks, counters)
+    all_blocks = _post_process_table_and_metadata(all_blocks, counters, total_pages, repeated_metadata_keys)
     _post_process_numbered_references(all_blocks, total_pages, counters)
     _recompute_section_paths(all_blocks, counters)
     clean_pages = _rebuild_clean_pages(raw_pages, all_blocks)
@@ -1784,7 +2356,22 @@ def process_document(
         "doc_id": doc_id,
         "source_file": source_file,
         "total_pages": total_pages,
-        "parser_stage": "parsed_clean_v1",
+        "parser_stage": "parsed_clean_v4" if use_v4_block_adapter else "parsed_clean_v1",
+        "cleaning_stage": "document_structure_clean_v5_adapter" if use_v4_block_adapter else "document_structure_clean_v1",
+        "schema_version": "parsed_clean_v5_compatible" if use_v4_block_adapter else "parsed_clean_v1",
+        "block_contract": {
+            "allowed_types": [
+                "title", "section_heading", "subsection_heading", "paragraph",
+                "figure_caption", "table_caption", "table_text", "references",
+                "metadata", "noise", "image",
+            ],
+            "rag_evidence_types": [
+                "title", "section_heading", "subsection_heading", "paragraph",
+                "figure_caption", "table_caption", "table_text",
+            ],
+            "excluded_from_page_text": ["metadata", "noise", "image"],
+            "excluded_from_rag_evidence": ["metadata", "noise", "image", "references"],
+        },
         "pages": clean_pages,
     }
 
@@ -1831,7 +2418,7 @@ def generate_preview_md(blocks: list[Block]) -> str:
             if not parts or not parts[-1].startswith("[REFERENCES]"):
                 parts.append(f"\n[REFERENCES]\n")
             parts.append(block.text)
-        elif block.type == "noise":
+        elif block.type in ("metadata", "noise", "image"):
             continue
         else:
             parts.append(block.text)

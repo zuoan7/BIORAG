@@ -15,6 +15,7 @@ runtime/logs/
 runtime/vectorstores/
 logs/
 vector_db/
+tmp
 
 # 模型资产（大文件，通常不纳入版本管理）
 models/

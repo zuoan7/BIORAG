@@ -26,7 +26,13 @@ import sys
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.ingestion.document_cleaning_v5 import evidence_pack_to_pages
 
 
 # ============================================================
@@ -199,6 +205,23 @@ class Chunk:
     quality_score: float
     section_path: list[str] = field(default_factory=list)
     block_types: list[str] = field(default_factory=list)
+    source_block_ids: list[str] = field(default_factory=list)
+    block_ids: list[str] = field(default_factory=list)
+    evidence_types: list[str] = field(default_factory=list)
+    page_numbers: list[int] = field(default_factory=list)
+    layout_columns: list[str] = field(default_factory=list)
+    reading_order_span: dict[str, Optional[int]] = field(default_factory=dict)
+    bbox_span: dict[str, Optional[float]] = field(default_factory=dict)
+    source_block_metadata: list[dict[str, Any]] = field(default_factory=list)
+    excluded_block_counts: dict[str, int] = field(default_factory=dict)
+    contains_figure_caption: bool = False
+    contains_table_caption: bool = False
+    contains_table_text: bool = False
+    contains_references: bool = False
+    contains_metadata: bool = False
+    contains_noise: bool = False
+    contains_image: bool = False
+    parser_stage: str = ""
 
 
 @dataclass
@@ -1045,13 +1068,129 @@ def _estimate_page_range(
 # Block-based chunking（优先路径，基于 parsed_clean 的 blocks）
 # ============================================================
 
+def _chunk_source_block(block: dict, btype: str, text: str, page_num: int) -> dict:
+    metadata = block.get("metadata", {}) or {}
+    source_block_id = metadata.get("source_block_id") or block.get("source_block_id") or block.get("block_id")
+    bbox = metadata.get("bbox") if "bbox" in metadata else block.get("bbox")
+    column = metadata.get("column") if "column" in metadata else block.get("column")
+    reading_order = metadata.get("reading_order") if "reading_order" in metadata else block.get("reading_order")
+    return {
+        "type": btype,
+        "text": text,
+        "section_path": block.get("section_path", []),
+        "page": block.get("page", page_num) or page_num,
+        "block_id": block.get("block_id"),
+        "source_block_id": source_block_id,
+        "metadata": metadata,
+        "bbox": bbox,
+        "column": column,
+        "reading_order": reading_order,
+    }
+
+
+def _block_text_for_chunk(block: dict) -> str:
+    btype = block.get("type", "paragraph")
+    btext = block.get("text", "")
+    if btype == "section_heading":
+        return f"## {btext.lstrip('#').strip()}"
+    if btype == "subsection_heading":
+        return f"### {btext.lstrip('#').strip()}"
+    if btype == "figure_caption":
+        return f"[FIGURE CAPTION] {btext}"
+    if btype == "table_caption":
+        return f"[TABLE CAPTION] {btext}"
+    if btype == "table_text":
+        return f"[TABLE TEXT] {btext}"
+    return btext
+
+
+def _unique_preserve_order(values: list[Any]) -> list[Any]:
+    result = []
+    seen = set()
+    for value in values:
+        if value is None:
+            continue
+        key = json.dumps(value, sort_keys=True, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def _chunk_metadata_from_blocks(group: list[dict]) -> dict[str, Any]:
+    real_blocks = [b for b in group if b.get("type") != "overlap"]
+    block_types = _unique_preserve_order([b.get("type") for b in real_blocks])
+    pages = sorted({int(b.get("page")) for b in real_blocks if b.get("page") is not None})
+    columns = _unique_preserve_order([b.get("column") for b in real_blocks if b.get("column")])
+    source_block_ids = _unique_preserve_order([b.get("source_block_id") for b in real_blocks if b.get("source_block_id")])
+    block_ids = _unique_preserve_order([b.get("block_id") for b in real_blocks if b.get("block_id")])
+    reading_orders = [
+        int(b.get("reading_order"))
+        for b in real_blocks
+        if isinstance(b.get("reading_order"), int)
+        or (isinstance(b.get("reading_order"), str) and str(b.get("reading_order")).isdigit())
+    ]
+
+    bboxes = []
+    for b in real_blocks:
+        bbox = b.get("bbox")
+        if isinstance(bbox, list) and len(bbox) >= 4:
+            try:
+                bboxes.append([float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])])
+            except (TypeError, ValueError):
+                pass
+
+    source_block_metadata = []
+    for b in real_blocks[:80]:
+        meta = {
+            "block_id": b.get("block_id"),
+            "source_block_id": b.get("source_block_id"),
+            "type": b.get("type"),
+            "page": b.get("page"),
+            "bbox": b.get("bbox"),
+            "column": b.get("column"),
+            "reading_order": b.get("reading_order"),
+        }
+        source_block_metadata.append({k: v for k, v in meta.items() if v is not None})
+
+    return {
+        "source_block_ids": source_block_ids,
+        "block_ids": block_ids,
+        "block_types": sorted(set(block_types)),
+        "evidence_types": sorted(set(block_types)),
+        "page_numbers": pages,
+        "layout_columns": columns,
+        "reading_order_span": {
+            "start": min(reading_orders) if reading_orders else None,
+            "end": max(reading_orders) if reading_orders else None,
+        },
+        "bbox_span": {
+            "x0": min((b[0] for b in bboxes), default=None),
+            "y0": min((b[1] for b in bboxes), default=None),
+            "x1": max((b[2] for b in bboxes), default=None),
+            "y1": max((b[3] for b in bboxes), default=None),
+        },
+        "source_block_metadata": source_block_metadata,
+        "contains_figure_caption": "figure_caption" in block_types,
+        "contains_table_caption": "table_caption" in block_types,
+        "contains_table_text": "table_text" in block_types,
+        "contains_references": "references" in block_types,
+        "contains_metadata": "metadata" in block_types,
+        "contains_noise": "noise" in block_types,
+        "contains_image": "image" in block_types,
+    }
+
+
 def chunk_by_blocks(
     pages: list[dict],
     doc_id: str,
     source_file: str,
+    parser_stage: str = "",
     chunk_size: int = 800,
     chunk_overlap: int = 120,
     skip_references: bool = True,
+    base_excluded_block_counts: Optional[dict[str, int]] = None,
 ) -> list[Chunk]:
     """
     基于 pages[].blocks 的结构化分块。
@@ -1061,15 +1200,27 @@ def chunk_by_blocks(
     """
     # 按文档顺序收集所有有效 block
     all_blocks: list[dict] = []
+    excluded_block_counts: dict[str, int] = {
+        "metadata": 0,
+        "noise": 0,
+        "image": 0,
+        "references": 0,
+    }
+    if base_excluded_block_counts:
+        for key, value in base_excluded_block_counts.items():
+            if isinstance(value, int):
+                excluded_block_counts[key] = excluded_block_counts.get(key, 0) + value
     doc_title = ""
     for p in pages:
         page_num = p.get("page", 1)
         for block in p.get("blocks", []):
             btype = block.get("type", "paragraph")
             btext = block.get("text", "").strip()
-            if not btext:
+            if btype in excluded_block_counts and (btype != "references" or skip_references):
+                excluded_block_counts[btype] += 1
+            if btype in ("noise", "metadata", "image"):
                 continue
-            if btype in ("noise", "metadata"):
+            if not btext:
                 continue
             if btype == "title" and not doc_title:
                 doc_title = btext.lstrip("#").strip()
@@ -1091,12 +1242,7 @@ def chunk_by_blocks(
                     all_blocks.extend(split_blocks)
                     continue
 
-            all_blocks.append({
-                "type": btype,
-                "text": btext,
-                "section_path": block.get("section_path", []),
-                "page": page_num,
-            })
+            all_blocks.append(_chunk_source_block(block, btype, btext, page_num))
 
     if not all_blocks:
         return []
@@ -1143,15 +1289,15 @@ def chunk_by_blocks(
                     else:
                         current_section_path = [heading_text]
                     current_section = heading_text
-                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                current_blocks = [block]
                 continue
             elif is_metadata:
                 if skip_references:
                     continue
-                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                current_blocks.append(block)
                 continue
             elif current_section_path:
-                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                current_blocks.append(block)
                 continue
             else:
                 if current_blocks:
@@ -1162,7 +1308,7 @@ def chunk_by_blocks(
                     })
                 current_section = heading_text
                 current_section_path = [heading_text]
-                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                current_blocks = [block]
                 continue
 
         if btype == "title":
@@ -1178,10 +1324,10 @@ def chunk_by_blocks(
                     })
                 current_section = title_as_section
                 current_section_path = [title_as_section]
-                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                current_blocks = [block]
                 continue
             elif current_section_path:
-                current_blocks.append({"type": btype, "text": btext, "page": bpage})
+                current_blocks.append(block)
                 continue
             else:
                 if current_blocks:
@@ -1192,7 +1338,7 @@ def chunk_by_blocks(
                     })
                 current_section = "Title"
                 current_section_path = ["Title"]
-                current_blocks = [{"type": btype, "text": btext, "page": bpage}]
+                current_blocks = [block]
                 continue
 
         if btype == "references":
@@ -1201,7 +1347,7 @@ def chunk_by_blocks(
             # 如果保留 references，归入当前 section
 
         # paragraph, figure_caption, table_caption 等
-        current_blocks.append({"type": btype, "text": btext, "page": bpage})
+        current_blocks.append(block)
 
     # 最后一个 section group
     if current_blocks:
@@ -1262,39 +1408,16 @@ def chunk_by_blocks(
                 continue
 
             # 构造 chunk 文本
-            chunk_text_parts = []
-            block_types_set = set()
-            pages_in_chunk = []
-
-            for blk in group:
-                btype = blk["type"]
-                btext = blk["text"]
-                block_types_set.add(btype)
-                pages_in_chunk.append(blk["page"])
-
-                if btype == "section_heading":
-                    heading = btext.lstrip("#").strip()
-                    chunk_text_parts.append(f"## {heading}")
-                elif btype == "subsection_heading":
-                    heading = btext.lstrip("#").strip()
-                    chunk_text_parts.append(f"### {heading}")
-                elif btype == "figure_caption":
-                    chunk_text_parts.append(f"[FIGURE CAPTION] {btext}")
-                elif btype == "table_caption":
-                    chunk_text_parts.append(f"[TABLE CAPTION] {btext}")
-                elif btype == "table_text":
-                    chunk_text_parts.append(f"[TABLE TEXT] {btext}")
-                elif btype == "title":
-                    chunk_text_parts.append(btext)
-                else:
-                    chunk_text_parts.append(btext)
+            chunk_text_parts = [_block_text_for_chunk(blk) for blk in group if blk.get("text")]
+            meta = _chunk_metadata_from_blocks(group)
+            evidence_hints = meta["evidence_types"]
 
             chunk_text = "\n\n".join(chunk_text_parts)
             tc = count_tokens(chunk_text)
             qs = compute_quality_score(chunk_text)
 
-            page_start = min(pages_in_chunk) if pages_in_chunk else None
-            page_end = max(pages_in_chunk) if pages_in_chunk else None
+            page_start = min(meta["page_numbers"]) if meta["page_numbers"] else None
+            page_end = max(meta["page_numbers"]) if meta["page_numbers"] else None
 
             chunk_idx += 1
             chunk_id = f"{doc_id}_sec{len(all_chunks):02d}_chunk{chunk_idx:02d}"
@@ -1309,6 +1432,7 @@ def chunk_by_blocks(
                 source_file=source_file,
                 doc_id=doc_id,
                 chunk_text=chunk_text,
+                evidence_types=evidence_hints,
             )
 
             all_chunks.append(Chunk(
@@ -1325,7 +1449,24 @@ def chunk_by_blocks(
                 retrieval_text=retrieval_text,
                 quality_score=qs,
                 section_path=list(sec_path),
-                block_types=sorted(block_types_set),
+                block_types=meta["block_types"],
+                source_block_ids=meta["source_block_ids"],
+                block_ids=meta["block_ids"],
+                evidence_types=meta["evidence_types"],
+                page_numbers=meta["page_numbers"],
+                layout_columns=meta["layout_columns"],
+                reading_order_span=meta["reading_order_span"],
+                bbox_span=meta["bbox_span"],
+                source_block_metadata=meta["source_block_metadata"],
+                excluded_block_counts=dict(excluded_block_counts),
+                contains_figure_caption=meta["contains_figure_caption"],
+                contains_table_caption=meta["contains_table_caption"],
+                contains_table_text=meta["contains_table_text"],
+                contains_references=meta["contains_references"],
+                contains_metadata=meta["contains_metadata"],
+                contains_noise=meta["contains_noise"],
+                contains_image=meta["contains_image"],
+                parser_stage=parser_stage,
             ))
 
     # 重新编号 chunk_index
@@ -1354,8 +1495,13 @@ def _aggregate_blocks_into_chunks(
 
     for block in blocks:
         block_tokens = count_tokens(block["text"])
+        joins_previous_table_caption = (
+            block.get("type") == "table_text"
+            and current
+            and current[-1].get("type") == "table_caption"
+        )
 
-        if current_tokens + block_tokens > chunk_size and current_tokens > 0:
+        if current_tokens + block_tokens > chunk_size and current_tokens > 0 and not joins_previous_table_caption:
             groups.append(current)
             overlap_text = _get_overlap_text_from_blocks(current, chunk_overlap)
             current = []
@@ -1566,6 +1712,7 @@ def build_retrieval_text(
     source_file: str,
     doc_id: str,
     chunk_text: str,
+    evidence_types: Optional[list[str]] = None,
 ) -> str:
     """
     构造用于 embedding / 稀疏检索的文本。
@@ -1581,6 +1728,8 @@ def build_retrieval_text(
         header_parts.append(f"source_file: {source_file}")
     if doc_id:
         header_parts.append(f"doc_id: {doc_id}")
+    if evidence_types:
+        header_parts.append(f"evidence_type: {', '.join(sorted(set(evidence_types)))}")
 
     if not header_parts:
         return chunk_text
@@ -1606,6 +1755,7 @@ def read_txt_file(filepath: Path) -> dict:
         "pages": None,
         "raw_text": text,
         "has_blocks": False,
+        "parser_stage": "",
     }
 
 
@@ -1621,6 +1771,20 @@ def read_json_file(filepath: Path) -> dict:
     doc_id = data.get("doc_id", filepath.stem)
     source_file = data.get("source_file", filepath.name)
     pages = data.get("pages", [])
+    parser_stage = data.get("parser_stage", "")
+
+    if parser_stage == "evidence_pack_v5" or "evidence_units" in data:
+        pages = evidence_pack_to_pages(data)
+        full_text = "\n".join(p.get("text", "") for p in pages)
+        return {
+            "doc_id": doc_id,
+            "source_file": source_file,
+            "pages": pages,
+            "raw_text": full_text,
+            "has_blocks": bool(pages),
+            "parser_stage": parser_stage or "evidence_pack_v5",
+            "excluded_block_counts": data.get("excluded_block_counts", {}) or {},
+        }
 
     # 检测是否有 blocks
     has_blocks = any(
@@ -1672,6 +1836,8 @@ def read_json_file(filepath: Path) -> dict:
         "pages": pages,
         "raw_text": full_text,
         "has_blocks": has_blocks,
+        "parser_stage": parser_stage,
+        "excluded_block_counts": data.get("excluded_block_counts", {}) or {},
     }
 
 
@@ -1707,6 +1873,7 @@ def read_pdf_file(filepath: Path) -> dict:
         "pages": pages,
         "raw_text": full_text,
         "has_blocks": False,
+        "parser_stage": "",
     }
 
 
@@ -1745,6 +1912,7 @@ def process_document(
     source_file = doc_data["source_file"]
     pages = doc_data.get("pages")
     has_blocks = doc_data.get("has_blocks", False)
+    parser_stage = doc_data.get("parser_stage", "")
 
     # 优先路径：block-based chunking
     if has_blocks and pages:
@@ -1752,8 +1920,10 @@ def process_document(
             pages=pages,
             doc_id=doc_id,
             source_file=source_file,
+            parser_stage=parser_stage,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            base_excluded_block_counts=doc_data.get("excluded_block_counts", {}) or {},
         )
         # block-based 路径下，用 raw_text 判断是否有内容
         has_content = bool(raw_text and raw_text.strip())
@@ -1786,9 +1956,13 @@ def process_document(
     filtered = []
     for chunk in all_chunks:
         has_table_text = "table_text" in getattr(chunk, "block_types", [])
-        min_chars = 20 if has_table_text else min_chunk_chars
-        min_words = 3 if has_table_text else min_chunk_words
-        quality_floor = min(quality_threshold, 0.05) if has_table_text else quality_threshold
+        has_evidence = any(
+            bt in getattr(chunk, "block_types", [])
+            for bt in ("figure_caption", "table_caption", "table_text")
+        )
+        min_chars = 20 if has_evidence else min_chunk_chars
+        min_words = 3 if has_evidence else min_chunk_words
+        quality_floor = min(quality_threshold, 0.05) if has_evidence or has_table_text else quality_threshold
 
         if len(chunk.text) < min_chars:
             continue
