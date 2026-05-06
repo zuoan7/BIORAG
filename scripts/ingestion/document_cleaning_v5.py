@@ -59,11 +59,65 @@ CONTAMINATION_PATTERNS = {
         r"at\s+University\s+of\s+Hawaii\s+at\s+Manoa\s+Library\s+on\s+June\s+16,\s+2015",
         re.I,
     ),
+    "cover_metadata": re.compile(
+        r"S1096-7176|\bYMBEN\b|Accepted\s+Manuscript|Version\s+of\s+Record|"
+        r"this\s+is\s+a\s+pdf\s+of\s+an\s+article|"
+        r"this\s+version\s+will\s+undergo\s+additional\s+copyediting|"
+        r"of\s+a\s+cover\s+page\s+and\s+metadata|"
+        r"during\s+the\s+production\s+process,\s+errors\s+may\s+be\s+discovered|"
+        r"in\s+its\s+final\s+form,\s+but\s+we\s+are\s+providing\s+this\s+version|"
+        r"this\s+early\s+version\s+to\s+give\s+early\s+visibility\s+of\s+the\s+article|"
+        r"please\s+note\s+that.*early\s+visibility\s+of\s+the\s+article|"
+        r"please\s+also\s+note\s+that.*during\s+the\s+production\s+process|"
+        r"errors\s+may\s+be\s+discovered\s+which\s+could\s+affect\s+the\s+content|"
+        r"disclaimers\s+that\s+apply\s+to\s+the\s+journal\s+pertain|"
+        r"all\s+legal\s+disclaimers\s+that\s+apply\s+to\s+the\s+journal|"
+        r"^Metabolic\s+Engineering$|^\d{1,2}\s+November\s+2023$|"
+        r"\b(?:Investigation|Formal\s+analysis|Conceptualization|Supervision|Writing\s*-\s*original\s+draft|"
+        r"Writing\s*-\s*review\s*&\s*editing|Methodology|Validation|Visualization|Funding\s+acquisition)\b",
+        re.I,
+    ),
+    "running_header_footer": re.compile(
+        r"^page\s+\d+\s+of\s+\d+$|^open\s+access$|"
+        r"this\s+article\s+is\s+available\s+from\s*:|"
+        r"this\s+is\s+an\s+open\s+access\s+article\s+distributed\s+under|"
+        r"open\s+access\s+this\s+article\s+is\s+licensed\s+under|"
+        r"creative\s+commons\s+attribution|"
+        r"(?:which\s+)?permits\s+unrestricted\s+use,\s+distribution,\s+and\s+reproduction|"
+        r"provided\s+the\s+original\s+work\s+is\s+properly\s+cited|"
+        r"^©\s+The\s+Author\(s\)|"
+        r"vol\.\s*\d+,\s*no\.\s*\d+(?:,\s*\d{4})?|"
+        r"^j\.\s+biochem\.|"
+        r"biotechnology\s+and\s+bioengineering,\s+vol\.\s*110,\s+no\.\s*3|"
+        r"^barrero\s+et\s+al\.\s+microb\s+cell\s+fact\s+\(\d{4}\)\s+\d+:\d+$|"
+        r"^zhu\s+et\s+al\.\s+biotechnol\s+biofuels\s+\(\d{4}\)\s+\d+:\d+$",
+        re.I,
+    ),
+    "annotation_noise": re.compile(
+        r"表达\s*Fam20C|是否有尝试|共表达\s*\?{2,}|[\u4e00-\u9fff]{2,}.{0,20}\?{2,}"
+    ),
 }
 
 BODY_CONTINUATION_START = re.compile(
     r"^(?:at|and|that|which|while|with|however|therefore|these|this|the|"
-    r"particularly|in\s+addition|to|for|from|by|of|as|bon)\b",
+    r"particularly|in\s+addition|to|for|from|by|of|as|bon|after|was|were|"
+    r"incubated|gDW-1|NGAM|\d+%\s+byproduct|"
+    r"confined|analysis\s+of|when\s+paired|in\s+the\s+cytosol|"
+    r"in\s+S\.|in\s+titers?\s+up\s+to|IgG\b|GAM\b|strains?\s+were|"
+    r"when\s+grown|in\s+lysogeny|that\s+the|by\s+the|"
+    r"this\s+experiment|these\s+results|we\s+(?:next|also|further|observed))\b",
+    re.I,
+)
+
+PROTOCOL_RECIPE_CONTINUATION_PATTERN = re.compile(
+    r"^(?:gradient\s+from|from\s+\d+(?:\.\d+)?%?\s+[A-Z]?|umn,\s*\d+|column,\s*\d+|"
+    r"tryptone\b|yeast\s+extract\b|\(?NH4\)?2SO4\b|KH2PO4\b|MgSO4\b|NaCl\b|FePO4\b)",
+    re.I,
+)
+
+PROTOCOL_RECIPE_KEYWORD_PATTERN = re.compile(
+    r"\b(?:acetonitrile|formic\s+acid|gradient|flow\s+rate|Waters|ACN|tryptone|"
+    r"yeast\s+extract|sterile\s+seawater|mineral\s+medium|KH2PO4|MgSO4|NaCl|FePO4|KOH)\b",
     re.I,
 )
 
@@ -77,7 +131,11 @@ TABLE_EVIDENCE_KEYWORDS = re.compile(
 SENTENCE_VERBS = re.compile(
     r"\b(?:is|are|was|were|has|have|had|showed|shown|suggested|indicated|"
     r"reached|contains|contained|contains?|selected|incubated|degraded|"
-    r"confirmed|increased|decreased|reduced)\b",
+    r"confirmed|increased|decreased|reduced|"
+    r"confined|colonize[sd]?|paired|grown|mixed|identified|screened|"
+    r"evaluated|characterized|determined|measured|expressed|engineered|"
+    r"constructed|generated|transformed|enhanced|improved|enabled|allowed?|"
+    r"provided?|yielded|obtained|compared|analyzed|detected|revealed|described)\b",
     re.I,
 )
 
@@ -162,13 +220,29 @@ def looks_like_tabular_evidence(text: str) -> bool:
     return short_header or dense_values or separated_cells
 
 
-def looks_like_false_table_text_body_sentence(text: str) -> bool:
+def looks_like_false_table_text_body_sentence(text: str, strong_table_context: bool = False) -> bool:
     """Detect table_text labels that are actually body sentence continuations."""
     normalized = normalize_text(text)
-    if not normalized or looks_like_tabular_evidence(normalized):
+    if not normalized:
         return False
     words = normalized.split()
+    if (
+        PROTOCOL_RECIPE_CONTINUATION_PATTERN.match(normalized)
+        and PROTOCOL_RECIPE_KEYWORD_PATTERN.search(normalized)
+        and not re.search(r"\b(?:this\s+study|harboring|plasmid|strain|FBA|RBA|in\s+vivo)\b", normalized, re.I)
+    ):
+        return not strong_table_context
     if len(words) < 6:
+        return False
+    if re.match(r"^(?:was|were|incubated|after)\b", normalized, re.I):
+        return True
+    if re.match(r"^(?:\d+%\s+byproduct|gDW-1|NGAM)\b", normalized, re.I) and re.search(
+        r"\b(?:we|assumed|compared|for\s+growth|carbon-limited|chemostats)\b",
+        normalized,
+        re.I,
+    ):
+        return True
+    if looks_like_tabular_evidence(normalized):
         return False
     lower_start = bool(re.match(r"^[a-z]", normalized))
     body_start = bool(BODY_CONTINUATION_START.search(normalized))
@@ -184,7 +258,18 @@ def looks_like_false_table_text_body_sentence(text: str) -> bool:
         return True
     if has_sentence_boundary and (has_verb or len(words) >= 8):
         return True
+    # Single-sentence body text that ends with sentence-end punctuation
+    if (lower_start or body_start) and re.search(r"[.!?]$", normalized) and len(words) >= 6:
+        return True
     return False
+
+
+def is_contaminated_evidence_text(text: str) -> tuple[bool, str]:
+    normalized = normalize_text(text)
+    for label, pattern in CONTAMINATION_PATTERNS.items():
+        if pattern.search(normalized):
+            return True, label
+    return False, ""
 
 
 def _new_group_id(doc_id: str, kind: str, index: int) -> str:
@@ -244,10 +329,29 @@ def build_evidence_pack(clean_data: dict[str, Any]) -> dict[str, Any]:
         if not text:
             excluded_block_counts["empty_evidence_text"] += 1
             continue
+        contaminated, contamination_reason = is_contaminated_evidence_text(text)
+        if contaminated:
+            excluded_block_counts[f"contamination:{contamination_reason}"] += 1
+            if len(excluded_examples) < 40:
+                excluded_examples.append({
+                    "block_id": block.get("block_id"),
+                    "source_block_id": source_block_id(block),
+                    "type": block_type,
+                    "page": block.get("page"),
+                    "text_preview": _preview(text),
+                    "layout": block_layout(block),
+                    "reason": contamination_reason,
+                })
+            continue
 
         source_clean_block_type = block_type
         evidence_type_override = None
-        if block_type == "table_text" and looks_like_false_table_text_body_sentence(text):
+        strong_table_context = bool(
+            last_table_group_id
+            and isinstance(block.get("page"), int)
+            and (last_table_page is None or int(block.get("page")) <= last_table_page + 1)
+        )
+        if block_type == "table_text" and looks_like_false_table_text_body_sentence(text, strong_table_context):
             block_type = "paragraph"
             evidence_type_override = "table_text_body_sentence_to_paragraph"
 

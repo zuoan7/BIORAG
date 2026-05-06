@@ -47,7 +47,14 @@ from pymilvus import (
     FieldSchema,
 )
 
-DEFAULT_BGE_EMBED_MAX_LENGTH = 2048
+DEFAULT_BGE_EMBED_MAX_LENGTH = 4096
+
+# Phase 12A: Milvus VARCHAR 字段存储上限（字符数，非 token 数）
+# 注意：这些值必须与 build_collection_schema 中的 FieldSchema max_length 保持一致
+TEXT_VARCHAR_MAX_LENGTH = 16384
+RETRIEVAL_TEXT_VARCHAR_MAX_LENGTH = 16384
+METADATA_JSON_VARCHAR_MAX_LENGTH = 8192
+
 # ============================================================
 # Embedding 接口
 # ============================================================
@@ -162,19 +169,31 @@ def create_embedder(
 
 def build_collection_schema(dim: int) -> CollectionSchema:
     """
-    构建 Milvus collection schema。
+    构建 Milvus collection schema (Phase 12A v2)。
 
-    字段说明:
-    - chunk_id (VARCHAR, PK): 稳定可复现的主键，格式 doc_0001_sec03_chunk02
-    - doc_id (VARCHAR): 文档 ID，用于按文档删除/查询
+    原有字段:
+    - chunk_id (VARCHAR, PK): 稳定可复现的主键
+    - doc_id (VARCHAR): 文档 ID
     - source_file (VARCHAR): 源文件名
     - title (VARCHAR): 论文标题
     - section (VARCHAR): 所属 section
-    - page_start (INT64): 起始页码（可为 null，用 -1 占位）
-    - page_end (INT64): 结束页码（可为 null，用 -1 占位）
+    - page_start (INT64): 起始页码
+    - page_end (INT64): 结束页码
     - chunk_index (INT64): chunk 序号
-    - text (VARCHAR): 清洗后的 chunk 文本
-    - embedding (FLOAT_VECTOR): 向量，维度由 dim 参数决定
+    - text (VARCHAR): 清洗后的 chunk 文本（给生成/引用/citation 使用）
+    - embedding (FLOAT_VECTOR): 向量
+
+    Phase 12A 新增结构化索引字段:
+    - retrieval_text (VARCHAR): embedding/BM25/rerank 使用的文本
+    - content_kind (VARCHAR): body/table_text/table_caption/figure_caption/image_related/references/metadata
+    - quality_score (FLOAT): chunk 质量分
+    - contains_table_text (BOOL)
+    - contains_table_caption (BOOL)
+    - contains_figure_caption (BOOL)
+    - contains_image (BOOL)
+    - object_type (VARCHAR): body/table/figure/image/references/metadata
+    - object_id (VARCHAR): 稳定 object 标识符
+    - metadata_json (VARCHAR): 复杂结构字段的 JSON 序列化
     """
     fields = [
         FieldSchema(
@@ -226,8 +245,63 @@ def build_collection_schema(dim: int) -> CollectionSchema:
         FieldSchema(
             name="text",
             dtype=DataType.VARCHAR,
-            max_length=8192,
-            description="清洗后的 chunk 文本",
+            max_length=TEXT_VARCHAR_MAX_LENGTH,
+            description="清洗后的 chunk 文本（生成/引用/citation 使用）",
+        ),
+        FieldSchema(
+            name="retrieval_text",
+            dtype=DataType.VARCHAR,
+            max_length=RETRIEVAL_TEXT_VARCHAR_MAX_LENGTH,
+            description="embedding/BM25/rerank 使用的文本",
+        ),
+        FieldSchema(
+            name="content_kind",
+            dtype=DataType.VARCHAR,
+            max_length=64,
+            description="body/table_text/table_caption/figure_caption/image_related/references/metadata",
+        ),
+        FieldSchema(
+            name="quality_score",
+            dtype=DataType.FLOAT,
+            description="chunk 质量分",
+        ),
+        FieldSchema(
+            name="contains_table_text",
+            dtype=DataType.BOOL,
+            description="是否包含表格正文",
+        ),
+        FieldSchema(
+            name="contains_table_caption",
+            dtype=DataType.BOOL,
+            description="是否包含表格标题",
+        ),
+        FieldSchema(
+            name="contains_figure_caption",
+            dtype=DataType.BOOL,
+            description="是否包含图片标题",
+        ),
+        FieldSchema(
+            name="contains_image",
+            dtype=DataType.BOOL,
+            description="是否包含图片",
+        ),
+        FieldSchema(
+            name="object_type",
+            dtype=DataType.VARCHAR,
+            max_length=64,
+            description="body/table/figure/image/references/metadata",
+        ),
+        FieldSchema(
+            name="object_id",
+            dtype=DataType.VARCHAR,
+            max_length=256,
+            description="稳定 object 标识符",
+        ),
+        FieldSchema(
+            name="metadata_json",
+            dtype=DataType.VARCHAR,
+            max_length=METADATA_JSON_VARCHAR_MAX_LENGTH,
+            description="复杂结构字段的 JSON 序列化",
         ),
         FieldSchema(
             name="embedding",
@@ -239,8 +313,111 @@ def build_collection_schema(dim: int) -> CollectionSchema:
 
     return CollectionSchema(
         fields=fields,
-        description="合成生物学论文 RAG chunk 索引",
+        description="合成生物学论文 RAG chunk 索引 (Phase 12A v2)",
     )
+
+
+# ============================================================
+# Phase 12A: 结构化字段推导
+# ============================================================
+
+def derive_content_kind(chunk: dict) -> str:
+    """根据 chunk 的 contains_* 布尔字段推导 content_kind。"""
+    if chunk.get("contains_table_text"):
+        return "table_text"
+    if chunk.get("contains_table_caption"):
+        return "table_caption"
+    if chunk.get("contains_figure_caption"):
+        return "figure_caption"
+    if chunk.get("contains_image"):
+        return "image_related"
+    if chunk.get("contains_references"):
+        return "references"
+    if chunk.get("contains_metadata"):
+        return "metadata"
+    return "body"
+
+
+def derive_object_type(content_kind: str) -> str:
+    """根据 content_kind 推导 object_type。"""
+    if content_kind in ("table_text", "table_caption"):
+        return "table"
+    if content_kind == "figure_caption":
+        return "figure"
+    if content_kind == "image_related":
+        return "image"
+    if content_kind == "references":
+        return "references"
+    if content_kind == "metadata":
+        return "metadata"
+    return "body"
+
+
+def infer_object_id(chunk: dict, object_type: str) -> str:
+    """保守推导 object_id，不做复杂解析。"""
+    doc_id = chunk.get("doc_id", "")
+    # 已有显式 ID 则直接使用
+    for key in ("object_id", "table_id", "figure_id", "image_id"):
+        val = chunk.get(key)
+        if val:
+            return str(val)
+    # 使用 source_block_ids 或 block_ids 的第一个元素
+    block_ids = chunk.get("source_block_ids") or chunk.get("block_ids") or []
+    if block_ids and len(block_ids) > 0:
+        return f"{doc_id}::{object_type}::{block_ids[0]}"
+    return ""
+
+
+def build_metadata_json(chunk: dict) -> str:
+    """将复杂结构字段序列化为 metadata_json，缺失时使用默认值。"""
+    import json as _json
+
+    # 摘要 source_block_metadata，避免过大
+    sbm = chunk.get("source_block_metadata") or []
+    if isinstance(sbm, list):
+        sbm_summary = [
+            {k: v for k, v in (item if isinstance(item, dict) else {}).items()
+             if k in ("block_id", "type", "page", "bbox", "text_length")}
+            for item in sbm[:20]
+        ]
+    else:
+        sbm_summary = []
+
+    payload = {
+        # 当前已有字段
+        "section_path": chunk.get("section_path") or [],
+        "block_types": chunk.get("block_types") or [],
+        "source_block_ids": chunk.get("source_block_ids") or [],
+        "block_ids": chunk.get("block_ids") or [],
+        "evidence_types": chunk.get("evidence_types") or [],
+        "page_numbers": chunk.get("page_numbers") or [],
+        "layout_columns": chunk.get("layout_columns") or 1,
+        "reading_order_span": chunk.get("reading_order_span") or [],
+        "bbox_span": chunk.get("bbox_span") or [],
+        "excluded_block_counts": chunk.get("excluded_block_counts") or {},
+        "contains_references": chunk.get("contains_references") or False,
+        "contains_metadata": chunk.get("contains_metadata") or False,
+        "contains_noise": chunk.get("contains_noise") or False,
+        "parser_stage": chunk.get("parser_stage") or "",
+        "source_block_metadata": sbm_summary,
+        # 图表增强预留字段（当前填默认空值）
+        "table_id": chunk.get("table_id") or "",
+        "figure_id": chunk.get("figure_id") or "",
+        "image_id": chunk.get("image_id") or "",
+        "object_id": chunk.get("object_id") or "",
+        "object_type": chunk.get("object_type") or "",
+        "table_caption": chunk.get("table_caption") or "",
+        "table_markdown": chunk.get("table_markdown") or "",
+        "table_csv_path": chunk.get("table_csv_path") or "",
+        "table_json_path": chunk.get("table_json_path") or "",
+        "figure_caption": chunk.get("figure_caption") or "",
+        "image_path": chunk.get("image_path") or "",
+        "image_hash": chunk.get("image_hash") or "",
+        "ocr_text": chunk.get("ocr_text") or "",
+        "visual_summary": chunk.get("visual_summary") or "",
+        "asset_uri": chunk.get("asset_uri") or "",
+    }
+    return _json.dumps(payload, ensure_ascii=False)
 
 
 # ============================================================
@@ -293,6 +470,51 @@ def delete_by_doc_ids(
 # 批量插入
 # ============================================================
 
+# 全局截断统计（在 upsert_chunks 中累积，main 结束时汇总输出）
+_truncation_stats: dict[str, list[dict]] = {
+    "text": [],
+    "retrieval_text": [],
+    "metadata_json": [],
+}
+
+
+def _safe_truncate(value: str, max_len: int, field_name: str, chunk_id: str) -> str:
+    """安全截断字符串到指定长度，超长时记录统计并发出警告。"""
+    if len(value) <= max_len:
+        return value
+    logger.warning(
+        "%s 字段超过 VARCHAR(%d) 限制 (长度=%d)，将被截断: chunk_id=%s",
+        field_name, max_len, len(value), chunk_id,
+    )
+    if field_name in _truncation_stats:
+        _truncation_stats[field_name].append({
+            "chunk_id": chunk_id,
+            "original_chars": len(value),
+            "max_allowed": max_len,
+        })
+    return value[:max_len]
+
+
+def log_truncation_summary() -> None:
+    """汇总输出截断统计。"""
+    total = sum(len(v) for v in _truncation_stats.values())
+    if total == 0:
+        return
+    print()
+    print("=" * 60)
+    print("VARCHAR 截断统计")
+    print("=" * 60)
+    for field_name, items in _truncation_stats.items():
+        if not items:
+            continue
+        orig_lens = [item["original_chars"] for item in items]
+        print(f"  {field_name}:")
+        print(f"    截断数量:     {len(items)}")
+        print(f"    原始长度范围: {min(orig_lens)} – {max(orig_lens)}")
+        print(f"    原始长度平均: {sum(orig_lens) / len(orig_lens):.0f}")
+    print()
+
+
 def upsert_chunks(
     client: MilvusClient,
     collection_name: str,
@@ -315,9 +537,28 @@ def upsert_chunks(
         for chunk, emb in zip(batch_chunks, batch_embs):
             page_start = chunk.get("page_start")
             page_end = chunk.get("page_end")
+            retrieval_text_raw = chunk.get("retrieval_text") or chunk.get("text", "")
+            text_raw = chunk.get("text", "")
+            content_kind = derive_content_kind(chunk)
+            object_type = derive_object_type(content_kind)
+            object_id = infer_object_id(chunk, object_type)
+            cid = chunk["chunk_id"]
+
+            # 记录原始长度用于截断统计
+            text_original_chars = len(text_raw)
+            retrieval_text_original_chars = len(retrieval_text_raw)
+
+            # 安全截断 VARCHAR 字段，防止超长导致 Milvus 插入失败
+            retrieval_text = _safe_truncate(
+                retrieval_text_raw, RETRIEVAL_TEXT_VARCHAR_MAX_LENGTH, "retrieval_text", cid
+            )
+            text = _safe_truncate(text_raw, TEXT_VARCHAR_MAX_LENGTH, "text", cid)
+            metadata_json = _safe_truncate(
+                build_metadata_json(chunk), METADATA_JSON_VARCHAR_MAX_LENGTH, "metadata_json", cid
+            )
 
             row = {
-                "chunk_id": chunk["chunk_id"],
+                "chunk_id": cid,
                 "doc_id": chunk["doc_id"],
                 "source_file": chunk.get("source_file", ""),
                 "title": chunk.get("title", ""),
@@ -325,9 +566,40 @@ def upsert_chunks(
                 "page_start": page_start if page_start is not None else -1,
                 "page_end": page_end if page_end is not None else -1,
                 "chunk_index": chunk.get("chunk_index", 0),
-                "text": chunk.get("text", ""),
+                "text": text,
+                "retrieval_text": retrieval_text,
+                "content_kind": content_kind,
+                "quality_score": chunk.get("quality_score") or 0.0,
+                "contains_table_text": bool(chunk.get("contains_table_text")),
+                "contains_table_caption": bool(chunk.get("contains_table_caption")),
+                "contains_figure_caption": bool(chunk.get("contains_figure_caption")),
+                "contains_image": bool(chunk.get("contains_image")),
+                "object_type": object_type,
+                "object_id": object_id,
+                "metadata_json": metadata_json,
                 "embedding": emb,
             }
+            # 向 metadata_json 注入截断标记
+            if (text_original_chars > TEXT_VARCHAR_MAX_LENGTH
+                    or retrieval_text_original_chars > RETRIEVAL_TEXT_VARCHAR_MAX_LENGTH):
+                import json as _json2
+                try:
+                    mj = _json2.loads(metadata_json) if isinstance(metadata_json, str) else {}
+                except Exception:
+                    mj = {}
+                mj["text_truncated"] = text_original_chars > TEXT_VARCHAR_MAX_LENGTH
+                mj["retrieval_text_truncated"] = (
+                    retrieval_text_original_chars > RETRIEVAL_TEXT_VARCHAR_MAX_LENGTH
+                )
+                mj["text_original_chars"] = text_original_chars
+                mj["retrieval_text_original_chars"] = retrieval_text_original_chars
+                row["metadata_json"] = _safe_truncate(
+                    _json2.dumps(mj, ensure_ascii=False),
+                    METADATA_JSON_VARCHAR_MAX_LENGTH,
+                    "metadata_json",
+                    cid,
+                )
+
             data.append(row)
 
         client.upsert(collection_name=collection_name, data=data)
@@ -414,7 +686,7 @@ def main():
     )
     parser.add_argument(
         "--embed-max-length", type=int, default=None,
-        help="BGE embedding 最大 token 长度（默认: 1024，可通过 BGE_EMBED_MAX_LENGTH 环境变量配置）",
+        help=f"BGE embedding 最大 token 长度（默认: {DEFAULT_BGE_EMBED_MAX_LENGTH}，可通过 BGE_EMBED_MAX_LENGTH 环境变量配置）",
     )
 
     args = parser.parse_args()
@@ -516,6 +788,7 @@ def main():
         batch_size=args.batch_size,
     )
     print(f"  upsert 完成: {inserted} 条")
+    log_truncation_summary()
 
     # 创建索引
     print()

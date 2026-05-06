@@ -95,6 +95,11 @@ class RetrievalConfig:
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     bm25_batch_size: int = 1000
+    # Phase 12A: 结构化索引契约
+    index_schema_version: str = "v2"
+    index_type: str = "IVF_FLAT"
+    nprobe: int = 16
+    hnsw_ef: int = 64
 
 
 @dataclass
@@ -447,6 +452,19 @@ class Settings:
                 "RETRIEVAL_NEIGHBOR_EXPANSION_MAX_CHUNKS",
                 str(settings.retrieval.neighbor_expansion_max_chunks),
             )
+        )
+        # Phase 12A: 结构化索引契约
+        settings.retrieval.index_schema_version = get_value(
+            "RETRIEVAL_INDEX_SCHEMA_VERSION", settings.retrieval.index_schema_version
+        )
+        settings.retrieval.index_type = get_value(
+            "RETRIEVAL_INDEX_TYPE", settings.retrieval.index_type
+        )
+        settings.retrieval.nprobe = int(
+            get_value("RETRIEVAL_NPROBE", str(settings.retrieval.nprobe))
+        )
+        settings.retrieval.hnsw_ef = int(
+            get_value("RETRIEVAL_HNSW_EF", str(settings.retrieval.hnsw_ef))
         )
         settings.kb.embedding_model_path = get_value(
             "BGE_M3_MODEL_PATH",

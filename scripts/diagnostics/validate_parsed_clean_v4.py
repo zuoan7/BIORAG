@@ -26,6 +26,7 @@ from scripts.ingestion.clean_parsed_structure import (
     looks_like_body_sentence_continuation,
     looks_like_front_matter_affiliation_metadata,
     looks_like_marginal_access_banner,
+    looks_like_table_row_or_cell,
     normalize_pdf_text,
 )
 
@@ -132,6 +133,7 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
     affiliation_metadata_examples: list[dict[str, Any]] = []
     marginal_banner_examples: list[dict[str, Any]] = []
     false_table_text_body_sentence_examples: list[dict[str, Any]] = []
+    table_context_examples: list[dict[str, Any]] = []
 
     metadata_as_paragraph_count = 0
     front_matter_affiliation_as_paragraph_count = 0
@@ -141,10 +143,17 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
     marginal_banner_as_table_text_count = 0
     marginal_banner_as_references_count = 0
     false_table_text_body_sentence_count = 0
+    table_caption_without_following_table_text_count = 0
+    table_rows_misclassified_as_references_count = 0
+    numeric_table_cell_as_noise_count = 0
+    table_header_as_references_count = 0
+    doc_0005_page11_table_rows_retained_check = "not_applicable"
     numbered_reference_as_paragraph_count = 0
     clean_block_journal_count = 0
     metadata_retention_denominator = 0
     metadata_retention_numerator = 0
+
+    doc0005_page11_seen: dict[str, str] = {}
 
     for page in clean_data.get("pages", []) or []:
         page_num = int(page.get("page") or 0)
@@ -158,7 +167,8 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
                     "reason": "journal_preproof_noise_in_page_text",
                 })
 
-        for block in page.get("blocks", []) or []:
+        page_blocks = page.get("blocks", []) or []
+        for idx, block in enumerate(page_blocks):
             block_type = block.get("type", "")
             text = block.get("text", "") or ""
             metadata = block.get("metadata", {}) or {}
@@ -209,6 +219,60 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
                 false_table_text_body_sentence_count += 1
                 if len(false_table_text_body_sentence_examples) < 12:
                     false_table_text_body_sentence_examples.append(_block_example(doc_id, page_num, block, "body_sentence_continuation_as_table_text"))
+
+            if block_type == "table_caption":
+                following = page_blocks[idx + 1: idx + 16]
+                saw_table_text = any((b.get("type") == "table_text") for b in following)
+                stopped = any((b.get("type") in {"figure_caption", "section_heading", "subsection_heading"}) for b in following[:4])
+                if not saw_table_text and not stopped:
+                    table_caption_without_following_table_text_count += 1
+                    if len(table_context_examples) < 12:
+                        table_context_examples.append(_block_example(doc_id, page_num, block, "table_caption_without_following_table_text"))
+
+                for near in following:
+                    near_type = near.get("type", "")
+                    near_text = near.get("text", "") or ""
+                    near_meta = near.get("metadata", {}) or {}
+                    if near_type in {"figure_caption", "section_heading", "subsection_heading", "image"}:
+                        break
+                    is_table_like_near = looks_like_table_row_or_cell(near_text, True, near_meta, [])
+                    if is_table_like_near:
+                        if near_type == "references":
+                            table_rows_misclassified_as_references_count += 1
+                            if len(table_context_examples) < 12:
+                                table_context_examples.append(_block_example(doc_id, page_num, near, "table_row_as_references_after_caption"))
+                        elif near_type == "noise" and normalize_pdf_text(near_text).isdigit():
+                            numeric_table_cell_as_noise_count += 1
+                            if len(table_context_examples) < 12:
+                                table_context_examples.append(_block_example(doc_id, page_num, near, "numeric_table_cell_as_noise_after_caption"))
+                    elif near_type in {"paragraph", "references"}:
+                        break
+
+            if (
+                block_type == "references"
+                and normalize_pdf_text(text).lower() in {"orf_name", "length (bp)", "encoding protein"}
+            ):
+                table_header_as_references_count += 1
+                if len(table_context_examples) < 12:
+                    table_context_examples.append(_block_example(doc_id, page_num, block, "table_header_as_references"))
+
+            if doc_id == "doc_0005" and page_num == 11:
+                norm = normalize_pdf_text(text)
+                for key in (
+                    "Zhu et al. Biotechnol Biofuels (2017) 10:44",
+                    "Page 11 of 14",
+                    "Table 3 continued",
+                    "Orf_name",
+                    "Length (bp)",
+                    "Encoding protein",
+                    "gm_orf2729",
+                    "369",
+                    "Cytochrome c551",
+                ):
+                    if norm == key:
+                        doc0005_page11_seen[key] = block_type
+                if norm.startswith("Fig. 6 Putative lignin degradation pathways"):
+                    doc0005_page11_seen["Fig. 6"] = block_type
 
             if block_type == "paragraph" and (
                 is_numbered_reference_entry(text)
@@ -274,6 +338,33 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
         risks.append("marginal_banner_as_references")
     if false_table_text_body_sentence_count > 0:
         risks.append("false_table_text_body_sentence")
+    if table_rows_misclassified_as_references_count > 0:
+        risks.append("table_rows_misclassified_as_references")
+    if numeric_table_cell_as_noise_count > 0:
+        risks.append("numeric_table_cell_as_noise")
+    if table_header_as_references_count > 0:
+        risks.append("table_header_as_references")
+
+    if doc_id == "doc_0005":
+        expected = {
+            "Table 3 continued": "table_caption",
+            "Orf_name": "table_text",
+            "Length (bp)": "table_text",
+            "Encoding protein": "table_text",
+            "gm_orf2729": "table_text",
+            "369": "table_text",
+            "Cytochrome c551": "table_text",
+            "Fig. 6": "figure_caption",
+        }
+        disallowed = {
+            "Page 11 of 14": {"paragraph", "table_text", "references"},
+            "Zhu et al. Biotechnol Biofuels (2017) 10:44": {"paragraph", "table_text", "references"},
+        }
+        ok = all(doc0005_page11_seen.get(k) == v for k, v in expected.items())
+        ok = ok and all(doc0005_page11_seen.get(k) not in bad for k, bad in disallowed.items())
+        doc_0005_page11_table_rows_retained_check = "pass" if ok else "fail"
+        if not ok:
+            risks.append("doc_0005_page11_table_rows_retained_check")
 
     return {
         "doc_id": doc_id,
@@ -303,6 +394,12 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
         "marginal_banner_as_references_count": marginal_banner_as_references_count,
         "false_table_text_body_sentence_count": false_table_text_body_sentence_count,
         "false_table_text_body_sentence_examples": false_table_text_body_sentence_examples,
+        "table_caption_without_following_table_text_count": table_caption_without_following_table_text_count,
+        "table_rows_misclassified_as_references_count": table_rows_misclassified_as_references_count,
+        "numeric_table_cell_as_noise_count": numeric_table_cell_as_noise_count,
+        "table_header_as_references_count": table_header_as_references_count,
+        "doc_0005_page11_table_rows_retained_check": doc_0005_page11_table_rows_retained_check,
+        "doc_0005_page11_observed_types": doc0005_page11_seen,
         "affiliation_metadata_examples": affiliation_metadata_examples,
         "marginal_banner_examples": marginal_banner_examples,
         "numbered_reference_as_paragraph_count": numbered_reference_as_paragraph_count,
@@ -320,6 +417,7 @@ def analyze_doc(doc_id: str, raw_data: dict[str, Any], clean_data: dict[str, Any
             "affiliation_metadata": affiliation_metadata_examples,
             "marginal_banner": marginal_banner_examples,
             "false_table_text_body_sentence": false_table_text_body_sentence_examples,
+            "table_context": table_context_examples,
         },
     }
 
@@ -364,6 +462,14 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "marginal_banner_as_table_text_count": sum(row["marginal_banner_as_table_text_count"] for row in rows),
         "marginal_banner_as_references_count": sum(row["marginal_banner_as_references_count"] for row in rows),
         "false_table_text_body_sentence_count": sum(row["false_table_text_body_sentence_count"] for row in rows),
+        "table_caption_without_following_table_text_count": sum(row["table_caption_without_following_table_text_count"] for row in rows),
+        "table_rows_misclassified_as_references_count": sum(row["table_rows_misclassified_as_references_count"] for row in rows),
+        "numeric_table_cell_as_noise_count": sum(row["numeric_table_cell_as_noise_count"] for row in rows),
+        "table_header_as_references_count": sum(row["table_header_as_references_count"] for row in rows),
+        "doc_0005_page11_table_rows_retained_check": next(
+            (row["doc_0005_page11_table_rows_retained_check"] for row in rows if row["doc_id"] == "doc_0005"),
+            "not_applicable",
+        ),
         "numbered_reference_as_paragraph_count": sum(row["numbered_reference_as_paragraph_count"] for row in rows),
         "potential_regression_doc_count": len(potential_docs),
         "text_char_delta_raw_to_clean_min": min((row["text_char_delta_raw_to_clean"] for row in rows), default=0.0),
@@ -422,6 +528,7 @@ def render_report(summary: dict[str, Any], rows: list[dict[str, Any]], raw_dir: 
         "affiliation_metadata",
         "marginal_banner",
         "false_table_text_body_sentence",
+        "table_context",
     ]:
         examples = [ex for row in rows for ex in row["examples"].get(label, [])]
         lines.append(f"### {label}")

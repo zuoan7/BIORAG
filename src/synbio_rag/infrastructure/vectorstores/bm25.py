@@ -108,6 +108,20 @@ class BM25Retriever:
                 if not line.strip():
                     continue
                 item = json.loads(line)
+                metadata: dict[str, Any] = {
+                    "chunk_index": item.get("chunk_index"),
+                    "retrieval_text": item.get("retrieval_text", ""),
+                    "content_kind": item.get("content_kind", "body"),
+                    "quality_score": item.get("quality_score", 0.0),
+                    "contains_table_text": item.get("contains_table_text", False),
+                    "contains_table_caption": item.get("contains_table_caption", False),
+                    "contains_figure_caption": item.get("contains_figure_caption", False),
+                    "contains_image": item.get("contains_image", False),
+                    "object_type": item.get("object_type", "body"),
+                    "object_id": item.get("object_id", ""),
+                    "block_types": item.get("block_types", []),
+                    "evidence_types": item.get("evidence_types", []),
+                }
                 records.append(
                     RetrievedChunk(
                         chunk_id=item.get("chunk_id", ""),
@@ -118,7 +132,7 @@ class BM25Retriever:
                         text=item.get("text", ""),
                         page_start=item.get("page_start"),
                         page_end=item.get("page_end"),
-                        metadata={"chunk_index": item.get("chunk_index")},
+                        metadata=metadata,
                     )
                 )
         return records
@@ -137,6 +151,16 @@ class BM25Retriever:
                 "page_end",
                 "chunk_index",
                 "text",
+                "retrieval_text",
+                "content_kind",
+                "quality_score",
+                "contains_table_text",
+                "contains_table_caption",
+                "contains_figure_caption",
+                "contains_image",
+                "object_type",
+                "object_id",
+                "metadata_json",
             ],
         )
         records: list[RetrievedChunk] = []
@@ -146,6 +170,20 @@ class BM25Retriever:
                 if not rows:
                     break
                 for row in rows:
+                    parsed = _safe_parse_metadata_json(row.get("metadata_json", ""))
+                    metadata: dict[str, Any] = {
+                        "chunk_index": row.get("chunk_index"),
+                        "retrieval_text": row.get("retrieval_text", ""),
+                        "content_kind": row.get("content_kind", "body"),
+                        "quality_score": row.get("quality_score", 0.0),
+                        "contains_table_text": row.get("contains_table_text", False),
+                        "contains_table_caption": row.get("contains_table_caption", False),
+                        "contains_figure_caption": row.get("contains_figure_caption", False),
+                        "contains_image": row.get("contains_image", False),
+                        "object_type": row.get("object_type", "body"),
+                        "object_id": row.get("object_id", ""),
+                    }
+                    metadata.update(parsed)
                     records.append(
                         RetrievedChunk(
                             chunk_id=row.get("chunk_id", ""),
@@ -156,7 +194,7 @@ class BM25Retriever:
                             text=row.get("text", ""),
                             page_start=row.get("page_start"),
                             page_end=row.get("page_end"),
-                            metadata={"chunk_index": row.get("chunk_index")},
+                            metadata=metadata,
                         )
                     )
         finally:
@@ -217,7 +255,7 @@ class BM25Retriever:
                 text=item["text"],
                 page_start=item.get("page_start"),
                 page_end=item.get("page_end"),
-                metadata={"chunk_index": item.get("chunk_index")},
+                metadata=item.get("metadata", {"chunk_index": item.get("chunk_index")}),
             )
             for item in payload.get("records", [])
         ]
@@ -241,7 +279,7 @@ class BM25Retriever:
                     "text": item.text,
                     "page_start": item.page_start,
                     "page_end": item.page_end,
-                    "chunk_index": item.metadata.get("chunk_index"),
+                    "metadata": dict(item.metadata),
                 }
                 for item in self._records
             ],
@@ -258,6 +296,11 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _retrieval_text(chunk: RetrievedChunk) -> str:
+    # Phase 12A: 优先使用 metadata 中的 retrieval_text
+    rt = chunk.metadata.get("retrieval_text", "")
+    if rt:
+        return rt
+    # fallback: 用 title/section/source_file + text 构造
     metadata_lines = []
     if chunk.title:
         metadata_lines.append(f"title {chunk.title}")
@@ -269,3 +312,13 @@ def _retrieval_text(chunk: RetrievedChunk) -> str:
         metadata_lines.append(f"doc_id {chunk.doc_id}")
     metadata_lines.append(chunk.text or "")
     return "\n".join(metadata_lines)
+
+
+def _safe_parse_metadata_json(raw: str) -> dict[str, Any]:
+    """安全解析 metadata_json，失败时返回标记。"""
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw) if isinstance(raw, str) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {"metadata_json_parse_error": True}

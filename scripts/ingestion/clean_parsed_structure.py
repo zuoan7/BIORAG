@@ -248,6 +248,7 @@ METADATA_HEADING_PATTERNS = [
 METADATA_LINE_PATTERNS = [
     re.compile(r"^\s*journal\s+pre-proof\s*$", re.I),
     re.compile(r"^\s*this\s+is\s+a\s+pdf\s+file\s+of\s+an\s+article\b", re.I),
+    re.compile(r"^\s*this\s+is\s+a\s+pdf\s+of\s+an\s+article\b", re.I),
     re.compile(r"^\s*PII\s*:\s*", re.I),
     re.compile(r"^\s*to\s+appear\s+in\s*:\s*", re.I),
     re.compile(r"^\s*(?:received|revised|accepted)\s+date\s*:\s*", re.I),
@@ -262,6 +263,31 @@ METADATA_LINE_PATTERNS = [
     re.compile(r"^\s*(?:doi|https://doi\.org)\b", re.I),
     re.compile(r"^\s*©\s*\d{4}\b", re.I),
     re.compile(r"^\s*all\s+rights\s+reserved\.?\s*$", re.I),
+    re.compile(r"^\s*page\s+\d+\s+of\s+\d+\s*$", re.I),
+    re.compile(r"^\s*open\s+access\s*$", re.I),
+    re.compile(r"^\s*S\d{4}-\d{4}\(\d{2}\)\d{5}-\d\s*$", re.I),
+    re.compile(r"^\s*YMBEN\s+\d+\s*$", re.I),
+    re.compile(r"\b(?:Accepted\s+Manuscript|Version\s+of\s+Record)\b", re.I),
+    re.compile(r"\bthis\s+version\s+will\s+undergo\s+additional\s+copyediting\b", re.I),
+    re.compile(r"^\s*of\s+a\s+cover\s+page\s+and\s+metadata\b", re.I),
+    re.compile(r"^\s*copyediting,\s+typesetting\s+and\s+review\b", re.I),
+    re.compile(r"^\s*longer\s+the\s+Accepted\s+Manuscript\b", re.I),
+    re.compile(r"\bduring\s+the\s+production\s+process,\s+errors\s+may\s+be\s+discovered\b", re.I),
+    re.compile(r"\blegal\s+disclaimers\s+that\s+apply\s+to\s+the\s+journal\s+pertain\b", re.I),
+    re.compile(r"\bin\s+its\s+final\s+form,\s+but\s+we\s+are\s+providing\s+this\s+version\b", re.I),
+    re.compile(r"\bthis\s+early\s+version\s+to\s+give\s+early\s+visibility\s+of\s+the\s+article\b", re.I),
+    re.compile(r"\bplease\s+note\s+that\b.*\bearly\s+visibility\s+of\s+the\s+article\b", re.I),
+    re.compile(r"\bplease\s+also\s+note\s+that\b.*\bduring\s+the\s+production\s+process\b", re.I),
+    re.compile(r"^\s*errors\s+may\s+be\s+discovered\s+which\s+could\s+affect\s+the\s+content\b", re.I),
+    re.compile(r"^\s*disclaimers\s+that\s+apply\s+to\s+the\s+journal\s+pertain\b", re.I),
+    re.compile(r"\ball\s+legal\s+disclaimers\s+that\s+apply\s+to\s+the\s+journal\b", re.I),
+    re.compile(r"^\s*this\s+article\s+is\s+available\s+from\s*:", re.I),
+    re.compile(r"\bthis\s+is\s+an\s+open\s+access\s+article\s+distributed\s+under\b", re.I),
+    re.compile(r"\bopen\s+access\s+this\s+article\s+is\s+licensed\s+under\b", re.I),
+    re.compile(r"\bcreative\s+commons\s+attribution\b", re.I),
+    re.compile(r"\b(?:which\s+)?permits\s+unrestricted\s+use,\s+distribution,\s+and\s+reproduction\b", re.I),
+    re.compile(r"\bprovided\s+the\s+original\s+work\s+is\s+properly\s+cited\b", re.I),
+    re.compile(r"^\s*©\s+The\s+Author\(s\)\b", re.I),
     re.compile(r"^\s*(?:scientific\s+reports|carbohydrate\s+polymers)\b", re.I),
     re.compile(r"^\s*[A-Z]\.\s*[A-Za-z][A-Za-z\-\s]+et\s+al\.?\s*$", re.I),
 ]
@@ -281,6 +307,8 @@ FRONT_MATTER_METADATA_PATTERNS = [
     re.compile(r"^\s*highlights?\s*$", re.I),
     re.compile(r"^\s*author\s+statement\s*$", re.I),
     re.compile(r"^\s*cr?edi?t\s+authorship\s+contribution\s+statement\s*$", re.I),
+    re.compile(r"^\s*metabolic\s+engineering\s*$", re.I),
+    re.compile(r"^\s*\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\s*$", re.I),
     re.compile(r"^\s*please\s+cite\s+this\s+article\s+as\b", re.I),
 ]
 
@@ -329,6 +357,42 @@ TABLE_UNIT_PATTERN = re.compile(
 )
 
 DNA_SEQUENCE_PATTERN = re.compile(r"\b[ACGT]{10,}\b", re.I)
+
+TABLE_CONTEXT_HEADER_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"orf_?name|length\s*\(bp\)|encoding\s+protein|"
+    r"strain|plasmid|primer|sequence|product|titer|gene|locus|accession"
+    r")\s*$",
+    re.I,
+)
+
+TABLE_CONTEXT_CELL_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:gm_)?orf\d+[A-Za-z]?|"
+    r"K\d{5}\b.*|"
+    r"[A-Za-z0-9_.-]+(?:\s+[A-Za-z0-9_.()/+-]+){0,7}"
+    r")\s*$",
+    re.I,
+)
+
+TABLE_CONTEXT_PROTEIN_WORD_PATTERN = re.compile(
+    r"\b(?:"
+    r"protein|enzyme|cytochrome|ferredoxin|dehydrogenase|oxidoreductase|"
+    r"lyase|hydratase|isomerase|reductase|oxidase|subunit|biogenesis|"
+    r"luciferase|transferase|synthase"
+    r")\b",
+    re.I,
+)
+
+TABLE_CONTEXT_ROW_SIGNAL_PATTERN = re.compile(
+    r"(?:"
+    r"\bthis\s+study\b|\bharboring\b|\bplasmid\b|\bstrain\b|\bE\.\s*coli\b|"
+    r"\bpSTV\d*\b|\bpUAKQE\b|\blacZY\b|\bwcaJM\b|\bFBA\b|\bRBA\b|\bin\s+vivo\b|"
+    r"\boleyl\s+alcohol\b|\bpalmityl\s+alcohol\b|\bstearyl\s+alcohol\b|\bTAGs?\b|"
+    r"\bproduct\s+name\b|Δ|::"
+    r")",
+    re.I,
+)
 
 ACCESS_BANNER_PATTERN = re.compile(
     r"\b(?:"
@@ -381,9 +445,59 @@ ADDRESS_HINT_PATTERN = re.compile(
 BODY_SENTENCE_CONTINUATION_PATTERN = re.compile(
     r"^\s*(?:"
     r"at|and|that|which|while|with|however|therefore|these|this|the|"
-    r"particularly|in\s+addition"
+    r"particularly|in\s+addition|after|was|were|incubated|gDW-1|NGAM|"
+    r"\d+%\s+byproduct|"
+    r"confined|analysis\s+of|when\s+paired|in\s+the\s+cytosol|"
+    r"in\s+S\.|in\s+titers?\s+up\s+to|IgG\b|GAM\b|strains?\s+were|"
+    r"when\s+grown|in\s+lysogeny|that\s+the|by\s+the|"
+    r"this\s+experiment|these\s+results|we\s+(?:next|also|further|observed)"
     r")\b",
     re.I,
+)
+
+CREDIT_AUTHOR_CONTRIBUTION_PATTERN = re.compile(
+    r"\b(?:Investigation|Formal\s+analysis|Conceptualization|Supervision|Writing\s*-\s*original\s+draft|"
+    r"Writing\s*-\s*review\s*&\s*editing|Methodology|Validation|Visualization|Funding\s+acquisition)\b",
+    re.I,
+)
+
+PROTOCOL_RECIPE_CONTINUATION_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"gradient\s+from|from\s+\d+(?:\.\d+)?%?\s+[A-Z]?|"
+    r"umn,\s*\d+|column,\s*\d+|"
+    r"tryptone\b|yeast\s+extract\b|"
+    r"\(?NH4\)?2SO4\b|KH2PO4\b|MgSO4\b|NaCl\b|FePO4\b"
+    r")",
+    re.I,
+)
+
+PROTOCOL_RECIPE_KEYWORD_PATTERN = re.compile(
+    r"\b(?:"
+    r"acetonitrile|formic\s+acid|gradient|flow\s+rate|Waters|ACN|"
+    r"tryptone|yeast\s+extract|sterile\s+seawater|mineral\s+medium|"
+    r"KH2PO4|MgSO4|NaCl|FePO4|KOH"
+    r")\b",
+    re.I,
+)
+
+RUNNING_HEADER_FOOTER_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"page\s+\d+\s+of\s+\d+|"
+    r"vol\.\s*\d+,\s*no\.\s*\d+(?:,\s*\d{4})?|"
+    r"trends\s+in\s+biotechnology,\s+september\s+2025,\s+vol\.\s*43,\s+no\.\s*9|"
+    r"biotechnology\s+and\s+bioengineering,\s+vol\.\s*110,\s+no\.\s*3|"
+    r"biotechnology\s+and\s+bioengineering,\s+vol\.\s*110,\s+no\.\s*3,\s+march,\s+2013(?:\s+\d+)?|"
+    r"barrero\s+et\s+al\.\s+microb\s+cell\s+fact\s+\(\d{4}\)\s+\d+:\d+|"
+    r"zhu\s+et\s+al\.\s+biotechnol\s+biofuels\s+\(\d{4}\)\s+\d+:\d+|"
+    r"j\.\s+biochem\.\s+143,\s+187-197\s+\(2008\)|"
+    r"j\.\s+biochem\.|"
+    r"open\s+access"
+    r")\s*$",
+    re.I,
+)
+
+ANNOTATION_NOISE_PATTERN = re.compile(
+    r"(?:表达\s*Fam20C|是否有尝试|共表达\s*\?{2,}|[\u4e00-\u9fff]{2,}.{0,20}\?{2,})"
 )
 
 # 参考文献条目模式（编号 + 作者 + 年份/期刊）
@@ -509,12 +623,24 @@ def is_front_matter_metadata_line(text: str, page_num: int, total_pages: int = 0
     if not is_front_matter_page(page_num, total_pages):
         return False
     stripped = normalize_pdf_text(text)
+    if CREDIT_AUTHOR_CONTRIBUTION_PATTERN.search(stripped):
+        return True
     return any(pat.match(stripped) for pat in FRONT_MATTER_METADATA_PATTERNS)
 
 
 def is_journal_preproof_clean_noise(text: str) -> bool:
     stripped = normalize_pdf_text(text)
     return any(pat.match(stripped) for pat in JOURNAL_PREPROOF_CLEAN_PATTERNS)
+
+
+def looks_like_running_header_footer(text: str) -> bool:
+    stripped = normalize_pdf_text(text)
+    return bool(stripped and RUNNING_HEADER_FOOTER_PATTERN.match(stripped))
+
+
+def looks_like_annotation_noise(text: str) -> bool:
+    stripped = normalize_pdf_text(text)
+    return bool(stripped and ANNOTATION_NOISE_PATTERN.search(stripped))
 
 
 def looks_like_front_matter_affiliation_metadata(
@@ -601,6 +727,8 @@ def is_metadata_line(text: str, page_num: int | None = None, total_pages: int = 
     stripped = text.strip()
     if not stripped:
         return False
+    if looks_like_running_header_footer(stripped) or looks_like_annotation_noise(stripped):
+        return True
     if stripped.isdigit() and len(stripped) <= 3:
         return True
     if page_num is not None and is_front_matter_metadata_line(stripped, page_num, total_pages):
@@ -657,17 +785,43 @@ def looks_like_body_sentence_continuation(text: str) -> bool:
         return False
     if detect_table_caption(stripped) or detect_figure_caption(stripped):
         return False
+    if re.match(r"^\s*(?:was|were|incubated|after)\b", stripped, re.I):
+        return True
+    if re.match(r"^\s*(?:\d+%\s+byproduct|gDW-1|NGAM)\b", stripped, re.I) and re.search(
+        r"\b(?:we|assumed|compared|for\s+growth|carbon-limited|chemostats)\b",
+        lowered,
+    ):
+        return True
     sentence_signal = bool(re.search(r"[,.!?](?:\s|$)", stripped))
     citation_signal = bool(re.search(r"\[\d{1,3}\]", stripped))
     verb_signal = bool(re.search(
         r"\b(?:is|are|was|were|be|been|being|has|have|had|reaching|using|"
-        r"shown|found|reported|observed|demonstrated|produced|contains?)\b",
+        r"shown|found|reported|observed|demonstrated|produced|contains?|"
+        r"confined|colonize[sd]?|paired|grown|mixed|incubated|identified|"
+        r"selected|screened|evaluated|characterized|determined|measured|"
+        r"expressed|engineered|constructed|generated|transformed|increased|"
+        r"decreased|reduced|enhanced|improved|enabled|allowed?|provided?|revealed|described)\b",
         lowered,
     ))
     tabular_signal = bool(DNA_SEQUENCE_PATTERN.search(stripped)) or len(TABLE_UNIT_PATTERN.findall(stripped)) >= 6
     if tabular_signal and not (sentence_signal and verb_signal):
         return False
     return sentence_signal and (citation_signal or verb_signal or len(stripped.split()) >= 10)
+
+
+def looks_like_protocol_or_recipe_continuation(text: str) -> bool:
+    stripped = _normalize_table_text_candidate(text)
+    if not stripped:
+        return False
+    if detect_table_caption(stripped) or detect_figure_caption(stripped):
+        return False
+    if not PROTOCOL_RECIPE_CONTINUATION_PATTERN.match(stripped):
+        return False
+    if not PROTOCOL_RECIPE_KEYWORD_PATTERN.search(stripped):
+        return False
+    if re.search(r"\b(?:this\s+study|harboring|plasmid|strain|FBA|RBA|in\s+vivo)\b", stripped, re.I):
+        return False
+    return True
 
 
 def looks_like_table_text(text: str) -> bool:
@@ -687,6 +841,8 @@ def looks_like_table_text(text: str) -> bool:
     if looks_like_body_paragraph(stripped):
         return False
     if looks_like_body_sentence_continuation(stripped):
+        return False
+    if looks_like_protocol_or_recipe_continuation(stripped):
         return False
     if lowered in {"references", "bibliography"}:
         return True
@@ -725,6 +881,18 @@ def looks_like_table_text(text: str) -> bool:
         for tok in tokens
         if tok.upper() == tok and any(ch.isalpha() for ch in tok) and len(tok) <= 12
     )
+    # Before catch-all: reject text that looks like body sentences
+    alpha_chars = sum(1 for ch in stripped if ch.isalpha())
+    alpha_ratio = alpha_chars / max(len(stripped), 1)
+    verb_hints = bool(re.search(
+        r"\b(?:confined|colonize[sd]?|paired|grown|mixed|incubated|identified|"
+        r"screened|evaluated|characterized|determined|measured|expressed|"
+        r"engineered|constructed|generated|transformed|enhanced|improved)\b",
+        lowered,
+    ))
+    body_start = bool(re.match(r"^[a-z]", stripped))
+    if (body_start or verb_hints) and alpha_ratio > 0.55:
+        return False
     if len(tokens) <= 12 and table_unit_hits >= 2 and short_token_count >= 2:
         return True
     if len(tokens) <= 40 and table_unit_hits >= 6 and sentence_end_hits <= 1:
@@ -737,6 +905,80 @@ def looks_like_table_text(text: str) -> bool:
         return True
     if re.match(r"^\d+(?:[.,]\d+)?(?:\s+\d+(?:[.,]\d+)?){1,6}$", stripped):
         return True
+    return False
+
+
+def looks_like_table_row_or_cell(
+    text: str,
+    in_table_context: bool,
+    metadata: dict[str, Any] | None = None,
+    recent_block_types: list[str] | None = None,
+) -> bool:
+    """Conservative row/cell recognizer used only after a table caption/context."""
+    del metadata, recent_block_types
+    if not in_table_context:
+        return False
+    stripped = _normalize_table_text_candidate(text)
+    lowered = stripped.lower()
+    if not stripped:
+        return False
+    if detect_table_caption(stripped) or detect_figure_caption(stripped):
+        return False
+    if REFERENCES_HEADING_PATTERN.match(stripped):
+        return False
+    if looks_like_running_header_footer(stripped) or looks_like_annotation_noise(stripped):
+        return False
+    if stripped.isdigit() and len(stripped) <= 5:
+        return True
+    if TABLE_CONTEXT_HEADER_PATTERN.match(stripped):
+        return True
+    tokens = [tok for tok in re.split(r"\s+", stripped) if tok]
+    if (
+        len(tokens) <= 4
+        and re.search(r"\b[A-Z]{2,}\b|\d", stripped)
+        and not re.search(r"[,;:]", stripped)
+    ):
+        return True
+    if (
+        looks_like_body_sentence_continuation(stripped)
+        or looks_like_body_paragraph(stripped)
+        or looks_like_protocol_or_recipe_continuation(stripped)
+    ):
+        return False
+    if re.match(r"^\s*(?:gm_)?orf\d+[A-Za-z]?\s*$", stripped, re.I):
+        return True
+    if re.match(r"^\s*K\d{5}\b", stripped, re.I):
+        return True
+    if looks_like_table_text(stripped):
+        return True
+    if TABLE_CONTEXT_ROW_SIGNAL_PATTERN.search(stripped) and len(stripped) <= 260:
+        return True
+
+    if not tokens or len(tokens) > 9 or len(stripped) > 120:
+        return False
+    if any(mark in stripped for mark in ("[", "]")) and not re.search(r"\[\d{1,3}\]", stripped):
+        return True
+    if TABLE_CONTEXT_PROTEIN_WORD_PATTERN.search(stripped) and not re.search(r"[.!?]$", stripped):
+        return True
+    if "_" in stripped and re.search(r"\d", stripped) and len(tokens) <= 4:
+        return True
+    if len(tokens) <= 4 and any(ch.isdigit() for ch in stripped) and not re.search(r"[.!?]$", stripped):
+        return True
+    if len(tokens) <= 5 and lowered not in {"references", "bibliography"} and not re.search(r"[.!?]$", stripped):
+        # Only accept as table cell if it has table-like signals:
+        # numeric content, special chars, abbreviations, or mixed case
+        has_numeric = bool(re.search(r"\d", stripped))
+        has_special = bool(re.search(r"[_\-/\[\]]", stripped))
+        has_uppercase_mid = bool(re.search(r"[a-z][A-Z]", stripped))
+        has_abbrev = bool(re.search(r"\b[A-Z]{2,}\b", stripped))
+        all_lowercase_common = all(
+            tok.lower() == tok and len(tok) > 1 and tok.isalpha()
+            for tok in tokens
+        )
+        # Reject pure common lowercase words (body text fragments)
+        if all_lowercase_common and not (has_numeric or has_special or has_uppercase_mid or has_abbrev):
+            return False
+        return bool(re.search(r"[A-Za-z]", stripped))
     return False
 
 
@@ -781,8 +1023,33 @@ def is_strong_standalone_table_text(text: str) -> bool:
         return False
     if sentence_end_hits > 2:
         return False
+    # Check for body text patterns — if it looks like a sentence, it's not table text
+    lowered = stripped.lower()
+    if re.match(r"^\s*(?:at|and|that|which|while|with|however|therefore|these|this|the|"
+                 r"particularly|in\s+addition|after|was|were|incubated|confined|"
+                 r"analysis\s+of|when\s+paired|in\s+the\s+cytosol|in\s+S\.|"
+                 r"in\s+titers?\s+up\s+to|IgG\b|GAM\b|strains?\s+were|when\s+grown|"
+                 r"that\s+the|by\s+the|we\s+(?:next|also|further|observed))\b",
+                 stripped, re.I):
+        return False
+    if re.search(r"\b(?:is|are|was|were|be|been|being|has|have|had|reaching|using|"
+                 r"shown|found|reported|observed|demonstrated|produced|contains?|"
+                 r"confined|colonize[sd]?|paired|grown|mixed|incubated|identified)\b",
+                 lowered) and sentence_end_hits >= 1:
+        return False
+    # Require stronger table evidence: at least 8 unit hits, or specific table header phrase + unit combo
     unit_hits = len(TABLE_UNIT_PATTERN.findall(stripped))
-    return unit_hits >= 4 or any(phrase in stripped.lower() for phrase in TABLE_HEADER_PHRASES)
+    has_table_header = any(phrase in lowered for phrase in TABLE_HEADER_PHRASES)
+    if has_table_header and unit_hits >= 3:
+        return True
+    if unit_hits >= 8:
+        return True
+    # Check for dense numeric/data pattern typical of real table rows
+    tokens = [tok for tok in re.split(r"\s+", stripped) if tok]
+    numeric_ratio = sum(1 for t in tokens if re.match(r"^[-+]?\d+(?:\.\d+)?%?$", t)) / max(len(tokens), 1)
+    if unit_hits >= 5 and numeric_ratio >= 0.25 and sentence_end_hits == 0:
+        return True
+    return False
 
 
 def is_numbered_reference_entry(text: str) -> bool:
@@ -1650,6 +1917,8 @@ def _classify_v4_text_block(
         return "noise"
     if is_page_number_or_line_number(raw_block, stripped):
         return "noise"
+    if looks_like_running_header_footer(stripped) or looks_like_annotation_noise(stripped):
+        return "metadata"
     if is_journal_preproof_clean_noise(stripped):
         return "metadata"
     if looks_like_marginal_access_banner(stripped, raw_block, repeated_metadata_keys)[0]:
@@ -1890,16 +2159,43 @@ def _post_process_table_and_metadata(
         if text and block.type not in {"metadata", "noise", "image"}:
             if looks_like_marginal_access_banner(text, block.metadata, repeated_metadata_keys)[0]:
                 block.type = "metadata"
+            elif looks_like_running_header_footer(text) or looks_like_annotation_noise(text):
+                block.type = "metadata"
             elif looks_like_front_matter_affiliation_metadata(text, block.page, block.metadata)[0]:
                 block.type = "metadata"
             elif block.type == "table_text" and looks_like_body_sentence_continuation(text):
                 block.type = "paragraph"
+            elif block.type == "table_text" and looks_like_protocol_or_recipe_continuation(text):
+                block.type = "paragraph"
 
         if table_context_active:
-            too_far = block.page > table_context_page + 1 or table_context_blocks > 40
-            if too_far or block.type in ("figure_caption", "references"):
+            same_page = block.page == table_context_page
+            too_far = not same_page or table_context_blocks > 60
+            is_plain_references_heading = bool(REFERENCES_HEADING_PATTERN.match(heading_text))
+            is_table_cell = looks_like_table_row_or_cell(
+                text,
+                True,
+                block.metadata,
+                [b.type for b in processed[-5:]],
+            )
+
+            if too_far:
                 table_context_active = False
-            elif block.type in ("section_heading", "subsection_heading") and not looks_like_table_text(heading_text):
+            elif block.type in {"metadata", "image", "figure_caption", "table_caption"}:
+                if block.type in {"image", "figure_caption"}:
+                    table_context_active = False
+            elif is_plain_references_heading:
+                table_context_active = False
+            elif is_table_cell and block.type in {
+                "paragraph", "references", "noise", "section_heading", "subsection_heading",
+            }:
+                block.type = "table_text"
+                counters.detected_table_text_blocks += 1
+            elif block.type in ("section_heading", "subsection_heading", "references"):
+                table_context_active = False
+            elif block.type == "paragraph" and looks_like_body_paragraph(text):
+                table_context_active = False
+            elif block.type == "paragraph" and looks_like_body_sentence_continuation(text):
                 table_context_active = False
 
         if block.type in ("section_heading", "subsection_heading"):
@@ -1907,7 +2203,12 @@ def _post_process_table_and_metadata(
                 block.type = "metadata"
                 counters.demoted_false_headings += 1
                 metadata_context = heading_text.lower().rstrip(":")
-            elif table_context_active and looks_like_table_text(heading_text):
+            elif table_context_active and looks_like_table_row_or_cell(
+                heading_text,
+                True,
+                block.metadata,
+                [b.type for b in processed[-5:]],
+            ):
                 block.type = "table_text"
                 counters.demoted_false_headings += 1
                 counters.detected_table_text_blocks += 1
@@ -1931,8 +2232,8 @@ def _post_process_table_and_metadata(
 
         if (
             table_context_active
-            and block.type == "paragraph"
-            and looks_like_table_text(text)
+            and block.type in {"paragraph", "noise", "references"}
+            and looks_like_table_row_or_cell(text, True, block.metadata, [b.type for b in processed[-5:]])
             and not looks_like_body_sentence_continuation(text)
         ):
             block.type = "table_text"

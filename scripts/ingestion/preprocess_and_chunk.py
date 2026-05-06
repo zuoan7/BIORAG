@@ -32,7 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.ingestion.document_cleaning_v5 import evidence_pack_to_pages
+from scripts.ingestion.document_cleaning_v5 import (
+    evidence_pack_to_pages,
+    is_contaminated_evidence_text,
+    looks_like_false_table_text_body_sentence,
+)
 
 
 # ============================================================
@@ -1070,16 +1074,18 @@ def _estimate_page_range(
 
 def _chunk_source_block(block: dict, btype: str, text: str, page_num: int) -> dict:
     metadata = block.get("metadata", {}) or {}
-    source_block_id = metadata.get("source_block_id") or block.get("source_block_id") or block.get("block_id")
-    bbox = metadata.get("bbox") if "bbox" in metadata else block.get("bbox")
-    column = metadata.get("column") if "column" in metadata else block.get("column")
-    reading_order = metadata.get("reading_order") if "reading_order" in metadata else block.get("reading_order")
+    block_id = _normalize_block_id(block)
+    source_block_id = _normalize_source_block_id(block) or block_id
+    bbox = _normalize_bbox_value(block)
+    column = _normalize_column_value(block)
+    reading_order = _normalize_reading_order_value(block)
+    page = _normalize_page_value(block, page_num)
     return {
         "type": btype,
         "text": text,
         "section_path": block.get("section_path", []),
-        "page": block.get("page", page_num) or page_num,
-        "block_id": block.get("block_id"),
+        "page": page,
+        "block_id": block_id,
         "source_block_id": source_block_id,
         "metadata": metadata,
         "bbox": bbox,
@@ -1118,23 +1124,107 @@ def _unique_preserve_order(values: list[Any]) -> list[Any]:
     return result
 
 
+def _first_present(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key not in mapping:
+            continue
+        value = mapping.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        return value
+    return None
+
+
+def _normalize_block_id(block: dict[str, Any]) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return _first_present(block, ("block_id", "id")) or _first_present(metadata, ("block_id", "id"))
+
+
+def _normalize_source_block_id(block: dict[str, Any]) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return (
+        _first_present(metadata, ("source_block_id", "block_id", "id"))
+        or _first_present(block, ("source_block_id", "block_id", "id"))
+    )
+
+
+def _normalize_page_value(block: dict[str, Any], fallback_page: int | None = None) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return (
+        _first_present(metadata, ("page", "page_number"))
+        or _first_present(block, ("page", "page_number"))
+        or fallback_page
+    )
+
+
+def _normalize_column_value(block: dict[str, Any]) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return (
+        _first_present(metadata, ("column", "layout_column"))
+        or _first_present(block, ("column", "layout_column"))
+    )
+
+
+def _normalize_reading_order_value(block: dict[str, Any]) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return (
+        _first_present(metadata, ("reading_order", "order"))
+        or _first_present(block, ("reading_order", "order"))
+    )
+
+
+def _normalize_bbox_value(block: dict[str, Any]) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    return _first_present(metadata, ("bbox", "box")) or _first_present(block, ("bbox", "box"))
+
+
+def _compact_text_preview(text: Any, limit: int = 120) -> str:
+    preview = re.sub(r"\s+", " ", str(text or "")).strip()
+    return preview[:limit]
+
+
 def _chunk_metadata_from_blocks(group: list[dict]) -> dict[str, Any]:
     real_blocks = [b for b in group if b.get("type") != "overlap"]
     block_types = _unique_preserve_order([b.get("type") for b in real_blocks])
-    pages = sorted({int(b.get("page")) for b in real_blocks if b.get("page") is not None})
-    columns = _unique_preserve_order([b.get("column") for b in real_blocks if b.get("column")])
-    source_block_ids = _unique_preserve_order([b.get("source_block_id") for b in real_blocks if b.get("source_block_id")])
-    block_ids = _unique_preserve_order([b.get("block_id") for b in real_blocks if b.get("block_id")])
-    reading_orders = [
-        int(b.get("reading_order"))
+    pages = sorted({
+        int(page)
         for b in real_blocks
-        if isinstance(b.get("reading_order"), int)
-        or (isinstance(b.get("reading_order"), str) and str(b.get("reading_order")).isdigit())
+        for page in [_normalize_page_value(b)]
+        if page is not None and str(page).isdigit()
+    })
+    columns = _unique_preserve_order([
+        column
+        for b in real_blocks
+        for column in [_normalize_column_value(b)]
+        if column is not None
+    ])
+    source_block_ids = _unique_preserve_order([
+        source_block_id
+        for b in real_blocks
+        for source_block_id in [_normalize_source_block_id(b)]
+        if source_block_id is not None
+    ])
+    block_ids = _unique_preserve_order([
+        block_id
+        for b in real_blocks
+        for block_id in [_normalize_block_id(b)]
+        if block_id is not None
+    ])
+    reading_orders = [
+        int(reading_order)
+        for b in real_blocks
+        for reading_order in [_normalize_reading_order_value(b)]
+        if isinstance(reading_order, int)
+        or (isinstance(reading_order, str) and str(reading_order).isdigit())
     ]
 
     bboxes = []
     for b in real_blocks:
-        bbox = b.get("bbox")
+        bbox = _normalize_bbox_value(b)
         if isinstance(bbox, list) and len(bbox) >= 4:
             try:
                 bboxes.append([float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])])
@@ -1143,14 +1233,16 @@ def _chunk_metadata_from_blocks(group: list[dict]) -> dict[str, Any]:
 
     source_block_metadata = []
     for b in real_blocks[:80]:
+        block_id = _normalize_block_id(b)
+        source_block_id = _normalize_source_block_id(b) or block_id
+        page = _normalize_page_value(b)
         meta = {
-            "block_id": b.get("block_id"),
-            "source_block_id": b.get("source_block_id"),
+            "block_id": block_id,
+            "source_block_id": source_block_id,
             "type": b.get("type"),
-            "page": b.get("page"),
-            "bbox": b.get("bbox"),
-            "column": b.get("column"),
-            "reading_order": b.get("reading_order"),
+            "page": int(page) if page is not None and str(page).isdigit() else page,
+            "section_path": b.get("section_path", []),
+            "text_preview": _compact_text_preview(b.get("text", "")),
         }
         source_block_metadata.append({k: v for k, v in meta.items() if v is not None})
 
@@ -1178,7 +1270,7 @@ def _chunk_metadata_from_blocks(group: list[dict]) -> dict[str, Any]:
         "contains_references": "references" in block_types,
         "contains_metadata": "metadata" in block_types,
         "contains_noise": "noise" in block_types,
-        "contains_image": "image" in block_types,
+        "contains_image": "image" in block_types or "image_caption" in block_types,
     }
 
 
@@ -1205,12 +1297,14 @@ def chunk_by_blocks(
         "noise": 0,
         "image": 0,
         "references": 0,
+        "contamination": 0,
     }
     if base_excluded_block_counts:
         for key, value in base_excluded_block_counts.items():
             if isinstance(value, int):
                 excluded_block_counts[key] = excluded_block_counts.get(key, 0) + value
     doc_title = ""
+    last_table_caption_page: int | None = None
     for p in pages:
         page_num = p.get("page", 1)
         for block in p.get("blocks", []):
@@ -1232,6 +1326,22 @@ def chunk_by_blocks(
                 heading_text = btext.lstrip("#").strip()
                 if REFERENCE_SECTION_PATTERN.match(heading_text):
                     continue
+            contaminated, _contamination_reason = is_contaminated_evidence_text(btext)
+            if contaminated:
+                excluded_block_counts["contamination"] += 1
+                continue
+            strong_table_context = (
+                btype == "table_text"
+                and last_table_caption_page is not None
+                and isinstance(page_num, int)
+                and page_num <= last_table_caption_page + 1
+            )
+            if btype == "table_text" and looks_like_false_table_text_body_sentence(btext, strong_table_context):
+                btype = "paragraph"
+            if btype == "table_caption":
+                last_table_caption_page = page_num if isinstance(page_num, int) else last_table_caption_page
+            elif btype in {"figure_caption", "section_heading", "subsection_heading"}:
+                last_table_caption_page = None
 
             # 检测 paragraph block 中的 inline ABSTRACT: heading
             # 例如 "Supporting Information ABSTRACT: Thanks to its ease..."
@@ -1830,13 +1940,15 @@ def read_json_file(filepath: Path) -> dict:
     else:
         full_text = "\n".join(p.get("text", "") for p in pages)
 
+    normalized_parser_stage = parser_stage or ("parsed_clean_v1" if has_blocks else "")
+
     return {
         "doc_id": doc_id,
         "source_file": source_file,
         "pages": pages,
         "raw_text": full_text,
         "has_blocks": has_blocks,
-        "parser_stage": parser_stage,
+        "parser_stage": normalized_parser_stage,
         "excluded_block_counts": data.get("excluded_block_counts", {}) or {},
     }
 
@@ -1912,7 +2024,7 @@ def process_document(
     source_file = doc_data["source_file"]
     pages = doc_data.get("pages")
     has_blocks = doc_data.get("has_blocks", False)
-    parser_stage = doc_data.get("parser_stage", "")
+    parser_stage = doc_data.get("parser_stage", "") or ("parsed_clean_v1" if has_blocks and pages else "")
 
     # 优先路径：block-based chunking
     if has_blocks and pages:

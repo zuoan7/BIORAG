@@ -121,6 +121,72 @@ def test_front_matter_metadata_not_paragraph(tmp_path: Path) -> None:
     assert clean["pages"][0]["text"] == ""
 
 
+def test_cover_metadata_disclaimer_not_in_page_text(tmp_path: Path) -> None:
+    lines = [
+        "S1096-7176(25)00185-5",
+        "YMBEN 2419",
+        "This is a PDF of an article that has undergone enhancements after acceptance, such as the addition",
+        "of a cover page and metadata, and formatting for readability. This version will undergo additional",
+        "copyediting, typesetting and review before it is published in its final form. As such, this version is no",
+        "longer the Accepted Manuscript, but it is not yet the definitive Version of Record; we are providing",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 1, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1) for i, line in enumerate(lines)]}
+    ]))
+
+    assert {block["type"] for block in all_blocks(clean)} == {"metadata"}
+    page_text = clean["pages"][0]["text"]
+    assert "This is a PDF of an article" not in page_text
+    assert "S1096-7176" not in page_text
+    assert "YMBEN" not in page_text
+
+
+def test_cover_credit_metadata_not_in_page_text(tmp_path: Path) -> None:
+    lines = [
+        "Metabolic Engineering",
+        "23 November 2023",
+        "in its final form, but we are providing this version to give early visibility of the article. Please note that,",
+        "disclaimers that apply to the journal pertain.",
+        "Shun Endo: Investigation (lead, equal). Sayaka Kamai: Investigation (lead, equal).",
+        "Nakamura: Formal analysis. Tomotoshi Sugita: Conceptualization, Investigation.",
+        "Formal analysis; Writing - original draft. Kento Koketsu: Supervision; Writing - review & editing.",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 1, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1) for i, line in enumerate(lines)]}
+    ]))
+
+    assert {block["type"] for block in all_blocks(clean)} == {"metadata"}
+    assert clean["pages"][0]["text"] == ""
+
+
+def test_running_header_footer_not_in_page_text(tmp_path: Path) -> None:
+    lines = [
+        "Page 2 of 14",
+        "OPEN ACCESS",
+        "Barrero et al. Microb Cell Fact (2018) 17:161",
+        "Biotechnology and Bioengineering, Vol. 110, No. 3, March, 2013",
+        "This article is available from: http://www.microbialcellfactories.com/content/9/1/49",
+        "This is an Open Access article distributed under the terms of the Creative Commons Attribution License",
+        "which permits unrestricted use, distribution, and reproduction in any medium, provided the original work is properly cited.",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 2, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1, page=2) for i, line in enumerate(lines)]}
+    ], total_pages=14))
+
+    assert {block["type"] for block in all_blocks(clean)} == {"metadata"}
+    assert clean["pages"][0]["text"] == ""
+
+
+def test_chinese_annotation_noise_not_in_page_text(tmp_path: Path) -> None:
+    lines = ["表达 Fam20C 失败,是", "是否有尝试与 Fam20A 的", "共表达 ????"]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 4, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1, page=4) for i, line in enumerate(lines)]}
+    ], total_pages=8))
+
+    assert {block["type"] for block in all_blocks(clean)} == {"metadata"}
+    assert "Fam20C" not in clean["pages"][0]["text"]
+
+
 def test_body_doi_is_not_global_metadata(tmp_path: Path) -> None:
     text = "The enzyme was compared against DOI: 10.1000/body in the main discussion."
     clean = run_clean(tmp_path, make_v4_doc([
@@ -226,6 +292,94 @@ def test_false_table_text_body_sentence_is_paragraph(tmp_path: Path) -> None:
     assert [block["type"] for block in all_blocks(clean)] == ["table_caption", "paragraph"]
 
 
+def test_known_false_table_text_continuations_are_paragraph(tmp_path: Path) -> None:
+    lines = [
+        "After identification of the sequence encoding active Hac1p we evaluated the effect of its overexpression in Pichia. The",
+        "was mixed with 0.5 mL Tris-HCl buffer (200 mM, pH",
+        "incubated at 50 °C for 5 min. Then 0.3 mL of substrate",
+        "48% byproduct 2’-FL. We assumed that the differences in 2’-FL production between",
+        "gDW-1, NGAM=1 mmol ATP gDW-1h-1) for growth in carbon-limited chemostats",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {
+            "page": 2,
+            "text": "Table 1: Data\n" + "\n".join(lines),
+            "blocks": [raw_block("Table 1: Data", 1, page=2)]
+            + [raw_block(line, i + 2, page=2) for i, line in enumerate(lines)],
+        }
+    ], total_pages=4))
+
+    assert [block["type"] for block in all_blocks(clean)] == ["table_caption"] + ["paragraph"] * len(lines)
+
+
+def test_phase3a_hotfix4_body_sentences_no_table_context(tmp_path: Path) -> None:
+    """Phase3a-hotfix4: body sentences without table caption must NOT be table_text."""
+    lines = [
+        "confined 46 bacterial species, 42 of which colonize mammals, 33 as pathogens and 9 as gut commensals.",
+        "strains were grown in lysogeny broth (LB) medium at 37 C with shaking at 200 rpm.",
+        "when paired with the Ost1 signal sequence, secretion efficiency improved 2.3-fold.",
+        "in the cytosol of S. cerevisiae, protein aggregation was observed.",
+        "In S. cerevisiae BY4741, the deletion of YPT7 resulted in a 30% titer increase.",
+        "IgG and IgGpAzF titers were measured by ELISA after 72 h of induction.",
+        "in titers up to 120 mg/L, the engineered strain outperformed the wild-type control.",
+        "that the NADH/NAD+ ratio was significantly lower in the mutant strain.",
+        "GAM and NGAM values were estimated from chemostat data at dilution rates of 0.05-0.25 h-1.",
+        "by the addition of 1 mM IPTG, expression was induced to maximum levels.",
+        "we next evaluated the effect of temperature on enzyme activity.",
+        "these results demonstrate that the Nan cluster is confined to pathogenic bacteria.",
+        "analysis of 83 NanA sequences revealed a distinct clade with Verrucomicrobia.",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 2, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1, page=2) for i, line in enumerate(lines)]}
+    ], total_pages=4))
+
+    assert [block["type"] for block in all_blocks(clean)] == ["paragraph"] * len(lines)
+
+
+def test_phase3a_hotfix4_body_sentences_suppress_table_context(tmp_path: Path) -> None:
+    """Phase3a-hotfix4: body sentences after a table caption should still be paragraph."""
+    lines = [
+        "Table 1: Summary of strains used in this study.",
+        "confined 46 bacterial species, 42 of which colonize mammals.",
+        "strains were grown in lysogeny broth (LB) medium.",
+        "when paired with the Ost1 signal, secretion improved 2.3-fold.",
+        "that the NADH/NAD+ ratio was lower in the mutant strain.",
+        "Primer name Sequence OD600 1.0 2.0 3.0",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {
+            "page": 2,
+            "text": "\n".join(lines),
+            "blocks": [raw_block(line, i + 1, page=2) for i, line in enumerate(lines)],
+        }
+    ], total_pages=3))
+
+    # First is table_caption, last is real table_text, middle 4 are body sentences -> paragraph
+    assert [block["type"] for block in all_blocks(clean)] == [
+        "table_caption",
+        "paragraph",
+        "paragraph",
+        "paragraph",
+        "paragraph",
+        "table_text",
+    ]
+
+
+def test_protocol_recipe_lines_are_not_table_text_without_caption(tmp_path: Path) -> None:
+    lines = [
+        "gradient from 15 to 80% acetonitrile in 0.1% formic acid",
+        "umn, 100 Å, 1.8 μm, 300 μm × 150 mm, Waters) using",
+        "from 3.5% B (B: 80% ACN, 20% A) to 40% B in 30 min",
+        "tryptone, 1 g yeast extract, 34 g NaCl, and 0.1 g FePO4,",
+        "(NH4)2SO4, 1 mM MgSO4, 3.9 μM FeSO4, and 1 g (g/l)",
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 2, "text": "\n".join(lines), "blocks": [raw_block(line, i + 1, page=2) for i, line in enumerate(lines)]}
+    ], total_pages=4))
+
+    assert [block["type"] for block in all_blocks(clean)] == ["paragraph"] * len(lines)
+
+
 def test_real_table_text_still_works(tmp_path: Path) -> None:
     text = "Primer name Sequence OD600 1.0 2.0 3.0"
     clean = run_clean(tmp_path, make_v4_doc([
@@ -240,6 +394,99 @@ def test_real_table_text_still_works(tmp_path: Path) -> None:
     ], total_pages=3))
 
     assert [block["type"] for block in all_blocks(clean)] == ["table_caption", "table_text"]
+
+
+def test_table_continued_context_rows_are_table_text(tmp_path: Path) -> None:
+    lines = [
+        raw_block("Zhu et al. Biotechnol Biofuels (2017) 10:44", 1, page=11),
+        raw_block("Page 11 of 14", 2, page=11),
+        raw_block("Table 3 continued", 3, page=11),
+        raw_block("Orf_name", 4, page=11),
+        raw_block("Length (bp)", 5, page=11),
+        raw_block("Encoding protein", 6, page=11),
+        raw_block("gm_orf2729", 7, page=11),
+        raw_block("369", 8, page=11),
+        raw_block("Cytochrome c551", 9, page=11),
+        raw_block("", 10, page=11, block_type="image"),
+        raw_block("Fig. 6 Putative lignin degradation pathways of strain L1.", 11, page=11),
+    ]
+    clean = run_clean(tmp_path, make_v4_doc([
+        {"page": 11, "text": "\n".join(block["text"] for block in lines), "blocks": lines}
+    ], total_pages=14))
+
+    assert [block["type"] for block in all_blocks(clean)] == [
+        "metadata",
+        "metadata",
+        "table_caption",
+        "table_text",
+        "table_text",
+        "table_text",
+        "table_text",
+        "table_text",
+        "table_text",
+        "image",
+        "figure_caption",
+    ]
+
+
+def test_numeric_cell_not_noise_in_table_context(tmp_path: Path) -> None:
+    clean = run_clean(tmp_path, make_v4_doc([
+        {
+            "page": 2,
+            "text": "Table 3 continued\n369\n408",
+            "blocks": [
+                raw_block("Table 3 continued", 1, page=2),
+                raw_block("369", 2, page=2),
+                raw_block("408", 3, page=2),
+            ],
+        }
+    ], total_pages=3))
+
+    assert [block["type"] for block in all_blocks(clean)] == ["table_caption", "table_text", "table_text"]
+
+
+def test_references_not_stolen_by_table_context(tmp_path: Path) -> None:
+    clean = run_clean(tmp_path, make_v4_doc([
+        {
+            "page": 4,
+            "text": "Table 1. Enzymes\nFerredoxin\nReferences\n1. Smith et al. Journal 10, 1-9 (2024). doi:10/example",
+            "blocks": [
+                raw_block("Table 1. Enzymes", 1, page=4),
+                raw_block("Ferredoxin", 2, page=4),
+                raw_block("References", 3, page=4),
+                raw_block("1. Smith et al. Journal 10, 1-9 (2024). doi:10/example", 4, page=4),
+            ],
+        }
+    ], total_pages=4))
+
+    assert [block["type"] for block in all_blocks(clean)] == [
+        "table_caption",
+        "table_text",
+        "section_heading",
+        "references",
+    ]
+
+
+def test_table_context_exits_on_figure_caption(tmp_path: Path) -> None:
+    clean = run_clean(tmp_path, make_v4_doc([
+        {
+            "page": 2,
+            "text": "Table 3 continued\ngm_orf2729\nFig. 6 Putative lignin degradation pathways.",
+            "blocks": [
+                raw_block("Table 3 continued", 1, page=2),
+                raw_block("gm_orf2729", 2, page=2),
+                raw_block("", 3, page=2, block_type="image"),
+                raw_block("Fig. 6 Putative lignin degradation pathways.", 4, page=2),
+            ],
+        }
+    ], total_pages=3))
+
+    assert [block["type"] for block in all_blocks(clean)] == [
+        "table_caption",
+        "table_text",
+        "image",
+        "figure_caption",
+    ]
 
 
 def test_journal_preproof_noise_still_removed_from_page_text(tmp_path: Path) -> None:

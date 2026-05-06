@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +31,7 @@ class MilvusRetriever:
             data=[query_vec],
             anns_field=self.config.vector_field,
             limit=limit,
-            search_params={
-                "metric_type": self.config.metric_type,
-                "params": {"ef": self.config.ef},
-            },
+            search_params=self._build_search_params(),
             output_fields=[
                 "chunk_id",
                 "doc_id",
@@ -44,6 +42,16 @@ class MilvusRetriever:
                 "page_end",
                 "chunk_index",
                 "text",
+                "retrieval_text",
+                "content_kind",
+                "quality_score",
+                "contains_table_text",
+                "contains_table_caption",
+                "contains_figure_caption",
+                "contains_image",
+                "object_type",
+                "object_id",
+                "metadata_json",
             ],
             filter=build_scalar_filter(filters, self.config.max_filter_items),
         )
@@ -57,6 +65,26 @@ class MilvusRetriever:
             score = float(hit.get("distance", 0.0))
             if score < score_floor:
                 continue
+
+            # 安全解析 metadata_json
+            parsed_meta = _safe_parse_metadata_json(entity.get("metadata_json", ""))
+
+            metadata: dict[str, Any] = {
+                "tenant_id": filters.tenant_id if filters else "default",
+                "chunk_index": entity.get("chunk_index"),
+                "retrieval_text": entity.get("retrieval_text", ""),
+                "content_kind": entity.get("content_kind", "body"),
+                "quality_score": entity.get("quality_score", 0.0),
+                "contains_table_text": entity.get("contains_table_text", False),
+                "contains_table_caption": entity.get("contains_table_caption", False),
+                "contains_figure_caption": entity.get("contains_figure_caption", False),
+                "contains_image": entity.get("contains_image", False),
+                "object_type": entity.get("object_type", "body"),
+                "object_id": entity.get("object_id", ""),
+            }
+            # merge metadata_json 内容
+            metadata.update(parsed_meta)
+
             chunks.append(
                 RetrievedChunk(
                     chunk_id=entity.get("chunk_id", ""),
@@ -68,13 +96,21 @@ class MilvusRetriever:
                     page_start=_normalize_page(entity.get("page_start")),
                     page_end=_normalize_page(entity.get("page_end")),
                     vector_score=score,
-                    metadata={
-                        "tenant_id": filters.tenant_id if filters else "default",
-                        "chunk_index": entity.get("chunk_index"),
-                    },
+                    metadata=metadata,
                 )
             )
         return chunks
+
+    def _build_search_params(self) -> dict[str, Any]:
+        """根据 index_type 构造 search_params。"""
+        params: dict[str, Any] = {
+            "metric_type": self.config.metric_type,
+        }
+        if self.config.index_type == "HNSW":
+            params["params"] = {"ef": self.config.hnsw_ef}
+        else:
+            params["params"] = {"nprobe": self.config.nprobe}
+        return params
 
 
 def build_scalar_filter(filters: QueryFilters | None, max_filter_items: int) -> str:
@@ -97,3 +133,13 @@ def _normalize_page(value: Any) -> int | None:
     if value in (-1, None):
         return None
     return int(value)
+
+
+def _safe_parse_metadata_json(raw: str) -> dict[str, Any]:
+    """安全解析 metadata_json，失败时返回标记。"""
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw) if isinstance(raw, str) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {"metadata_json_parse_error": True}
