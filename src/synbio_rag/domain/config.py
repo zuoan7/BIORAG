@@ -92,6 +92,25 @@ class RetrievalConfig:
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
     neighbor_expansion_max_chunks: int = 30
+    parent_expansion_enabled: bool = True
+    parent_index_path: str = "./data/paper_round1/chunks/parent_index.jsonl"
+    parent_expansion_max_total: int = 12
+    parent_expansion_per_seed_limit: int = 2
+    parent_expansion_window_enabled: bool = True
+    parent_expansion_caption_enabled: bool = True
+    parent_expansion_page_enabled: bool = True
+    parent_expansion_section_path_enabled: bool = True
+    parent_expansion_evidence_enabled: bool = True
+    parent_expansion_summary_sections_enabled: bool = True
+    parent_expansion_summary_sections: list[str] = field(
+        default_factory=lambda: [
+            "Abstract",
+            "Conclusion",
+            "Conclusions",
+            "Results",
+            "Results and Discussion",
+        ]
+    )
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     bm25_batch_size: int = 1000
@@ -453,6 +472,71 @@ class Settings:
                 str(settings.retrieval.neighbor_expansion_max_chunks),
             )
         )
+        settings.retrieval.parent_expansion_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_ENABLED",
+                str(settings.retrieval.parent_expansion_enabled),
+            )
+        )
+        settings.retrieval.parent_index_path = get_value(
+            "RETRIEVAL_PARENT_INDEX_PATH",
+            settings.retrieval.parent_index_path,
+        )
+        settings.retrieval.parent_expansion_max_total = int(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_MAX_TOTAL",
+                str(settings.retrieval.parent_expansion_max_total),
+            )
+        )
+        settings.retrieval.parent_expansion_per_seed_limit = int(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT",
+                str(settings.retrieval.parent_expansion_per_seed_limit),
+            )
+        )
+        settings.retrieval.parent_expansion_window_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_WINDOW_ENABLED",
+                str(settings.retrieval.parent_expansion_window_enabled),
+            )
+        )
+        settings.retrieval.parent_expansion_caption_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_CAPTION_ENABLED",
+                str(settings.retrieval.parent_expansion_caption_enabled),
+            )
+        )
+        settings.retrieval.parent_expansion_page_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_PAGE_ENABLED",
+                str(settings.retrieval.parent_expansion_page_enabled),
+            )
+        )
+        settings.retrieval.parent_expansion_section_path_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_SECTION_PATH_ENABLED",
+                str(settings.retrieval.parent_expansion_section_path_enabled),
+            )
+        )
+        settings.retrieval.parent_expansion_evidence_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_EVIDENCE_ENABLED",
+                str(settings.retrieval.parent_expansion_evidence_enabled),
+            )
+        )
+        settings.retrieval.parent_expansion_summary_sections_enabled = _parse_bool(
+            get_value(
+                "RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS_ENABLED",
+                str(settings.retrieval.parent_expansion_summary_sections_enabled),
+            )
+        )
+        parent_summary_sections = get_value("RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS", "")
+        if parent_summary_sections.strip():
+            settings.retrieval.parent_expansion_summary_sections = [
+                item.strip()
+                for item in parent_summary_sections.split(",")
+                if item.strip()
+            ]
         # Phase 12A: 结构化索引契约
         settings.retrieval.index_schema_version = get_value(
             "RETRIEVAL_INDEX_SCHEMA_VERSION", settings.retrieval.index_schema_version
@@ -635,6 +719,7 @@ class Settings:
     def resolve_paths(self) -> None:
         self.retrieval.milvus_uri = _resolve_local_path(self.retrieval.milvus_uri)
         self.retrieval.bm25_cache_path = _resolve_local_path(self.retrieval.bm25_cache_path)
+        self.retrieval.parent_index_path = _resolve_local_path(self.retrieval.parent_index_path)
         self.kb.paper_dir = _resolve_local_path(self.kb.paper_dir)
         self.kb.parsed_raw_dir = _resolve_local_path(self.kb.parsed_raw_dir)
         self.kb.parsed_dir = _resolve_local_path(self.kb.parsed_dir)

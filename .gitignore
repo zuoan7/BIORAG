@@ -63,3 +63,6 @@ docker-compose.override.yml
 CLAUDE.md
 AGENTS.md
 archive/
+data/paper_round1/chunks/parent_index.jsonl
+reports/phase12*
+results/phase12*

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from pathlib import Path
 
 from collections import Counter
 
@@ -13,6 +14,7 @@ from ..domain.router import QueryRouter
 from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGResponse, RetrievedChunk
 from ..infrastructure.embedding.bge import BGEM3Embedder
 from ..infrastructure.external_tools.literature_search import ExternalToolManager
+from ..infrastructure.index.parent_store import ParentStore
 from ..infrastructure.vectorstores.bm25 import BM25Retriever
 from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
@@ -21,6 +23,7 @@ from .generation_v2 import GenerationV2Service
 from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_service import QwenChatGenerator
 from .neighbor_expansion import ChunkNeighborExpander
+from .parent_expansion import ParentContextExpander
 from .rerank_service import QwenReranker
 
 
@@ -77,6 +80,18 @@ class SynBioRAGPipeline:
                 doc_chunks=dict(self.neighbor_expander._doc_chunks),
             )
         self.generator_v2 = GenerationV2Service(settings.llm, neighbor_audit_engine=_audit_engine)
+        parent_store: ParentStore | None = None
+        parent_index_path = Path(settings.retrieval.parent_index_path)
+        if parent_index_path.exists():
+            try:
+                parent_store = ParentStore.from_jsonl(
+                    parent_index_path,
+                    chunk_jsonl_path=settings.kb.chunk_jsonl,
+                )
+            except Exception:
+                parent_store = None
+        self.parent_store = parent_store
+        self.parent_expander = ParentContextExpander(parent_store=parent_store, config=settings.retrieval)
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
         self.external_tools = ExternalToolManager(settings.tools)
 
@@ -121,12 +136,18 @@ class SynBioRAGPipeline:
             )
 
         if self.settings.generation.version == "v2":
-            final_chunks = seed_chunks
-            confidence = self.confidence_scorer.score(seed_chunks)
+            parent_expander = getattr(self, "parent_expander", ParentContextExpander(parent_store=None, config=self.settings.retrieval))
+            final_chunks, parent_expansion_debug = parent_expander.expand(
+                question=question,
+                seed_chunks=seed_chunks,
+                analysis=analysis,
+            )
+            seed_confidence = self.confidence_scorer.score(seed_chunks)
+            confidence = self.confidence_scorer.score(final_chunks)
             gen_result = self.generator_v2.run(
                 question=question,
                 analysis=analysis,
-                seed_chunks=seed_chunks,
+                seed_chunks=final_chunks,
                 config=self.settings.generation,
                 history=history if self.settings.generation.v2_use_history else None,
             )
@@ -151,6 +172,8 @@ class SynBioRAGPipeline:
                     "final_context_count": len(final_chunks),
                     "context_chars": 0,
                     "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+                    "seed_confidence": seed_confidence,
+                    "final_confidence": confidence,
                     "tenant_id": filters.tenant_id if filters else "default",
                     "hybrid_enabled": self.settings.retrieval.hybrid_enabled,
                     "bm25_enabled": self.settings.retrieval.bm25_enabled,
@@ -158,10 +181,11 @@ class SynBioRAGPipeline:
                     "rerank_hits": getattr(self.reranker, "last_debug", {}),
                     "neighbor_expansion": {
                         "enabled": False,
-                        "reason": "generation_v2_seed_only",
+                        "reason": "generation_v2_seed_only_or_replaced_by_parent_expansion",
                         "input_count": len(seed_chunks),
                         "output_count": len(seed_chunks),
                     },
+                    "parent_expansion": parent_expansion_debug,
                     "filter_strategy": retrieval_debug,
                     "generation_v2": gen_result.debug,
                 },

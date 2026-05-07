@@ -344,7 +344,7 @@ def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
 
     response = pipeline.answer("问题是什么？")
 
-    assert response.debug["neighbor_expansion"]["reason"] == "generation_v2_seed_only"
+    assert response.debug["neighbor_expansion"]["reason"] == "generation_v2_seed_only_or_replaced_by_parent_expansion"
     assert response.debug["generation_v2"]["generation_version"] == "v2"
 
 
