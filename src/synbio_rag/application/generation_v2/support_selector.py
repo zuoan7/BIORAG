@@ -31,14 +31,19 @@ class SupportPackSelector:
 
         intent = analysis.intent
         if intent in {QueryIntent.FACTOID, QueryIntent.UNKNOWN}:
-            return self._select_factoid(question, scored, config)
-        if intent == QueryIntent.SUMMARY:
+            selected = self._select_factoid(question, scored, config)
+        elif intent == QueryIntent.SUMMARY:
             selected, debug = self._select_summary(question, scored, config)
             self.last_summary_selection_debug = debug
-            return selected
-        if intent == QueryIntent.COMPARISON:
-            return self._select_comparison(question, scored, config)
-        return self._select_factoid(question, scored, config)
+        elif intent == QueryIntent.COMPARISON:
+            selected = self._select_comparison(question, scored, config)
+        else:
+            selected = self._select_factoid(question, scored, config)
+
+        # Phase 15C: ensure protected rerank seeds are in selected support
+        if config.v2_protect_support_seeds_enabled:
+            selected = _ensure_protected_support_seeds(scored, selected, config)
+        return selected
 
     def _to_support_item(self, question: str, candidate: EvidenceCandidate) -> SupportItem:
         reasons = list(candidate.reasons)
@@ -549,4 +554,48 @@ def _is_bibliography_like(text: str) -> bool:
     # Dense http URLs (reference link farms)
     if lowered.count("http") > 10:
         return True
+
+
+# ── Phase 15C: Protected rerank seed support retention ──────────────────────
+
+def _ensure_protected_support_seeds(
+    scored: list[SupportItem],
+    selected: list[SupportItem],
+    config: GenerationConfig,
+) -> list[SupportItem]:
+    """Ensure top-N protected rerank seeds are in selected support.
+
+    Protected seeds are identified by their rerank_rank metadata (set by pipleine).
+    Returns a modified selected list with protected seeds inserted if missing.
+    """
+    protect_k = config.v2_protect_support_seeds_top_k
+    if protect_k <= 0 or not scored:
+        return selected
+
+    # Identify protected candidates: rerank_rank <= protect_k
+    protected = []
+    for item in scored:
+        rank = item.candidate.metadata.get("rerank_rank", 999)
+        if isinstance(rank, (int, float)) and int(rank) <= protect_k:
+            protected.append(item)
+
+    if not protected:
+        return selected
+
+    selected_ids = {s.evidence_id for s in selected}
+    to_insert = [p for p in protected if p.evidence_id not in selected_ids]
+
+    if not to_insert:
+        return selected
+
+    # Get max support size from existing selected
+    max_size = len(selected) if selected else max(config.v2_max_support_factoid, 1)
+
+    # Insert protected seeds at front, keep existing selected, cap at max_size
+    result = list(to_insert[:protect_k])
+    for s in selected:
+        if s.evidence_id not in {r.evidence_id for r in result}:
+            result.append(s)
+
+    return result[:max_size]
     return False

@@ -1386,11 +1386,20 @@ def evaluate_retrieval(
         expected_route = meta["expected_route"]
         accepted_routes = meta.get("accepted_routes") or []
 
+        negative_query = bool(meta.get("negative_query"))
+        should_require_doc_hit = meta.get("should_require_doc_hit")
+        if should_require_doc_hit is None:
+            should_require_doc_hit = not negative_query
+
         doc_metrics = overlap_metrics_with_accepts(
             meta["expected_doc_ids"],
             meta.get("accepted_doc_ids") or [],
             actual_doc_ids,
         )
+        # negative_query without expected docs: skip doc_hit, don't flag as doc_miss
+        if negative_query and not should_require_doc_hit and not meta.get("expected_doc_ids"):
+            doc_metrics["hit"] = None  # not applicable
+            doc_metrics["skip_doc_hit"] = True
         source_metrics = overlap_metrics_with_accepts(
             meta["expected_source_files"],
             meta.get("accepted_source_files") or [],
@@ -1460,7 +1469,7 @@ def evaluate_retrieval(
             strict_route_match_values.append(1.0 if strict_route_match else 0.0)
         if accepted_route_match is not None:
             accepted_route_match_values.append(1.0 if accepted_route_match else 0.0)
-        if doc_metrics["eligible"]:
+        if doc_metrics["eligible"] and not doc_metrics.get("skip_doc_hit"):
             doc_hit_values.append(1.0 if doc_metrics["hit"] else 0.0)
             doc_precision_values.append(float(doc_metrics["precision"]))
             doc_recall_values.append(float(doc_metrics["recall"]))
@@ -1724,10 +1733,11 @@ def build_failure_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
 
         doc_metrics = retrieval_eval.get("doc_id_metrics") or {}
         doc_hit = bool(doc_metrics.get("hit"))
+        doc_hit_skipped = bool(doc_metrics.get("skip_doc_hit"))
         evidence_metrics = retrieval_eval.get("evidence_metrics") or {}
         evidence_coverage = evidence_metrics.get("evidence_coverage")
         if doc_metrics.get("expected"):
-            if not doc_hit:
+            if not doc_hit and not doc_hit_skipped:
                 doc_miss_ids.append(sample_id)
             elif isinstance(evidence_coverage, (int, float)) and evidence_coverage == 0:
                 evidence_failure_ids.append(sample_id)
@@ -1844,12 +1854,15 @@ def build_raw_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         support_pack = generation_v2.get("support_pack") or []
         citations = api_response.get("citations") or []
         meta = item.get("dataset_meta") or {}
+        doc_metrics_rd = retrieval_eval.get("doc_id_metrics") or {}
+        doc_hit_raw = doc_metrics_rd.get("hit")
+        doc_hit_skipped = bool(doc_metrics_rd.get("skip_doc_hit"))
         raw = {
             "id": item.get("id"),
             "question": item.get("question"),
             "route": api_response.get("route"),
             "expected_route": retrieval_eval.get("expected_route"),
-            "doc_hit": bool((retrieval_eval.get("doc_id_metrics") or {}).get("hit")),
+            "doc_hit": doc_hit_raw if not doc_hit_skipped else None,
             "section_hit": bool((retrieval_eval.get("section_metrics") or {}).get("hit")),
             "answer_mode": get_effective_final_answer_mode(item),
             "citation_count": normalize_int(retrieval_eval.get("citation_count")),

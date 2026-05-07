@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,12 @@ from typing import Any
 from ...domain.config import KnowledgeBaseConfig, RetrievalConfig
 from ...domain.schemas import QueryFilters, RetrievedChunk
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_+-]+|[\u4e00-\u9fff]")
+# Phase 14D: improved tokenizer — includes prime/apostrophe variants, Greek letters,
+# and hyphen/dash normalization for biomedical terms like 2′-FL, α-mating factor, etc.
+_PRIME_TABLE = str.maketrans({"\u2032": "'", "\u2018": "'", "\u2019": "'", "\u02bc": "'"})
+_HYPHEN_TABLE = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"})
+
+TOKEN_RE = re.compile(r"[A-Za-z0-9\u03b1-\u03c9\u0391-\u03a9'_+\-]+|[\u4e00-\u9fff]")
 
 
 class BM25Retriever:
@@ -42,7 +48,9 @@ class BM25Retriever:
         if not self._records:
             return []
 
-        query_terms = _tokenize(question)
+        query_terms = tokenize_query(question)
+        if not query_terms:
+            query_terms = _tokenize(question)
         if not query_terms:
             return []
 
@@ -292,7 +300,108 @@ class BM25Retriever:
 
 
 def _tokenize(text: str) -> list[str]:
-    return [token.lower() for token in TOKEN_RE.findall(text or "")]
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    text = text.translate(_PRIME_TABLE)
+    text = text.translate(_HYPHEN_TABLE)
+    return [token.lower() for token in TOKEN_RE.findall(text)]
+
+
+# ── Phase 14E: query-side CJK noise suppression ──────────────────────
+
+# Chinese domain terms for longest-match (keep these multi-character CN terms)
+_CN_DOMAIN_TERMS = sorted([
+    # biomedical general
+    "骨质疏松", "巨噬细胞极化", "巨噬细胞", "糖基化", "N-糖基化", "O-糖基化",
+    "磷酸化", "分泌表达", "分泌运输", "分泌", "启动子库", "启动子", "双向启动子",
+    "转运蛋白", "膜转运", "信号肽", "蛋白工程", "代谢工程", "代谢途径",
+    "合成途径", "从头合成", "补救途径", "降解途径",
+    "核苷酸", "氨基酸", "脂肪酸", "前体供给", "限速酶", "反馈抑制",
+    "产物抑制", "辅因子", "碳源", "氮源", "生长速率", "最适温度", "最适pH",
+    "底物特异性", "催化效率", "耐受性", "产量", "产率", "酶活", "比活",
+    "多酶级联", "共培养", "细胞表面展示", "染色体整合",
+    "表达盒", "表达载体", "基因表达", "蛋白表达", "过量表达", "诱导表达",
+    "转录组", "蛋白组", "分泌组", "代谢组",
+    # species/hosts
+    "毕赤酵母", "酿酒酵母", "大肠杆菌", "枯草芽孢杆菌", "多形拟杆菌",
+    "双歧杆菌", "谷氨酸棒杆菌", "乳酸菌", "链霉菌",
+    # HMO / sugars
+    "人乳寡糖", "岩藻糖基乳糖", "唾液酸乳糖", "唾液酸", "N-乙酰神经氨酸",
+    "骨桥蛋白", "乳糖", "糖蜜", "葡萄糖", "半乳糖",
+    # synbio / molecular
+    "核糖开关", "生物传感器", "多基因共表达", "多顺反子", "信号序列",
+    "分子伴侣", "内质网", "高尔基体",
+    "发酵优化", "分批补料", "高密度发酵", "甲醇诱导",
+    "木质素", "纤维素", "生物修复",
+], key=len, reverse=True)
+
+_CN_DOMAIN_RE = re.compile("|".join(re.escape(t) for t in _CN_DOMAIN_TERMS))
+
+# Chinese stopwords / generic query words — discard from BM25 query
+_CN_STOP_WORDS = frozenset({
+    "的", "了", "是", "在", "中", "和", "与", "及", "或", "对", "为", "以",
+    "从", "到", "里", "上", "下", "该", "这", "那", "哪些", "什么", "为什么",
+    "如何", "请", "根据", "文库", "文中", "论文", "文章", "研究", "作者",
+    "总结", "概述", "比较", "对比", "说明", "主要", "关键", "结果", "结论",
+    "其中", "以及", "可以", "已经", "其他", "另外", "所有", "这些", "那些",
+    "通过", "当前", "目前", "相关", "内容", "方面", "领域", "作用", "功能",
+    "过程", "其中", "进行", "具有", "存在", "是否", "没有", "可能",
+})
+
+
+def tokenize_query(text: str) -> list[str]:
+    """Tokenize query for BM25 with CJK noise suppression (Phase 14E).
+
+    Keeps: Latin/English/greek terms, multi-character Chinese domain terms.
+    Discards: Chinese single characters, Chinese stopwords, generic query words.
+    """
+    # First, do the same unicode normalization as document tokenizer
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    text = text.translate(_PRIME_TABLE)
+    text = text.translate(_HYPHEN_TABLE)
+
+    # Extract Latin/English/prime/Greek tokens (same as document TOKEN_RE)
+    latin_tokens = []
+    for m in re.finditer(TOKEN_RE, text):
+        latin_tokens.append(m.group().lower())
+
+    # Extract Chinese multi-character terms via longest-match
+    cn_terms = []
+    pos = 0
+    while pos < len(text):
+        m = _CN_DOMAIN_RE.match(text, pos)
+        if m:
+            cn_terms.append(m.group())
+            pos = m.end()
+        else:
+            pos += 1
+
+    # Combine: Latin tokens + CN domain terms (exclude single CN chars + stopwords)
+    result = []
+    for t in latin_tokens:
+        if len(t) == 1 and '\u4e00' <= t <= '\u9fff':
+            continue  # discard single Chinese character
+        if t in _CN_STOP_WORDS:
+            continue  # discard CN stopwords
+        result.append(t)
+    for t in cn_terms:
+        if t not in _CN_STOP_WORDS:
+            result.append(t)
+
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for t in result:
+        if t not in seen:
+            seen.add(t)
+            deduped.append(t)
+
+    # Fallback: if filtering removes everything, keep original Latin tokens
+    if not deduped:
+        deduped = [t.lower() for t in TOKEN_RE.findall(text)]
+        # Still filter out single CN chars
+        deduped = [t for t in deduped if not (len(t) == 1 and '\u4e00' <= t <= '\u9fff')]
+
+    return deduped
 
 
 def _retrieval_text(chunk: RetrievedChunk) -> str:

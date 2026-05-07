@@ -96,6 +96,8 @@ class RetrievalConfig:
     parent_index_path: str = "./data/paper_round1/chunks/parent_index.jsonl"
     parent_expansion_max_total: int = 12
     parent_expansion_per_seed_limit: int = 2
+    protect_rerank_seeds_enabled: bool = True
+    protect_rerank_seeds_top_k: int = 5
     parent_expansion_window_enabled: bool = True
     parent_expansion_caption_enabled: bool = True
     parent_expansion_page_enabled: bool = True
@@ -190,6 +192,8 @@ class GenerationConfig:
     v2_use_external_tools: bool = False
     v2_use_history: bool = False
     v2_max_support_factoid: int = 3
+    v2_protect_support_seeds_enabled: bool = True
+    v2_protect_support_seeds_top_k: int = 2
     v2_max_support_summary: int = 5
     v2_max_support_comparison: int = 6
     v2_min_support_score: float = 0.0

@@ -117,6 +117,13 @@ class SynBioRAGPipeline:
         )
         seed_chunks = reranked[: self.settings.retrieval.final_top_k]
 
+        # Phase 15A/15C: annotate rerank_rank on each seed chunk for protection downstream
+        for rank_idx, chunk in enumerate(seed_chunks, start=1):
+            if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
+                chunk.metadata["rerank_rank"] = rank_idx
+            else:
+                chunk.metadata = {"rerank_rank": rank_idx}
+
         # Phase 7C: summary section supplement — boost Abstract/Conclusion from top docs
         summary_supplement_debug = _build_empty_supplement_debug()
         if (self.settings.generation.version == "v2"
@@ -142,6 +149,24 @@ class SynBioRAGPipeline:
                 seed_chunks=seed_chunks,
                 analysis=analysis,
             )
+            # Phase 15A: protect top-N rerank seeds in final_chunks
+            protect_enabled = self.settings.retrieval.protect_rerank_seeds_enabled
+            protect_k = min(self.settings.retrieval.protect_rerank_seeds_top_k, len(seed_chunks))
+            protected_ids = set()
+            if protect_enabled and protect_k > 0:
+                protected = seed_chunks[:protect_k]
+                protected_ids = {s.chunk_id for s in protected}
+                final_ids = {c.chunk_id for c in final_chunks}
+                for s in protected:
+                    if s.chunk_id not in final_ids:
+                        final_chunks.append(s)
+            parent_expansion_debug["protected_seed_count"] = len(protected_ids)
+            parent_expansion_debug["protected_seed_chunk_ids"] = list(protected_ids)[:10]
+            parent_expansion_debug["final_contains_rerank_top3"] = all(
+                seed_chunks[i].chunk_id in {c.chunk_id for c in final_chunks}
+                for i in range(min(3, len(seed_chunks)))
+            )
+
             seed_confidence = self.confidence_scorer.score(seed_chunks)
             confidence = self.confidence_scorer.score(final_chunks)
             gen_result = self.generator_v2.run(
