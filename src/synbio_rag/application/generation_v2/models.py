@@ -84,6 +84,43 @@ class AnswerPlan:
 
 
 @dataclass
+class CitationCandidate:
+    """Lightweight contract between selected_support and citation_output.
+
+    Every selected_support chunk that is citation_eligible and metadata-complete
+    must enter citation_candidates.  Candidates that do not reach citation_output
+    must carry an explicit drop_reason.
+    """
+
+    chunk_id: str
+    doc_id: str
+    source_file: str
+    title: str
+    text: str
+    section: str
+    answer_mode: str
+    plan_mode: str
+    is_from_selected_support: bool
+    is_protected_seed: bool
+    protected_reason: str
+    rerank_rank: int
+    support_priority: float
+    citation_priority: float
+    citation_eligible: bool
+    evidence_id: str
+    support_score: float
+    page_start: int | None = None
+    page_end: int | None = None
+    reasons: list[str] = field(default_factory=list)
+    drop_reason: str = ""
+    branch_id: str = ""
+    comparison_branch_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class GenerationV2Result:
     answer: str
     citations: list[Citation]

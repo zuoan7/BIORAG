@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
 import re
+
+try:
+    import yaml
+    _HAS_YAML = True
+except ImportError:
+    _HAS_YAML = False
 
 from ...domain.config import RetrievalConfig
 from ...domain.schemas import QueryAnalysis, QueryFilters, QueryIntent, RetrievedChunk
@@ -67,8 +74,11 @@ class HybridRetriever:
             dense_lists.append(dense_results)
             sparse_results: list[RetrievedChunk] = []
             if self.config.hybrid_enabled and self.config.bm25_enabled:
+                sparse_query = _expand_alias_query(
+                    variant["query"], self.config
+                ) if getattr(self.config, "alias_expansion_enabled", False) else variant["query"]
                 sparse_results = self.bm25_retriever.search(
-                    variant["query"],
+                    sparse_query,
                     limit=max(limit, self.config.bm25_limit),
                     filters=filters,
                 )
@@ -128,10 +138,64 @@ class HybridRetriever:
             question=question,
             bm25_retriever=self.bm25_retriever,
         )
+        expanded = _apply_source_floor(
+            expanded=expanded,
+            dense_results=dense_results,
+            sparse_results=sparse_results,
+            config=self.config,
+        )
         self.last_debug["rrf_hits"] = _serialize_hits(expanded[:5], "fusion_score")
         self.last_debug["same_doc_body_expand_enabled"] = self.config.same_doc_body_expand_enabled
         self.last_debug["same_doc_body_expand_added"] = len(expanded) - len(diversified)
         return expanded
+
+
+def _apply_source_floor(
+    expanded: list[RetrievedChunk],
+    dense_results: list[RetrievedChunk],
+    sparse_results: list[RetrievedChunk],
+    config: Any,
+) -> list[RetrievedChunk]:
+    """Inject top-N single-source candidates that RRF merge may have suppressed.
+
+    Only runs when config.source_floor_enabled=True.
+    Does NOT use expected_doc_ids, does NOT boost scores, does NOT bypass reranker.
+    """
+    if not getattr(config, "source_floor_enabled", False):
+        return expanded
+
+    dense_n = getattr(config, "source_floor_dense_top_n", 3)
+    bm25_n = getattr(config, "source_floor_bm25_top_n", 3)
+    max_total = getattr(config, "source_floor_max_candidates_total", 6)
+
+    existing_ids = {c.chunk_id for c in expanded}
+    added_chunks: list[RetrievedChunk] = []
+    added_info: list[dict[str, object]] = []
+
+    for src_label, src_hits, top_n in [
+        ("dense_floor", dense_results, dense_n),
+        ("bm25_floor", sparse_results, bm25_n),
+    ]:
+        for rank, chunk in enumerate(src_hits[:top_n], start=1):
+            if len(added_chunks) >= max_total:
+                break
+            if chunk.chunk_id in existing_ids:
+                continue
+            new_chunk = _clone_chunk(chunk)
+            new_chunk.metadata["source_floor"] = src_label
+            new_chunk.metadata["source_floor_rank"] = rank
+            added_chunks.append(new_chunk)
+            existing_ids.add(chunk.chunk_id)
+            added_info.append({
+                "source": src_label,
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "rank": rank,
+            })
+        if len(added_chunks) >= max_total:
+            break
+
+    return expanded + added_chunks
 
 
 def reciprocal_rank_fusion_multi(
@@ -548,6 +612,100 @@ def _serialize_hits(chunks: list[RetrievedChunk], score_field: str) -> list[dict
             }
         )
     return items
+
+
+# ── Controlled alias expansion (BM25-only, query-time) ────────────
+
+_ALIAS_MAP_CACHE: dict[str, Any] | None = None
+
+
+def _load_alias_map(config: Any) -> dict[str, Any] | None:
+    """Load alias map from YAML file, cached at module level."""
+    global _ALIAS_MAP_CACHE
+    if _ALIAS_MAP_CACHE is not None:
+        return _ALIAS_MAP_CACHE
+    map_path = getattr(config, "alias_expansion_map_path", "") or ""
+    if not map_path:
+        # Default path relative to project root
+        map_path = str(Path(__file__).resolve().parents[4] / "src/synbio_rag/resources/retrieval_aliases_v1.yaml")
+    try:
+        if _HAS_YAML:
+            with open(map_path, encoding="utf-8") as f:
+                _ALIAS_MAP_CACHE = yaml.safe_load(f)
+        else:
+            import json
+            with open(map_path.replace(".yaml", ".json"), encoding="utf-8") as f:
+                _ALIAS_MAP_CACHE = json.load(f)
+    except Exception:
+        _ALIAS_MAP_CACHE = {}
+    return _ALIAS_MAP_CACHE
+
+
+def _expand_alias_query(query: str, config: Any) -> str:
+    """Expand query with controlled BM25-only alias terms.
+
+    Trigger-based: only adds expansions when trigger terms appear in query.
+    BM25-only: does not modify dense query or LLM prompt.
+    Feature-flagged: only runs when alias_expansion_enabled=True.
+    """
+    if not getattr(config, "alias_expansion_enabled", False):
+        return query
+
+    alias_map = _load_alias_map(config)
+    if not alias_map:
+        return query
+
+    aliases = alias_map.get("aliases", {})
+    if not aliases:
+        return query
+
+    allowed_risks = set(getattr(config, "alias_expansion_risk_levels", ["low"]))
+    max_entities = getattr(config, "alias_expansion_max_entities_per_query", 3)
+    max_per_entity = getattr(config, "alias_expansion_max_expansions_per_entity", 3)
+    max_total = getattr(config, "alias_expansion_max_total_terms", 8)
+
+    query_lower = query.lower()
+    # Normalize primes and hyphens for trigger matching
+    query_normalized = query_lower.replace('\u2019', "'").replace('\u2018', "'").replace('\u2032', "'")
+
+    expansion_terms: list[str] = []
+    triggered_count = 0
+
+    for canonical_id, entry in aliases.items():
+        if triggered_count >= max_entities:
+            break
+        risk = entry.get("risk", "medium")
+        if risk not in allowed_risks:
+            continue
+
+        # Check triggers
+        triggered = False
+        for lang, terms in (entry.get("triggers") or {}).items():
+            for term in terms:
+                if term.lower() in query_lower or term.lower() in query_normalized:
+                    triggered = True
+                    break
+            if triggered:
+                break
+        if not triggered:
+            continue
+
+        # Add expansions (capped per entity)
+        expansions = entry.get("expansions", [])[:max_per_entity]
+        for exp in expansions:
+            if exp.lower() in query_lower or exp.lower() in query_normalized:
+                continue  # skip if already in query
+            expansion_terms.append(exp)
+
+        triggered_count += 1
+        if len(expansion_terms) >= max_total:
+            break
+
+    expansion_terms = expansion_terms[:max_total]
+    if not expansion_terms:
+        return query
+
+    return f"{query} {' '.join(expansion_terms)}"
 
 
 def _contains_cjk(text: str) -> bool:

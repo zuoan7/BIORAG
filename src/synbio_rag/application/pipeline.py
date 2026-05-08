@@ -20,6 +20,7 @@ from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
 from .context_builder import ContextBuilder
 from .generation_v2 import GenerationV2Service
+from .generation_v2.evidence_lifecycle_debug import rerank_output_debug, stage_debug_from_chunks
 from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_service import QwenChatGenerator
 from .neighbor_expansion import ChunkNeighborExpander
@@ -166,6 +167,29 @@ class SynBioRAGPipeline:
                 seed_chunks[i].chunk_id in {c.chunk_id for c in final_chunks}
                 for i in range(min(3, len(seed_chunks)))
             )
+            evidence_lifecycle_debug = {
+                "rerank_output": rerank_output_debug(
+                    reranked,
+                    protected_ids=protected_ids,
+                ),
+                "seed_chunks": {
+                    "input_count": len(reranked),
+                    "output_count": len(seed_chunks),
+                    "chunk_ids": [chunk.chunk_id for chunk in seed_chunks],
+                    "doc_ids": [chunk.doc_id for chunk in seed_chunks],
+                    "drop_reasons": {
+                        chunk.chunk_id: "topk_cutoff"
+                        for chunk in reranked
+                        if chunk.chunk_id not in {seed.chunk_id for seed in seed_chunks}
+                    },
+                },
+                "final_chunks": stage_debug_from_chunks(
+                    input_chunks=seed_chunks,
+                    output_chunks=final_chunks,
+                    protected_ids=protected_ids,
+                    default_drop_reason="context_budget",
+                ),
+            }
 
             seed_confidence = self.confidence_scorer.score(seed_chunks)
             confidence = self.confidence_scorer.score(final_chunks)
@@ -179,6 +203,9 @@ class SynBioRAGPipeline:
             # Merge supplement debug into generation debug (always, for diagnostics)
             gv2_debug = gen_result.debug
             gv2_debug["summary_section_supplement"] = summary_supplement_debug
+            gv2_lifecycle_debug = dict(gv2_debug.get("evidence_lifecycle_debug", {}))
+            evidence_lifecycle_debug.update(gv2_lifecycle_debug)
+            gv2_debug["evidence_lifecycle_debug"] = evidence_lifecycle_debug
             return RAGResponse(
                 answer=gen_result.answer,
                 confidence=confidence,
@@ -213,6 +240,7 @@ class SynBioRAGPipeline:
                     "parent_expansion": parent_expansion_debug,
                     "filter_strategy": retrieval_debug,
                     "generation_v2": gen_result.debug,
+                    "evidence_lifecycle_debug": evidence_lifecycle_debug,
                 },
             )
         final_chunks = self.neighbor_expander.expand(seed_chunks)

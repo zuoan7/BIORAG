@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from ...domain.config import GenerationConfig
 from ...domain.schemas import QueryAnalysis, QueryIntent
 from .guardrails import detect_existence_question
 from .models import AnswerPlan, SupportItem
@@ -14,6 +15,7 @@ class ExtractiveAnswerBuilder:
         analysis: QueryAnalysis,
         plan: AnswerPlan,
         support_pack: list[SupportItem],
+        config: GenerationConfig | None = None,
     ) -> str:
         existence_signal = detect_existence_question(question)
         target_terms = "、".join(existence_signal.target_terms[:4]) if existence_signal.target_terms else "目标资料"
@@ -101,7 +103,8 @@ class ExtractiveAnswerBuilder:
                 lines.append("证据限制：")
                 lines.extend(f"- {lim}" for lim in limitations)
         else:
-            for item in support_pack[:3]:
+            max_lines = config.v2_max_extractive_evidence_lines if config else 3
+            for item in support_pack[:max_lines]:
                 lines.append(f"{_summarize(item)} [{item.evidence_id}]")
         return "\n".join(lines)
 

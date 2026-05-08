@@ -9,6 +9,12 @@ from ...domain.schemas import ConversationTurn, QueryAnalysis, RetrievedChunk
 from .answer_builder import ExtractiveAnswerBuilder
 from .answer_planner import AnswerPlanner
 from .citation_binder import CitationBinder
+from .evidence_lifecycle_debug import (
+    citation_candidates_debug,
+    citation_output_debug,
+    selected_support_debug,
+    support_input_debug,
+)
 from .evidence_ledger import EvidenceLedgerBuilder
 from .models import EvidenceCandidate, GenerationV2Result, SupportItem
 from .neighbor_audit import NeighborAuditEngine
@@ -60,7 +66,7 @@ class GenerationV2Service:
                 selected_limited_support_chunk_ids = [item.candidate.chunk_id for item in limited]
 
         plan = self.answer_planner.plan(question, analysis, support_pack, candidates, config)
-        extractive_answer = self.answer_builder.build(question, analysis, plan, support_pack)
+        extractive_answer = self.answer_builder.build(question, analysis, plan, support_pack, config=config)
         existence_guardrail = dict(self.answer_planner.last_existence_guardrail)
         qwen_attempted = bool(
             config.v2_use_qwen_synthesis and plan.mode != "refuse" and bool(support_pack)
@@ -74,7 +80,14 @@ class GenerationV2Service:
             existence_guardrail=existence_guardrail,
         )
         draft_answer = synthesis_result.answer
-        answer, citations, citation_debug = self.citation_binder.bind(draft_answer, support_pack)
+        citation_candidates = self.citation_binder.build_citation_candidates(
+            support_pack, plan_mode=plan.mode, answer_mode=plan.mode
+        )
+        answer, citations, citation_debug = self.citation_binder.bind(
+            draft_answer, support_pack,
+            plan_mode=plan.mode, answer_mode=plan.mode,
+            citation_candidates=citation_candidates,
+        )
         answer, plan, validator_debug = self.validator.validate(answer, citations, plan, support_pack, config)
         qwen_output_evidence_ids = citation_debug.get("ordered_evidence_ids", [])
 
@@ -105,6 +118,7 @@ class GenerationV2Service:
             "selected_evidence_ids": [item.evidence_id for item in support_pack],
             "citation_binding": citation_debug,
             "summary_selection": dict(getattr(self.support_selector, "last_summary_selection_debug", {"is_summary": False})),
+            "selection_debug": dict(getattr(self.support_selector, "last_selection_debug", {})),
         }
         comparison_coverage_debug = (
             plan.comparison_coverage.to_dict()
@@ -124,6 +138,27 @@ class GenerationV2Service:
                 "skip_reason": "refuse_or_existence_no_support",
             }
         summary_plan_debug = dict(getattr(self.answer_planner, "last_summary_plan_debug", {"is_summary": False}))
+        evidence_lifecycle_debug = {
+            "support_input": support_input_debug(candidates),
+            "selected_support": selected_support_debug(
+                candidates=candidates,
+                support_pack=support_pack,
+                selector_debug=dict(getattr(self.support_selector, "last_selection_debug", {})),
+                answer_mode=plan.mode,
+                plan_mode=plan.mode,
+                support_pack_size=len(support_pack),
+            ),
+            "citation_candidates": citation_candidates_debug(
+                support_pack,
+                citation_candidates=citation_candidates,
+            ),
+            "citation_output": citation_output_debug(
+                support_pack=support_pack,
+                citations=citations,
+                citation_debug=citation_debug,
+                plan_mode=plan.mode,
+            ),
+        }
         debug = {
             "generation_version": "v2",
             "neighbor_expansion_used": False,
@@ -186,6 +221,7 @@ class GenerationV2Service:
             "candidates": [candidate.to_dict() for candidate in candidates],
             "history_turn_count": len(history or []),
             "neighbor_audit": neighbor_audit_result.to_dict(),
+            "evidence_lifecycle_debug": evidence_lifecycle_debug,
         }
         return GenerationV2Result(
             answer=answer,

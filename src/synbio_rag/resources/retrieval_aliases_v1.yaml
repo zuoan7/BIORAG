@@ -1,0 +1,148 @@
+# Controlled Chinese-English domain alias map v1.
+# Query-time BM25-only expansion. Feature-flagged default off.
+# Phase 18C: only aliases verified in Phase 18B audit.
+aliases:
+  organism.pichia_pastoris:
+    type: organism
+    risk: low
+    triggers:
+      zh:
+        - 毕赤酵母
+      en:
+        - Pichia
+        - Pichia pastoris
+    expansions:
+      - Pichia
+      - Pichia pastoris
+      - Komagataella phaffii
+    max_expansions: 3
+    notes: "4/11 hard recall samples have this gap"
+
+  metabolite.2_fucosyllactose:
+    type: metabolite
+    risk: low
+    triggers:
+      en:
+        - 2′-FL
+        - 2'-FL
+        - 2-FL
+        - 2FL
+    expansions:
+      - 2-fucosyllactose
+      - "2'-fucosyllactose"
+    max_expansions: 2
+    notes: "2/11 hard recall samples. Prime normalization already present but not expanding to full name"
+
+  metabolite.6_sialyllactose:
+    type: metabolite
+    risk: low
+    triggers:
+      en:
+        - 6′-SL
+        - 6'-SL
+        - 6-SL
+        - 6SL
+    expansions:
+      - 6-sialyllactose
+      - "6'-sialyllactose"
+    max_expansions: 2
+    notes: "1/11 hard recall samples"
+
+  metabolite.sialic_acid:
+    type: metabolite
+    risk: medium
+    triggers:
+      zh:
+        - 唾液酸
+      en:
+        - Neu5Ac
+    expansions:
+      - sialic acid
+      - Neu5Ac
+      - N-acetylneuraminic acid
+    max_expansions: 2
+    notes: "1/11 hard recall samples. Medium risk: 'sialic acid' can be broad in some contexts"
+
+  organism.secretion:
+    type: pathway
+    risk: medium
+    triggers:
+      zh:
+        - 分泌
+    expansions:
+      - secretion
+      - protein secretion
+    max_expansions: 2
+    notes: "Medium risk: '分泌' is a common biological term, 'secretion' may drift"
+
+  organism.ecoli:
+    type: organism
+    risk: low
+    triggers:
+      zh:
+        - 大肠杆菌
+        - 大肠埃希菌
+    expansions:
+      - "E. coli"
+      - Escherichia coli
+    max_expansions: 2
+    notes: "Common organism alias, low ambiguity"
+
+  organism.bsubtilis:
+    type: organism
+    risk: low
+    triggers:
+      zh:
+        - 枯草芽孢杆菌
+        - 枯草杆菌
+    expansions:
+      - "B. subtilis"
+      - Bacillus subtilis
+    max_expansions: 2
+    notes: "Common organism alias, low ambiguity"
+
+  molecular.promoter:
+    type: molecular
+    risk: medium
+    triggers:
+      zh:
+        - 启动子
+    expansions:
+      - promoter
+    max_expansions: 1
+    notes: "Medium risk: '启动子' is common, but 'promoter' in English is unambiguous in bio context"
+
+  molecular.copy_number:
+    type: molecular
+    risk: low
+    triggers:
+      zh:
+        - 拷贝数
+    expansions:
+      - copy number
+    max_expansions: 1
+    notes: "Low ambiguity in synthetic biology context"
+
+  molecular.heterologous_expression:
+    type: molecular
+    risk: low
+    triggers:
+      zh:
+        - 异源表达
+    expansions:
+      - heterologous expression
+    max_expansions: 1
+    notes: "Low ambiguity"
+
+  molecular.methanol_induction:
+    type: molecular
+    risk: low
+    triggers:
+      zh:
+        - 甲醇诱导
+        - 甲醇
+    expansions:
+      - methanol
+      - methanol induction
+    max_expansions: 2
+    notes: "Low ambiguity in synthetic biology context"

@@ -88,6 +88,19 @@ class RetrievalConfig:
     same_doc_body_expand_max_total: int = 8
     same_doc_body_expand_min_doc_rank: int = 20
     same_doc_body_expand_require_missing_body: bool = True
+    # Source-floor: retain top-N single-source candidates suppressed by RRF merge
+    source_floor_enabled: bool = True
+    source_floor_dense_top_n: int = 3
+    source_floor_bm25_top_n: int = 3
+    source_floor_max_candidates_total: int = 6
+    # Controlled alias expansion: query-time BM25-only Chinese-English domain alias
+    alias_expansion_enabled: bool = False
+    alias_expansion_scope: str = "bm25_only"
+    alias_expansion_risk_levels: list[str] = field(default_factory=lambda: ["low"])
+    alias_expansion_max_entities_per_query: int = 3
+    alias_expansion_max_expansions_per_entity: int = 3
+    alias_expansion_max_total_terms: int = 8
+    alias_expansion_map_path: str = ""
     rerank_score_floor_ratio: float = 0.4
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
@@ -197,6 +210,7 @@ class GenerationConfig:
     v2_max_support_summary: int = 5
     v2_max_support_comparison: int = 6
     v2_min_support_score: float = 0.0
+    v2_max_extractive_evidence_lines: int = 6
     v2_require_citation: bool = True
     v2_enable_neighbor_audit: bool = False
     v2_neighbor_window: int = 1
@@ -458,6 +472,33 @@ class Settings:
         settings.retrieval.same_doc_body_expand_require_missing_body = _parse_bool(
             get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_REQUIRE_MISSING_BODY", str(settings.retrieval.same_doc_body_expand_require_missing_body))
         )
+        settings.retrieval.source_floor_enabled = _parse_bool(
+            get_value("RETRIEVAL_SOURCE_FLOOR_ENABLED", str(settings.retrieval.source_floor_enabled))
+        )
+        settings.retrieval.source_floor_dense_top_n = int(
+            get_value("RETRIEVAL_SOURCE_FLOOR_DENSE_TOP_N", str(settings.retrieval.source_floor_dense_top_n))
+        )
+        settings.retrieval.source_floor_bm25_top_n = int(
+            get_value("RETRIEVAL_SOURCE_FLOOR_BM25_TOP_N", str(settings.retrieval.source_floor_bm25_top_n))
+        )
+        settings.retrieval.source_floor_max_candidates_total = int(
+            get_value("RETRIEVAL_SOURCE_FLOOR_MAX_CANDIDATES_TOTAL", str(settings.retrieval.source_floor_max_candidates_total))
+        )
+        settings.retrieval.alias_expansion_enabled = _parse_bool(
+            get_value("RETRIEVAL_ALIAS_EXPANSION_ENABLED", str(settings.retrieval.alias_expansion_enabled))
+        )
+        settings.retrieval.alias_expansion_scope = get_value(
+            "RETRIEVAL_ALIAS_EXPANSION_SCOPE", settings.retrieval.alias_expansion_scope
+        )
+        val = get_value("RETRIEVAL_ALIAS_EXPANSION_RISK_LEVELS", "")
+        if val:
+            settings.retrieval.alias_expansion_risk_levels = [x.strip() for x in val.split(",")]
+        settings.retrieval.alias_expansion_max_entities_per_query = int(
+            get_value("RETRIEVAL_ALIAS_MAX_ENTITIES_PER_QUERY", str(settings.retrieval.alias_expansion_max_entities_per_query))
+        )
+        settings.retrieval.alias_expansion_max_total_terms = int(
+            get_value("RETRIEVAL_ALIAS_MAX_TOTAL_TERMS", str(settings.retrieval.alias_expansion_max_total_terms))
+        )
         settings.retrieval.rerank_score_floor_ratio = float(
             get_value("RETRIEVAL_RERANK_SCORE_FLOOR_RATIO", str(settings.retrieval.rerank_score_floor_ratio))
         )
@@ -639,6 +680,12 @@ class Settings:
             get_value(
                 "GENERATION_V2_MAX_SUPPORT_COMPARISON",
                 str(settings.generation.v2_max_support_comparison),
+            )
+        )
+        settings.generation.v2_max_extractive_evidence_lines = int(
+            get_value(
+                "GENERATION_V2_MAX_EXTRACTIVE_EVIDENCE_LINES",
+                str(settings.generation.v2_max_extractive_evidence_lines),
             )
         )
         settings.generation.v2_min_support_score = float(

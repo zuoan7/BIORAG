@@ -17,6 +17,7 @@ _FIGURE_LABEL_PATTERN = re.compile(r"(figure\s*\d+|fig\.\s*\d+|fig\s*\d+|图\s*\
 class SupportPackSelector:
     def __init__(self) -> None:
         self.last_summary_selection_debug: dict[str, object] = {"is_summary": False}
+        self.last_selection_debug: dict[str, object] = {}
 
     def select(
         self,
@@ -26,8 +27,12 @@ class SupportPackSelector:
         config: GenerationConfig,
     ) -> list[SupportItem]:
         self.last_summary_selection_debug = {"is_summary": False}
-        scored = [self._to_support_item(question, candidate) for candidate in candidates]
-        scored = [item for item in scored if item.support_score >= config.v2_min_support_score]
+        self.last_selection_debug = {}
+        all_scored = [self._to_support_item(question, candidate) for candidate in candidates]
+        below_min_score = [
+            item for item in all_scored if item.support_score < config.v2_min_support_score
+        ]
+        scored = [item for item in all_scored if item.support_score >= config.v2_min_support_score]
 
         intent = analysis.intent
         if intent in {QueryIntent.FACTOID, QueryIntent.UNKNOWN}:
@@ -41,8 +46,19 @@ class SupportPackSelector:
             selected = self._select_factoid(question, scored, config)
 
         # Phase 15C: ensure protected rerank seeds are in selected support
+        selected_before_protection = list(selected)
         if config.v2_protect_support_seeds_enabled:
             selected = _ensure_protected_support_seeds(scored, selected, config)
+        self.last_selection_debug = _build_selection_debug(
+            candidates=candidates,
+            all_scored=all_scored,
+            scored=scored,
+            below_min_score=below_min_score,
+            selected_before_protection=selected_before_protection,
+            selected=selected,
+            config=config,
+            intent=analysis.intent.value,
+        )
         return selected
 
     def _to_support_item(self, question: str, candidate: EvidenceCandidate) -> SupportItem:
@@ -599,3 +615,52 @@ def _ensure_protected_support_seeds(
 
     return result[:max_size]
     return False
+
+
+def _build_selection_debug(
+    *,
+    candidates: list[EvidenceCandidate],
+    all_scored: list[SupportItem],
+    scored: list[SupportItem],
+    below_min_score: list[SupportItem],
+    selected_before_protection: list[SupportItem],
+    selected: list[SupportItem],
+    config: GenerationConfig,
+    intent: str,
+) -> dict[str, object]:
+    selected_ids = {item.evidence_id for item in selected}
+    selected_before_ids = {item.evidence_id for item in selected_before_protection}
+    below_min_ids = {item.evidence_id for item in below_min_score}
+    scored_by_id = {item.evidence_id: item for item in all_scored}
+    drop_reasons: dict[str, str] = {}
+    for candidate in candidates:
+        if candidate.evidence_id in selected_ids:
+            continue
+        if candidate.evidence_id in below_min_ids:
+            drop_reasons[candidate.evidence_id] = "score_too_low"
+            continue
+        item = scored_by_id.get(candidate.evidence_id)
+        if item and any("duplicate_filtered" in reason for reason in item.reasons):
+            drop_reasons[candidate.evidence_id] = "duplicate_chunk_id"
+            continue
+        drop_reasons[candidate.evidence_id] = "support_pack_size_limit"
+
+    protected_ids = []
+    for item in scored:
+        rank = item.candidate.metadata.get("rerank_rank", 999)
+        if isinstance(rank, (int, float)) and int(rank) <= config.v2_protect_support_seeds_top_k:
+            protected_ids.append(item.evidence_id)
+    return {
+        "intent": intent,
+        "candidate_count": len(candidates),
+        "scored_count": len(all_scored),
+        "eligible_count": len(scored),
+        "below_min_score_count": len(below_min_score),
+        "selected_before_protection_evidence_ids": [item.evidence_id for item in selected_before_protection],
+        "selected_evidence_ids": [item.evidence_id for item in selected],
+        "protected_seed_evidence_ids": protected_ids,
+        "protected_seed_inserted_evidence_ids": [
+            item.evidence_id for item in selected if item.evidence_id not in selected_before_ids and item.evidence_id in protected_ids
+        ],
+        "drop_reasons_by_evidence_id": drop_reasons,
+    }
