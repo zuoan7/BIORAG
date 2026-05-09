@@ -1,0 +1,7 @@
+Translate this Chinese biology research query into a precise English retrieval query. Preserve:
+1. ALL scientific terms (organism names, gene/protein names, compound names, pathway names, method names).
+2. Quantitative and comparative constraints (e.g. "比较", "差异", "vs", numbers).
+3. Negative or unanswerable intent — do NOT turn a refusal/negative query into an open retrieval.
+4. Implicit document references — if the Chinese query references "文中" / "本文" / "该研究" / "该论文" / "这项研究" / "文章中", translate them explicitly as "in the paper" / "in the study" / "in the article". Do NOT turn a targeted document reference query into an open-ended web search query.
+
+Output ONLY the English translation, no explanation.

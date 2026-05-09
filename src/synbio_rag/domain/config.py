@@ -267,6 +267,23 @@ class KnowledgeBaseConfig:
 
 
 @dataclass
+class QueryRewriteConfig:
+    """Phase 19: English-mirror query rewrite feature flag. Default: OFF."""
+    mode: str = "off"  # off | shadow | enabled
+    model: str = "qwen-plus"
+    temperature: float = 0.0
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 86400
+    cache_key_version: str = "v1_guarded"
+    timeout_ms: int = 3000
+    fallback_on_error: bool = True
+    guard_implicit_reference: bool = True
+    guard_negative_intent: bool = True
+    trace_enabled: bool = True
+    prompt_path: str = "resources/prompts/query_rewrite_en_mirror.txt"
+
+
+@dataclass
 class Settings:
     app_name: str = "synbio-rag-service"
     env: str = "dev"
@@ -278,6 +295,7 @@ class Settings:
     tools: ToolConfig = field(default_factory=ToolConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     round8: Round8PolicyConfig = field(default_factory=Round8PolicyConfig)
+    query_rewrite: QueryRewriteConfig = field(default_factory=QueryRewriteConfig)
     llm: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-plus"))
     reranker: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-rerank"))
 
@@ -763,6 +781,18 @@ class Settings:
         settings.round8.enable_ragas_retry = _parse_bool(
             get_value("ROUND8_ENABLE_RAGAS_RETRY", str(settings.round8.enable_ragas_retry))
         )
+        # Phase 19: query rewrite feature flag
+        settings.query_rewrite.mode = get_value("QUERY_REWRITE_MODE", settings.query_rewrite.mode).strip().lower()
+        settings.query_rewrite.model = get_value("QUERY_REWRITE_MODEL", settings.query_rewrite.model)
+        settings.query_rewrite.temperature = float(get_value("QUERY_REWRITE_TEMPERATURE", str(settings.query_rewrite.temperature)))
+        settings.query_rewrite.cache_enabled = _parse_bool(get_value("QUERY_REWRITE_CACHE_ENABLED", str(settings.query_rewrite.cache_enabled)))
+        settings.query_rewrite.cache_ttl_seconds = int(get_value("QUERY_REWRITE_CACHE_TTL_SECONDS", str(settings.query_rewrite.cache_ttl_seconds)))
+        settings.query_rewrite.cache_key_version = get_value("QUERY_REWRITE_CACHE_KEY_VERSION", settings.query_rewrite.cache_key_version)
+        settings.query_rewrite.timeout_ms = int(get_value("QUERY_REWRITE_TIMEOUT_MS", str(settings.query_rewrite.timeout_ms)))
+        settings.query_rewrite.fallback_on_error = _parse_bool(get_value("QUERY_REWRITE_FALLBACK_ON_ERROR", str(settings.query_rewrite.fallback_on_error)))
+        settings.query_rewrite.guard_implicit_reference = _parse_bool(get_value("QUERY_REWRITE_GUARD_IMPLICIT_REFERENCE", str(settings.query_rewrite.guard_implicit_reference)))
+        settings.query_rewrite.guard_negative_intent = _parse_bool(get_value("QUERY_REWRITE_GUARD_NEGATIVE_INTENT", str(settings.query_rewrite.guard_negative_intent)))
+        settings.query_rewrite.trace_enabled = _parse_bool(get_value("QUERY_REWRITE_TRACE_ENABLED", str(settings.query_rewrite.trace_enabled)))
         settings.resolve_paths()
         settings.ensure_directories()
         return settings

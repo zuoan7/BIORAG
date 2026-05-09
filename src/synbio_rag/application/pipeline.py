@@ -23,6 +23,7 @@ from .generation_v2 import GenerationV2Service
 from .generation_v2.evidence_lifecycle_debug import rerank_output_debug, stage_debug_from_chunks
 from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_service import QwenChatGenerator
+from ..rewrite.query_rewrite_service import QueryRewriteService, QueryRewriteMode
 from .neighbor_expansion import ChunkNeighborExpander
 from .parent_expansion import ParentContextExpander
 from .rerank_service import QwenReranker
@@ -95,6 +96,18 @@ class SynBioRAGPipeline:
         self.parent_expander = ParentContextExpander(parent_store=parent_store, config=settings.retrieval)
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
         self.external_tools = ExternalToolManager(settings.tools)
+        # Phase 19: query rewrite service (default off)
+        qrc = settings.query_rewrite
+        self._rewrite_svc = QueryRewriteService(
+            mode=QueryRewriteMode(qrc.mode),
+            model=qrc.model, temperature=qrc.temperature,
+            cache_enabled=qrc.cache_enabled, timeout_ms=qrc.timeout_ms,
+            fallback_on_error=qrc.fallback_on_error,
+            guard_implicit=qrc.guard_implicit_reference,
+            guard_negative=qrc.guard_negative_intent,
+            cache_version=qrc.cache_key_version,
+            llm_client=None,  # Must be set externally for LLM calls
+        )
 
     def answer(
         self,
@@ -105,8 +118,10 @@ class SynBioRAGPipeline:
     ) -> RAGResponse:
         start = time.perf_counter()
         analysis = self.router.analyze(question)
+        # Phase 19: query rewrite — prepare retrieval query
+        retrieval_question, rewrite_trace = self._rewrite_svc.rewrite(question, is_negative=False)
         retrieved, retrieval_debug = self._search_with_filter_fallback(
-            question=question,
+            question=retrieval_question,
             analysis=analysis,
             filters=filters,
         )
@@ -241,6 +256,7 @@ class SynBioRAGPipeline:
                     "filter_strategy": retrieval_debug,
                     "generation_v2": gen_result.debug,
                     "evidence_lifecycle_debug": evidence_lifecycle_debug,
+                    "query_rewrite": rewrite_trace.to_dict(),
                 },
             )
         final_chunks = self.neighbor_expander.expand(seed_chunks)
@@ -274,6 +290,7 @@ class SynBioRAGPipeline:
             session_id=session_id,
             external_references=tool_execution.references,
             debug={
+                "query_rewrite": rewrite_trace.to_dict(),
                 "analysis_notes": analysis.notes,
                 "retrieved_count": len(retrieved),
                 "reranked_count": len(reranked),
