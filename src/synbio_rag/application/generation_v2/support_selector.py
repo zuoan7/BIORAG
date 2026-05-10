@@ -131,7 +131,14 @@ class SupportPackSelector:
                     -item.support_score,
                 ),
             )
-        return self._finalize(ranked[: config.v2_max_support_factoid], "factoid_top_score")
+        selected, per_doc = _select_with_doc_diversity(
+            ranked=ranked,
+            max_total=config.v2_max_support_factoid,
+            max_per_doc=2,
+            route_name="factoid_top_score",
+            finalizer=self._finalize,
+        )
+        return selected
 
     def _select_summary(
         self,
@@ -426,6 +433,9 @@ def _section_priority(section: str) -> int:
     # Combined result+discussion — still good
     if "result" in lowered and "discussion" in lowered:
         return 2
+    # Full text — parser fallback, treat as body evidence
+    if "full text" in lowered:
+        return 2
     # Standalone results — moderate
     if "result" in lowered:
         return 3
@@ -450,7 +460,7 @@ def _evaluate_summary_quality(
     section = (item.candidate.section or "").lower()
     if any(token in section for token in ("reference", "bibliograph")):
         return False, ["references_section"]
-    if any(token in section for token in ("acknowledg", "author", "title", "content")):
+    if any(token in section for token in ("acknowledg", "author", "content")):
         return False, ["low_value_section"]
     if "list" in section and ("figure" in section or "table" in section):
         return False, ["figure_table_list"]
@@ -570,6 +580,52 @@ def _is_bibliography_like(text: str) -> bool:
     # Dense http URLs (reference link farms)
     if lowered.count("http") > 10:
         return True
+    return False
+
+
+def _select_with_doc_diversity(
+    *,
+    ranked: list[SupportItem],
+    max_total: int,
+    max_per_doc: int,
+    route_name: str,
+    finalizer,
+) -> tuple[list[SupportItem], Counter]:
+    """Select up to max_total items from ranked, with per-doc diversity cap.
+
+    Fair selection: picks the top-scoring item first, then iterates through
+    remaining items in score order, skipping items that would exceed the per-doc
+    cap. Falls back to allowing same-doc overflow if fewer than max_total
+    distinct docs are available.
+    """
+    from collections import Counter
+    selected: list[SupportItem] = []
+    per_doc: Counter[str] = Counter()
+    distinct_docs = len({item.candidate.doc_id for item in ranked})
+
+    # Phase 1: score-ordered selection with diversity
+    for item in ranked:
+        if len(selected) >= max_total:
+            break
+        if per_doc[item.candidate.doc_id] >= max_per_doc:
+            continue
+        selected.append(item)
+        per_doc[item.candidate.doc_id] += 1
+
+    # Phase 2: if not enough items and all docs exhausted at max_per_doc,
+    # allow overflow (not enough distinct docs)
+    if len(selected) < max_total and distinct_docs * max_per_doc < max_total:
+        overflow_needed = max_total - len(selected)
+        for item in ranked:
+            if overflow_needed <= 0:
+                break
+            if item in selected:
+                continue
+            selected.append(item)
+            per_doc[item.candidate.doc_id] += 1
+            overflow_needed -= 1
+
+    return finalizer(selected, route_name), per_doc
 
 
 # ── Phase 15C: Protected rerank seed support retention ──────────────────────
