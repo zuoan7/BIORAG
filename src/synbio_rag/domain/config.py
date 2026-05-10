@@ -126,6 +126,14 @@ class RetrievalConfig:
             "Results and Discussion",
         ]
     )
+    # Phase 20L: original CN fallback floor for bilingual retrieval
+    original_cn_fallback_enabled: bool = False
+    original_cn_fallback_dense_top_n: int = 2
+    original_cn_fallback_bm25_top_n: int = 2
+    original_cn_fallback_max_total: int = 4
+    original_cn_fallback_require_rewrite_enabled: bool = True
+    original_cn_fallback_require_cjk: bool = True
+    original_cn_fallback_min_query_diff: bool = True
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     bm25_batch_size: int = 1000
@@ -501,6 +509,19 @@ class Settings:
         )
         settings.retrieval.source_floor_max_candidates_total = int(
             get_value("RETRIEVAL_SOURCE_FLOOR_MAX_CANDIDATES_TOTAL", str(settings.retrieval.source_floor_max_candidates_total))
+        )
+        # Phase 20L: original CN fallback floor
+        settings.retrieval.original_cn_fallback_enabled = _parse_bool(
+            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED", str(settings.retrieval.original_cn_fallback_enabled))
+        )
+        settings.retrieval.original_cn_fallback_dense_top_n = int(
+            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_DENSE_TOP_N", str(settings.retrieval.original_cn_fallback_dense_top_n))
+        )
+        settings.retrieval.original_cn_fallback_bm25_top_n = int(
+            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_BM25_TOP_N", str(settings.retrieval.original_cn_fallback_bm25_top_n))
+        )
+        settings.retrieval.original_cn_fallback_max_total = int(
+            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL", str(settings.retrieval.original_cn_fallback_max_total))
         )
         settings.retrieval.alias_expansion_enabled = _parse_bool(
             get_value("RETRIEVAL_ALIAS_EXPANSION_ENABLED", str(settings.retrieval.alias_expansion_enabled))

@@ -124,7 +124,21 @@ class SynBioRAGPipeline:
             question=retrieval_question,
             analysis=analysis,
             filters=filters,
+            original_question=question,
         )
+        # Phase 20L: original CN fallback floor
+        cn_fallback_debug = _run_original_cn_fallback(
+            question=question,
+            retrieval_question=retrieval_question,
+            rewrite_trace=rewrite_trace,
+            retrieved=retrieved,
+            analysis=analysis,
+            filters=filters,
+            config=self.settings.retrieval,
+            pipeline=self,
+        )
+        if cn_fallback_debug.get("triggered"):
+            retrieved = cn_fallback_debug["merged_candidates"]
         reranked = self.reranker.rerank(
             question,
             retrieved,
@@ -314,6 +328,7 @@ class SynBioRAGPipeline:
         question: str,
         analysis: QueryAnalysis,
         filters: QueryFilters | None,
+        original_question: str | None = None,
     ) -> tuple[list, dict[str, object]]:
         attempts: list[dict[str, object]] = []
         filter_plan = _build_filter_plan(filters)
@@ -323,6 +338,7 @@ class SynBioRAGPipeline:
                 limit=analysis.search_limit,
                 filters=candidate_filters,
                 analysis=analysis,
+                original_question=original_question,
             )
             attempts.append(
                 {
@@ -529,3 +545,96 @@ def _is_bibliography_like(text: str) -> bool:
     if et_al_count >= 3:
         return True
     return False
+
+
+# ── Phase 20L: Original CN Fallback Floor ──────────────────────────────
+
+def _contains_cjk(text: str) -> bool:
+    return any('\u4e00' <= c <= '\u9fff' for c in text)
+
+
+def _run_original_cn_fallback(
+    *,
+    question: str,
+    retrieval_question: str,
+    rewrite_trace,
+    retrieved: list,
+    analysis,
+    filters,
+    config,
+    pipeline,
+) -> dict:
+    """Run a small retrieval pass with the original CN query as fallback.
+
+    Only triggers when:
+    - original_cn_fallback_enabled is True
+    - query rewrite is enabled (retrieval query differs from original)
+    - original query contains CJK characters
+    - rewritten query differs from original query
+    """
+    debug = {
+        "triggered": False,
+        "reason": "",
+        "fallback_added_count": 0,
+        "fallback_added_chunk_ids": [],
+        "fallback_added_doc_ids": [],
+        "merged_candidates": list(retrieved),
+    }
+
+    if not config.original_cn_fallback_enabled:
+        debug["reason"] = "disabled"
+        return debug
+
+    if config.original_cn_fallback_require_rewrite_enabled:
+        rewrite_mode = getattr(rewrite_trace, 'mode', None)
+        is_enabled = str(rewrite_mode).lower() in ("enabled", "shadow")
+        if not is_enabled:
+            debug["reason"] = "rewrite_not_enabled"
+            return debug
+
+    if config.original_cn_fallback_require_cjk and not _contains_cjk(question):
+        debug["reason"] = "no_cjk_in_original_query"
+        return debug
+
+    if config.original_cn_fallback_min_query_diff:
+        if question.strip() == retrieval_question.strip():
+            debug["reason"] = "query_unchanged_by_rewrite"
+            return debug
+
+    try:
+        cn_retrieved, _ = pipeline._search_with_filter_fallback(
+            question=question,
+            analysis=analysis,
+            filters=filters,
+        )
+    except Exception:
+        debug["reason"] = "fallback_search_error"
+        return debug
+
+    if not cn_retrieved:
+        debug["reason"] = "fallback_no_results"
+        return debug
+
+    existing_ids = {chunk.chunk_id for chunk in retrieved}
+    added = []
+    for chunk in cn_retrieved:
+        if chunk.chunk_id in existing_ids:
+            if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
+                chunk.metadata["additional_query_branch"] = "original_cn_fallback"
+            continue
+        if len(added) >= config.original_cn_fallback_max_total:
+            break
+        if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
+            chunk.metadata["query_branch"] = "original_cn_fallback"
+            chunk.metadata["fallback_reason"] = "rewrite_enabled_cjk_query"
+        added.append(chunk)
+
+    merged = list(retrieved) + added
+    debug["triggered"] = True
+    debug["reason"] = "fallback_applied"
+    debug["fallback_added_count"] = len(added)
+    debug["fallback_added_chunk_ids"] = [c.chunk_id for c in added]
+    debug["fallback_added_doc_ids"] = list(dict.fromkeys(c.doc_id for c in added))
+    debug["merged_candidates"] = merged
+
+    return debug

@@ -59,8 +59,15 @@ class HybridRetriever:
         limit: int,
         filters: QueryFilters | None = None,
         analysis: QueryAnalysis | None = None,
+        original_question: str | None = None,
     ) -> list[RetrievedChunk]:
-        query_plan = _build_query_plan(question, analysis, self.config)
+        decomposition_query = original_question or question
+        query_plan = _build_query_plan(question, analysis, self.config, decomposition_query)
+        debug_plan = {
+            "retrieval_query": question,
+            "decomposition_query": decomposition_query,
+            "query_variants": [],
+        }
         dense_lists: list[list[RetrievedChunk]] = []
         sparse_lists: list[list[RetrievedChunk]] = []
         debug_variants: list[dict[str, object]] = []
@@ -93,7 +100,8 @@ class HybridRetriever:
                 }
             )
 
-        self.last_debug = {"query_variants": debug_variants}
+        debug_plan["query_variants"] = debug_variants
+        self.last_debug = debug_plan
         dense_results = dense_lists[0] if dense_lists else []
         sparse_results = sparse_lists[0] if sparse_lists else []
         self.last_debug["dense_hits"] = _serialize_hits(dense_results[:5], "vector_score")
@@ -241,14 +249,25 @@ def _build_query_plan(
     question: str,
     analysis: QueryAnalysis | None,
     config: RetrievalConfig,
+    decomposition_query: str | None = None,
 ) -> list[dict[str, object]]:
+    """Build query plan for hybrid retrieval.
+
+    question: the main retrieval query (may be rewritten EN).
+    decomposition_query: optional original query for comparison subquery extraction.
+        When QUERY_REWRITE_MODE=enabled, retrieval uses EN query but decomposition
+        should use the original CN query which preserves comparison structure.
+    """
     plan = [{"query": _expand_query_aliases(question), "weight": config.comparison_query_weight, "kind": "original"}]
     plan[0]["query"] = _expand_route_pathway_terms(plan[0]["query"])
     if not analysis or analysis.intent != QueryIntent.COMPARISON:
         plan[0]["weight"] = 1.0
         return plan
-    for subquery in _extract_comparison_subqueries(question):
-        if subquery and subquery != question:
+    # Use decomposition_query for comparison subquery extraction;
+    # falls back to question (retrieval query) if not provided.
+    compare_source = decomposition_query if decomposition_query else question
+    for subquery in _extract_comparison_subqueries(compare_source):
+        if subquery and subquery != compare_source:
             expanded = _expand_query_aliases(subquery)
             plan.append(
                 {
@@ -260,14 +279,33 @@ def _build_query_plan(
     return plan
 
 
+_ORGANISM_ABBREV_RE = re.compile(
+    r"\b([A-Z])\.\s*(coli|subtilis|cerevisiae|pastoris|glutamicum|lactis|amyloliquefaciens|licheniformis|megaterium)\b",
+    re.IGNORECASE,
+)
+
+
+def _mask_organism_abbrevs(text: str) -> str:
+    """Replace organism abbreviations like E. coli, B. subtilis with underscored forms
+    to prevent period-based sentence splitting from breaking them."""
+    return _ORGANISM_ABBREV_RE.sub(r"\1__\2", text)
+
+
+def _unmask_organism_abbrevs(text: str) -> str:
+    return re.sub(r"([A-Z])__(\w+)", r"\1. \2", text)
+
+
 def _extract_comparison_subqueries(question: str) -> list[str]:
     normalized = question.strip()
     if not normalized:
         return []
+    # Mask organism abbreviations before sentence boundary splitting
+    # to prevent E. coli, B. subtilis etc. from being split on the period.
+    safe = _mask_organism_abbrevs(normalized)
     prefix_removed = re.sub(
         r"^(?:请|请你|请基于文库|请根据文库)?\s*(?:比较|对比|相比|compare)\s*",
         "",
-        normalized,
+        safe,
         flags=re.IGNORECASE,
     )
     lead, sep, tail = prefix_removed.partition("：")
@@ -297,7 +335,10 @@ def _extract_comparison_subqueries(question: str) -> list[str]:
         pieces = [obj]
         if shared_context:
             pieces.append(shared_context)
-        subqueries.append(_clean_variant_text(" ".join(pieces)))
+        sq = _clean_variant_text(" ".join(pieces))
+        # Unmask organism abbreviations in final subquery
+        sq = _unmask_organism_abbrevs(sq)
+        subqueries.append(sq)
     return [item for item in subqueries if item]
 
 
