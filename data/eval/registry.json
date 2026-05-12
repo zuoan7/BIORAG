@@ -1,0 +1,66 @@
+{
+  "canonical_datasets": {
+    "smoke50": {
+      "canonical_path": "data/eval/datasets/smoke50.jsonl",
+      "legacy_paths": [
+        "data/evaluation/smoke50_parent_expansion_v1.jsonl"
+      ],
+      "manifest_path": "data/eval/manifests/smoke50_manifest.json"
+    },
+    "smoke100": {
+      "canonical_path": "data/eval/datasets/smoke100.jsonl",
+      "legacy_paths": [
+        "data/eval/datasets/enterprise_ragas_smoke100.json"
+      ],
+      "manifest_path": "data/eval/manifests/smoke100_manifest.json"
+    },
+    "smoke150": {
+      "canonical_path": "data/eval/datasets/smoke150.jsonl",
+      "legacy_paths": [
+        "data/evaluation/smoke50_parent_expansion_v1.jsonl",
+        "data/eval/datasets/enterprise_ragas_smoke100.json"
+      ],
+      "manifest_path": "data/eval/manifests/smoke150_manifest.json"
+    },
+    "smoke200": {
+      "canonical_path": "data/eval/datasets/smoke200.jsonl",
+      "manifest_path": "data/eval/manifests/smoke200_manifest.json",
+      "schema_path": "data/eval/schemas/eval_sample_schema.json",
+      "status": "canonical",
+      "base_dataset": "smoke150",
+      "added_dataset": "phase21_added50",
+      "created_by_phase": "21A-8",
+      "notes": "Smoke200 finalized from doc-disjoint reviewed draft; smoke150 entries preserved.",
+      "replacement_history": [
+        {
+          "manifest_updated": true,
+          "registry_updated": true,
+          "removed_sample_ids": [
+            "p21a_added50_014",
+            "p21a_added50_015",
+            "p21a_added50_016",
+            "p21a_added50_017",
+            "p21a_added50_018"
+          ],
+          "added_sample_ids": [
+            "p21a9v2_fact_001",
+            "p21a9v2_fact_002",
+            "p21a9v2_fact_003",
+            "p21a9v2_fact_004",
+            "p21a9v2_fact_005"
+          ],
+          "replacement_phase": "Phase 21A-9V-2",
+          "reason": "Replaced 5 invalid metadata/fragment negative samples with reviewed factoid replacements from parsed_preview.",
+          "notes": "Total sample count unchanged (200). Smoke150 subset unchanged (150). Added50 replaced 5/50 samples."
+        }
+      ]
+    }
+  },
+  "schema_path": "data/eval/schemas/eval_sample_schema.json",
+  "status": {
+    "canonical": true,
+    "legacy_preserved": true
+  },
+  "notes": "Legacy paths are NOT deleted. Scripts may still reference legacy paths.",
+  "last_updated": "2026-05-11T17:54:45Z"
+}

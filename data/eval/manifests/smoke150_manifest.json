@@ -1,0 +1,36 @@
+{
+  "dataset_name": "smoke150",
+  "canonical_path": "data/eval/datasets/smoke150.jsonl",
+  "legacy_source_paths": [
+    "data/evaluation/smoke50_parent_expansion_v1.jsonl",
+    "data/eval/datasets/enterprise_ragas_smoke100.json"
+  ],
+  "sample_count": 150,
+  "unique_sample_id_count": 150,
+  "route_distribution": {
+    "comparison": 23,
+    "factoid": 75,
+    "summary": 52
+  },
+  "category_distribution": {
+    "comparison": 22,
+    "factoid": 56,
+    "method_result_numeric": 5,
+    "negative_trigger_robustness": 5,
+    "summary": 52,
+    "table_figure_caption": 10
+  },
+  "difficulty_distribution": {
+    "unknown": 50,
+    "medium": 67,
+    "easy": 14,
+    "hard": 19
+  },
+  "expected_doc_empty_count": 5,
+  "negative_or_abstention_empty_expected_count": 5,
+  "created_by_phase": "21A-1",
+  "created_at": "2026-05-10T08:58:12.666912+00:00",
+  "source_hashes": "fdcee3f5be42430866cc00388f826043ffc54cc062f4828a9ef3dd0cfb3c4665+374ca3a9e28712d81db4bfe1b1c0243c9b066bd4f2ba5ced66f5f66255d2a898",
+  "canonical_hash": "83d171f2576597250212a6520741914f0ab04d987d26bffd387fe7e82c8fc7c2",
+  "notes": "Canonicalized with copy-not-move. Legacy paths preserved."
+}

@@ -1,0 +1,78 @@
+{
+  "dataset_name": "smoke200",
+  "version": "v1",
+  "canonical_path": "data/eval/datasets/smoke200.jsonl",
+  "component_datasets": [
+    "smoke150",
+    "phase21_added50"
+  ],
+  "sample_count": 200,
+  "smoke150_count": 150,
+  "added50_count": 50,
+  "unique_sample_id_count": 200,
+  "route_distribution": {
+    "comparison": 33,
+    "factoid": 101,
+    "summary": 60,
+    "negative": 6
+  },
+  "category_distribution": {
+    "comparison": 22,
+    "factoid": 56,
+    "method_result_numeric": 5,
+    "negative_trigger_robustness": 5,
+    "summary": 52,
+    "table_figure_caption": 16,
+    "negative": 5,
+    "paragraph": 3,
+    "multi_doc_comparison": 10,
+    "cross_lingual": 10,
+    "summary_review": 7,
+    "negative_near_topic": 1,
+    "pdf_table_figure": 6,
+    "factoid_precision": 2
+  },
+  "difficulty_distribution": {
+    "unknown": 50,
+    "medium": 75,
+    "easy": 14,
+    "hard": 61
+  },
+  "negative_sample_count": 11,
+  "doc_disjoint_added50": true,
+  "repeat_doc_exception_count": 0,
+  "parser_dependent_main_set_count": 0,
+  "source_hashes": {
+    "smoke150": "83d171f2576597250212a6520741914f0ab04d987d26bffd387fe7e82c8fc7c2",
+    "phase21_added50_doc_disjoint_reviewed_draft": "a86f688605232bc2da8583b3b9a88c3f5fd4681701da44db2a138cdb761c3081",
+    "smoke200_doc_disjoint_reviewed_draft": "1c9deca09f7fa96540b68f84b6bc887b9afc5b37560d6324c0c3bf8769cb01ab"
+  },
+  "canonical_hash": "1c9deca09f7fa96540b68f84b6bc887b9afc5b37560d6324c0c3bf8769cb01ab",
+  "created_by_phase": "21A-8",
+  "created_at": "2026-05-10T13:10:00.823263+00:00",
+  "notes": "Finalized from smoke200_doc_disjoint_reviewed_draft.jsonl after Phase21A-8 preflight validation.",
+  "replacement_history": [
+    {
+      "manifest_updated": true,
+      "registry_updated": true,
+      "removed_sample_ids": [
+        "p21a_added50_014",
+        "p21a_added50_015",
+        "p21a_added50_016",
+        "p21a_added50_017",
+        "p21a_added50_018"
+      ],
+      "added_sample_ids": [
+        "p21a9v2_fact_001",
+        "p21a9v2_fact_002",
+        "p21a9v2_fact_003",
+        "p21a9v2_fact_004",
+        "p21a9v2_fact_005"
+      ],
+      "replacement_phase": "Phase 21A-9V-2",
+      "reason": "Replaced 5 invalid metadata/fragment negative samples with reviewed factoid replacements from parsed_preview.",
+      "notes": "Total sample count unchanged (200). Smoke150 subset unchanged (150). Added50 replaced 5/50 samples."
+    }
+  ],
+  "updated_at": "2026-05-11T17:54:45Z"
+}
