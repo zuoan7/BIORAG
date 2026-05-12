@@ -21,6 +21,7 @@ class OpenAICompatibleClient:
         messages: list[dict[str, str]],
         temperature: float = 0.1,
         response_format: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         if not self.is_enabled():
             raise RuntimeError("OpenAI-compatible endpoint is not configured")
@@ -32,6 +33,8 @@ class OpenAICompatibleClient:
         }
         if response_format:
             payload["response_format"] = response_format
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.post(

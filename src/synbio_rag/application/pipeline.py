@@ -11,8 +11,9 @@ from pymilvus import MilvusClient
 from ..domain.confidence import ConfidenceScorer
 from ..domain.config import Settings
 from ..domain.router import QueryRouter
-from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGResponse, RetrievedChunk
+from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, QueryIntent, RAGResponse, RetrievedChunk
 from ..infrastructure.embedding.bge import BGEM3Embedder
+from ..infrastructure.clients.openai_compatible import OpenAICompatibleClient
 from ..infrastructure.external_tools.literature_search import ExternalToolManager
 from ..infrastructure.index.parent_store import ParentStore
 from ..infrastructure.vectorstores.bm25 import BM25Retriever
@@ -98,6 +99,7 @@ class SynBioRAGPipeline:
         self.external_tools = ExternalToolManager(settings.tools)
         # Phase 19: query rewrite service (default off)
         qrc = settings.query_rewrite
+        rewrite_llm_client, rewrite_llm_error = _build_query_rewrite_llm_client(settings)
         self._rewrite_svc = QueryRewriteService(
             mode=QueryRewriteMode(qrc.mode),
             model=qrc.model, temperature=qrc.temperature,
@@ -106,7 +108,11 @@ class SynBioRAGPipeline:
             guard_implicit=qrc.guard_implicit_reference,
             guard_negative=qrc.guard_negative_intent,
             cache_version=qrc.cache_key_version,
-            llm_client=None,  # Must be set externally for LLM calls
+            llm_client=rewrite_llm_client,
+            llm_client_error=rewrite_llm_error,
+            eval_cache_path=qrc.eval_rewrite_cache_path,
+            eval_require_cache=qrc.eval_rewrite_require_cache,
+            eval_fail_fast_on_missing=qrc.eval_rewrite_fail_fast_on_missing,
         )
 
     def answer(
@@ -235,11 +241,15 @@ class SynBioRAGPipeline:
             gv2_lifecycle_debug = dict(gv2_debug.get("evidence_lifecycle_debug", {}))
             evidence_lifecycle_debug.update(gv2_lifecycle_debug)
             gv2_debug["evidence_lifecycle_debug"] = evidence_lifecycle_debug
+            # Phase 21A-9I: negative/no-answer guard — suppress citations in v2
+            v2_citations = gen_result.citations
+            if analysis.intent == QueryIntent.NEGATIVE:
+                v2_citations = []
             return RAGResponse(
                 answer=gen_result.answer,
                 confidence=confidence,
                 route=analysis.intent,
-                citations=gen_result.citations,
+                citations=v2_citations,
                 used_external_tool=False,
                 tool_name=None,
                 tool_result=None,
@@ -266,6 +276,7 @@ class SynBioRAGPipeline:
                         "input_count": len(seed_chunks),
                         "output_count": len(seed_chunks),
                     },
+                    "original_cn_fallback": _sanitize_original_cn_fallback_debug(cn_fallback_debug),
                     "parent_expansion": parent_expansion_debug,
                     "filter_strategy": retrieval_debug,
                     "generation_v2": gen_result.debug,
@@ -291,6 +302,9 @@ class SynBioRAGPipeline:
             low_confidence=self.confidence_scorer.needs_external_tool(confidence),
         )
         citations = self.generator.build_citations(final_chunks, evidence_quality)
+        # Phase 21A-9I: negative/no-answer guard — suppress citations
+        if analysis.intent == QueryIntent.NEGATIVE:
+            citations = []
         answer = self.generator.validate_generated_answer(answer, citations, evidence_quality)
 
         return RAGResponse(
@@ -318,6 +332,7 @@ class SynBioRAGPipeline:
                 "retrieval_hits": getattr(self.retriever, "last_debug", {}),
                 "rerank_hits": getattr(self.reranker, "last_debug", {}),
                 "neighbor_expansion": getattr(self.neighbor_expander, "last_debug", {}),
+                "original_cn_fallback": _sanitize_original_cn_fallback_debug(cn_fallback_debug),
                 "filter_strategy": retrieval_debug,
                 "evidence_quality": evidence_quality.__dict__,
             },
@@ -381,6 +396,43 @@ def _build_filter_plan(filters: QueryFilters | None) -> list[tuple[str, QueryFil
         seen.add(key)
         deduped.append((name, candidate))
     return deduped
+
+
+def _build_query_rewrite_llm_client(settings: Settings):
+    qrc = settings.query_rewrite
+    mode = QueryRewriteMode(qrc.mode)
+    if mode == QueryRewriteMode.OFF:
+        return None, ""
+
+    api_base = settings.llm.api_base
+    api_key = settings.llm.api_key
+    if not api_base or not api_key:
+        message = "query_rewrite_llm_client_unavailable: missing QWEN_CHAT_API_BASE or QWEN_CHAT_API_KEY"
+        if mode == QueryRewriteMode.ENABLED and qrc.require_llm_for_eval:
+            raise RuntimeError(message)
+        return None, message
+
+    timeout_seconds = qrc.timeout_ms / 1000.0 if qrc.timeout_ms else settings.llm.timeout_seconds
+    try:
+        client = OpenAICompatibleClient(
+            api_base=api_base,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:
+        message = f"query_rewrite_llm_client_init_failed: {type(exc).__name__}: {exc}"
+        if mode == QueryRewriteMode.ENABLED and qrc.require_llm_for_eval:
+            raise RuntimeError(message) from exc
+        return None, message
+    return client, ""
+
+
+def _sanitize_original_cn_fallback_debug(debug: dict) -> dict:
+    return {
+        key: value
+        for key, value in debug.items()
+        if key != "merged_candidates"
+    }
 
 
 # ── Phase 7C: Summary section supplement ─────────────────────────
@@ -586,7 +638,11 @@ def _run_original_cn_fallback(
         return debug
 
     if config.original_cn_fallback_require_rewrite_enabled:
-        rewrite_mode = getattr(rewrite_trace, 'mode', None)
+        rewrite_mode = getattr(
+            rewrite_trace,
+            'query_rewrite_mode',
+            getattr(rewrite_trace, 'mode', None),
+        )
         is_enabled = str(rewrite_mode).lower() in ("enabled", "shadow")
         if not is_enabled:
             debug["reason"] = "rewrite_not_enabled"

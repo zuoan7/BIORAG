@@ -60,6 +60,23 @@ _INLINE_PATTERNS = [
         re.compile(r"comparison between\s+(.+?)\s+and\s+(.+?)(?:$|[?.。,，])", re.IGNORECASE),
     ),
     ("respectively", re.compile(r"分别是\s+(.+?)\s+[和与]\s+(.+?)(?:$|[？?。.,，])")),
+    (
+        "zh_compare_a_and_b_as_x",
+        re.compile(
+            r"(?:比较|对比)\s*(?:文库中|文献中|资料中|当前文库中)?\s*"
+            r"(.+?)\s*[和与]\s*"
+            r"(.+?)\s*作为\s*.+?\s*的\s*"
+            r"(.+)"
+        ),
+    ),
+    (
+        "zh_a_and_b_as_x_difference",
+        re.compile(
+            r"(.+?)\s*[和与]\s*"
+            r"(.+?)\s*作为\s*.+?\s*[的]\s*"
+            r".+(?:差异|区别|有何差异|有什么差异|表现|策略)"
+        ),
+    ),
 ]
 
 _TWO_CLASS_PATTERNS = [

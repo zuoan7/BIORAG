@@ -10,6 +10,7 @@ class QueryIntent(str, Enum):
     SUMMARY = "summary"
     COMPARISON = "comparison"
     EXPERIMENT = "experiment"
+    NEGATIVE = "negative"
     UNKNOWN = "unknown"
 
 
@@ -20,6 +21,9 @@ class QueryAnalysis:
     search_limit: int
     rerank_top_k: int
     notes: str = ""
+    negative_intent_detected: bool = False
+    abstain_clause_detected: bool = False
+    intent_before_negative_guard: str = ""
 
 
 @dataclass

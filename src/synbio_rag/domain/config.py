@@ -289,6 +289,11 @@ class QueryRewriteConfig:
     guard_negative_intent: bool = True
     trace_enabled: bool = True
     prompt_path: str = "resources/prompts/query_rewrite_en_mirror.txt"
+    require_llm_for_eval: bool = False
+    fail_fast_on_fallback_rate: float | None = None
+    eval_rewrite_cache_path: str = ""
+    eval_rewrite_require_cache: bool = False
+    eval_rewrite_fail_fast_on_missing: bool = False
 
 
 @dataclass
@@ -814,6 +819,13 @@ class Settings:
         settings.query_rewrite.guard_implicit_reference = _parse_bool(get_value("QUERY_REWRITE_GUARD_IMPLICIT_REFERENCE", str(settings.query_rewrite.guard_implicit_reference)))
         settings.query_rewrite.guard_negative_intent = _parse_bool(get_value("QUERY_REWRITE_GUARD_NEGATIVE_INTENT", str(settings.query_rewrite.guard_negative_intent)))
         settings.query_rewrite.trace_enabled = _parse_bool(get_value("QUERY_REWRITE_TRACE_ENABLED", str(settings.query_rewrite.trace_enabled)))
+        settings.query_rewrite.require_llm_for_eval = _parse_bool(get_value("QUERY_REWRITE_REQUIRE_LLM_FOR_EVAL", str(settings.query_rewrite.require_llm_for_eval)))
+        fallback_rate_raw = get_value("QUERY_REWRITE_FAIL_FAST_ON_FALLBACK_RATE", "")
+        if fallback_rate_raw.strip():
+            settings.query_rewrite.fail_fast_on_fallback_rate = float(fallback_rate_raw)
+        settings.query_rewrite.eval_rewrite_cache_path = get_value("EVAL_REWRITE_CACHE_PATH", settings.query_rewrite.eval_rewrite_cache_path)
+        settings.query_rewrite.eval_rewrite_require_cache = _parse_bool(get_value("EVAL_REWRITE_REQUIRE_CACHE", str(settings.query_rewrite.eval_rewrite_require_cache)))
+        settings.query_rewrite.eval_rewrite_fail_fast_on_missing = _parse_bool(get_value("EVAL_REWRITE_FAIL_FAST_ON_MISSING", str(settings.query_rewrite.eval_rewrite_fail_fast_on_missing)))
         settings.resolve_paths()
         settings.ensure_directories()
         return settings
