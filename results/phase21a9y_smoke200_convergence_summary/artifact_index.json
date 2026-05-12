@@ -1,0 +1,23 @@
+{
+  "final_artifacts_to_keep": [
+    "data/eval/datasets/smoke150.jsonl",
+    "data/eval/datasets/smoke200.jsonl",
+    "data/eval/rewrite_cache/smoke150_rewrites.jsonl",
+    "data/eval/rewrite_cache/smoke200_rewrites.jsonl",
+    "data/eval/registry.json",
+    "data/eval/manifests/*",
+    "data/eval/schemas/*",
+    "src/synbio_rag/domain/schemas.py",
+    "src/synbio_rag/domain/router.py",
+    "src/synbio_rag/application/generation_v2/support_selector.py",
+    "src/synbio_rag/application/generation_v2/citation_binder.py",
+    "src/synbio_rag/application/generation_v2/branch_parser.py",
+    "src/synbio_rag/rewrite/query_rewrite_service.py",
+    "src/synbio_rag/domain/config.py",
+    "src/synbio_rag/application/pipeline.py",
+    "src/synbio_rag/infrastructure/clients/openai_compatible.py",
+    "tests/test_phase21a*.py"
+  ],
+  "temporary_artifacts_can_archive": "results/phase21a9* (all phase subdirectories after convergence summary)",
+  "notes": "Keep final convergence summary results. Can archive intermediate phase results after merge."
+}

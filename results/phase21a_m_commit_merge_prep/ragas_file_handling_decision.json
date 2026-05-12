@@ -1,0 +1,26 @@
+{
+  "ragas_files_detected": [
+    "scripts/evaluation/run_phase21a_r1b_ragas_slimmed.py",
+    "scripts/evaluation/run_phase21a_r2_ragas200_v1.py",
+    "scripts/evaluation/run_ragas200_fixed.py",
+    "scripts/evaluation/run_ragas200_fixed.py",
+    "tests/test_phase21a_r1b_ragas_input_slimming.py"
+  ],
+  "include_in_phase21a_commit": false,
+  "recommended_action": "exclude_for_later_eval_phase",
+  "reason": "RAGAS evaluation scripts and results expose evaluator/methodological issues (BGE-M3 scale, judge strictness, reference format) rather than pipeline quality failures. RAGAS is explicitly excluded from Phase 21A merge gate per Phase 21A-Z closeout. RAGAS files will be handled in a separate Phase 21B-Eval that addresses metric adaptation, threshold calibration, and reference answer construction.",
+  "files_to_exclude": [
+    "scripts/evaluation/run_ragas200_fixed.py",
+    "scripts/evaluation/run_phase21a_r1b_ragas_slimmed.py",
+    "scripts/evaluation/run_phase21a_r2_ragas200_v1.py",
+    "tests/test_phase21a_r1b_ragas_input_slimming.py",
+    "results/phase21a_r1b_ragas_input_slimming/",
+    "results/phase21a_r2_ragas200_v1_baseline/",
+    "results/phase21a_r2a_ragas_manual_calibration/",
+    "reports/phase21a_r1b_ragas_input_slimming/",
+    "reports/phase21a_r2_ragas200_v1_baseline/",
+    "reports/phase21a_r2a_ragas_manual_calibration/"
+  ],
+  "files_to_include_if_any": [],
+  "notes": "RAGAS files remain untracked or in working dir. They can be committed later in Phase 21B-Eval after metric adaptation. Current RAGAS audit reports (R2A) contain useful calibration findings but are archived, not merged. Users who need RAGAS audit evidence can access results/ directory directly."
+}

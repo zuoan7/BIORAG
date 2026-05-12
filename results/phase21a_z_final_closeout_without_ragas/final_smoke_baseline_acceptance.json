@@ -1,0 +1,25 @@
+{
+  "smoke150_accepted": true,
+  "smoke150_real_P0": 3,
+  "smoke150_residual_ids": [
+    "ent_058",
+    "ent_083",
+    "ent_094"
+  ],
+  "smoke150_stability": "3 runs identical; 150/150 frozen rewrite",
+  "smoke200_accepted": true,
+  "smoke200_real_P0": 6,
+  "smoke200_doc_miss": 0,
+  "smoke200_doc_hit_rate": 1.0,
+  "smoke200_frozen_rewrite": "200/200",
+  "smoke200_live_rewrite": 0,
+  "smoke200_fallback": 0,
+  "negative_safety_pass": true,
+  "citation_safety_pass": true,
+  "rewrite_safety_pass": true,
+  "dataset_safety_pass": true,
+  "known_residuals_explained": true,
+  "acceptance_decision": "accept_phase21a_smoke_baseline",
+  "rationale": "Smoke150 (real_P0=3) and smoke200 (real_P0=6) baselines stable. All 6 residuals explained and documented. 0 doc_miss, doc_hit_rate=1.0, all safety checks pass. Frozen rewrite (200/200) ensures reproducibility. This is the primary quality gate for Phase 21A.",
+  "notes": "real_P0=6 is the definitive Phase 21A quality baseline. RAGAS excluded from acceptance criteria."
+}

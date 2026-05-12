@@ -1,0 +1,93 @@
+{
+  "commit_1": {
+    "title": "Phase 21A: stabilize RAG pipeline and smoke support/citation behavior",
+    "files": [
+      "src/synbio_rag/application/generation_v2/branch_parser.py",
+      "src/synbio_rag/application/generation_v2/citation_binder.py",
+      "src/synbio_rag/application/generation_v2/support_selector.py",
+      "src/synbio_rag/application/pipeline.py",
+      "src/synbio_rag/domain/config.py",
+      "src/synbio_rag/domain/router.py",
+      "src/synbio_rag/domain/schemas.py",
+      "src/synbio_rag/infrastructure/clients/openai_compatible.py",
+      "src/synbio_rag/rewrite/query_rewrite_service.py",
+      "tests/test_phase21a9c_query_rewrite_wiring.py",
+      "tests/test_phase21a9g_support_retention.py",
+      "tests/test_phase21a9i_negative_abstention.py"
+    ],
+    "rationale": "7 code fixes across 9 src files: rewrite wiring (9C), support diversity retention (9G), negative route (9I), frozen eval cache (9K), second support fix (9M), used-support citation completion (9O), CN comparison parser (9Q). Core pipeline changes. +401/-21 lines. 3 supporting unit tests.",
+    "validation": "Smoke150 real_P0=3, smoke200 real_P0=6, doc_hit=1.0, 0 citation_inflation, 0 wrong_doc, negative route correct, 3 runs identical.",
+    "suggested_message": "Phase 21A: stabilize RAG pipeline and smoke support/citation behavior\n\n7 fixes across 9 files:\n- 9C: Fix rewrite wiring (llm_client=None causing 100% fallback)\n- 9G: Support diversity retention (same-doc overcrowding fix)\n- 9I: Negative route (explicit abstain → no citations)\n- 9K: Frozen eval rewrite cache (ensures reproducibility)\n- 9M: Second support fix (scored_median + close-margin)\n- 9O: Used-support citation completion (uncited selected_support)\n- 9Q: CN comparison parser pattern (A和B作为X syntax)\n\nValidation: smoke150 real_P0=3, smoke200 real_P0=6/200,\ndoc_hit_rate=1.0, frozen_rewrite=200/200, 3 runs identical."
+  },
+  "commit_2": {
+    "title": "Phase 21A: canonicalize smoke datasets and freeze rewrite caches",
+    "files": [
+      "data/eval/datasets/smoke150.jsonl",
+      "data/eval/datasets/smoke200.jsonl",
+      "data/eval/rewrite_cache/smoke150_rewrites.jsonl",
+      "data/eval/rewrite_cache/smoke200_rewrites.jsonl",
+      "data/eval/manifests/smoke150_manifest.json",
+      "data/eval/manifests/smoke200_manifest.json",
+      "data/eval/registry.json"
+    ],
+    "rationale": "Smoke150 canonicalization (smoke50+smoke100→150), smoke200 with bad5→replacement5, frozen rewrite caches (350 total), manifest/registry updates. Use git add -f to override .gitignore for data/.",
+    "validation": "150+200 unique sample IDs, 150+200 cache entries, manifest validated, registry updated.",
+    "suggested_message": "Phase 21A: canonicalize smoke datasets and freeze rewrite caches\n\n- smoke150: smoke50 + smoke100 canonicalized (150 unique IDs)\n- smoke200: bad5 (p21a_added50_014-018) replaced with reviewed\n  factoid replacements (p21a9v2_fact_001-005)\n- Rewrite caches: 150+200 frozen, 100% hit rate\n- Manifest/registry: updated for smoke200 distribution\n\nNote: data/eval/* requires git add -f (in .gitignore)."
+  },
+  "commit_3": {
+    "title": "Phase 21A: add smoke diagnostics, convergence reports, and eval scripts",
+    "files": [
+      "scripts/evaluation/run_phase21a0_layout_audit.py",
+      "scripts/evaluation/run_phase21a1_canonicalize_smoke150.py",
+      "scripts/evaluation/run_phase21a2_equivalence_validation.py",
+      "scripts/evaluation/run_phase21a9_smoke200_rebaseline.py",
+      "scripts/evaluation/run_phase21a9b_rewrite_fallback_audit.py",
+      "scripts/evaluation/run_phase21a9c_rewrite_wiring_fix.py",
+      "scripts/evaluation/run_phase21a9d_remaining_smoke150_regression.py",
+      "scripts/evaluation/run_phase21a9e_real_remaining_regression_audit.py",
+      "scripts/evaluation/run_phase21a9f_support_citation_targeted_audit.py",
+      "scripts/evaluation/run_phase21a9g_support_retention_fix.py",
+      "scripts/evaluation/run_phase21a9g_v_validation.py",
+      "scripts/evaluation/run_phase21a9h_negative_audit.py",
+      "scripts/evaluation/run_phase21a9i_negative_fix.py",
+      "scripts/evaluation/run_phase21a9j_remaining_support_audit.py",
+      "scripts/evaluation/run_phase21a9k_frozen_rewrite_cache.py",
+      "scripts/evaluation/run_phase21a9l_frozen_support_audit.py",
+      "results/phase21a9y_smoke200_convergence_summary/run_config.json",
+      "results/phase21a9y_smoke200_convergence_summary/change_inventory.json",
+      "results/phase21a9y_smoke200_convergence_summary/final_smoke150_baseline.json",
+      "results/phase21a9y_smoke200_convergence_summary/final_smoke200_baseline.json",
+      "results/phase21a9y_smoke200_convergence_summary/final_residual_ledger.csv",
+      "results/phase21a9y_smoke200_convergence_summary/code_fix_ledger.csv",
+      "results/phase21a9y_smoke200_convergence_summary/dataset_fix_ledger.csv",
+      "results/phase21a9y_smoke200_convergence_summary/safety_summary.json",
+      "results/phase21a9y_smoke200_convergence_summary/known_backlog.csv",
+      "results/phase21a9y_smoke200_convergence_summary/merge_readiness_assessment.json",
+      "results/phase21a_z_final_closeout_without_ragas/final_smoke_baseline_acceptance.json",
+      "results/phase21a_z_final_closeout_without_ragas/final_backlog_handoff.csv",
+      "results/phase21a_z_final_closeout_without_ragas/ragas_exclusion_note.json",
+      "reports/phase21a9y_smoke200_convergence_summary/summary.md",
+      "reports/phase21a_z_final_closeout_without_ragas/summary.md"
+    ],
+    "rationale": "Phase 21A diagnostic/validation scripts, convergence reports, baseline acceptance, backlog handoff, RAGAS exclusion note. Use git add -f for results/ and reports/.",
+    "validation": "All 6 residuals documented, all safety checks pass, convergence summary complete.",
+    "suggested_message": "Phase 21A: add smoke diagnostics and convergence reports\n\n- 16 diagnostic/validation scripts for Phase 21A fixes\n- smoke200 convergence summary (real_P0=6, doc_hit=1.0)\n- Final closeout reports, residual ledger, backlog handoff\n- RAGAS exclusion note (evaluator adaptation deferred)\n\nNote: results/ and reports/ require git add -f (in .gitignore)."
+  },
+  "files_excluded_from_commits": [
+    "scripts/evaluation/run_ragas200_fixed.py (pre-fix RAGAS, not part of Phase 21A)",
+    "scripts/evaluation/run_phase21a_r1b_ragas_slimmed.py (RAGAS input slimming)",
+    "scripts/evaluation/run_phase21a_r2_ragas200_v1.py (RAGAS200 v1 baseline)",
+    "tests/test_phase21a_r1b_ragas_input_slimming.py (RAGAS tests)",
+    "results/phase21a_r1b_ragas_input_slimming/ (RAGAS results)",
+    "results/phase21a_r2_ragas200_v1_baseline/ (RAGAS200 v1 results)",
+    "results/phase21a_r2a_ragas_manual_calibration/ (RAGAS calibration)",
+    "results/phase21a_m_commit_merge_prep/ (this phase)",
+    "results/phase21a_z_final_closeout_without_ragas/ (Z phase — included via Commit 3 select files)"
+  ],
+  "files_need_manual_decision": [
+    "results/phase21a9w_smoke200_frozen_rebaseline_after_replacement/ (large per_sample_results.csv — include summary only?)",
+    "results/phase21a9x_replacement_residual_audit/ (large reconciliation file — include?)"
+  ],
+  "blocking_issues": [],
+  "notes": "3-commit split: code (9 src + 3 tests), data (7 data/cache/manifest files with git add -f), diagnostics (16 scripts + convergence reports with git add -f). RAGAS scripts, results, and reports explicitly excluded pending Phase 21B-Eval."
+}

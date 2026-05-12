@@ -1,0 +1,20 @@
+{
+  "ragas_excluded_from_phase21a_closeout": true,
+  "reason": "RAGAS evaluation scripts and metric adaptation require separate work. Current RAGAS results expose evaluator issues (BGE-M3 score scale, judge strictness, reference format) rather than pipeline quality failures. RAGAS is not reliable enough to serve as a quality gate for Phase 21A merge.",
+  "known_ragas_issues": {
+    "answer_relevancy_bge_m3_scale": "BGE-M3 produces median=0.0 for Chinese biomedical QA. 69% scores=0.0 despite topically relevant answers.",
+    "context_precision_judge_strictness": "Bimodal distribution (0.0 or 1.0). Smoke doc_hit=1.0 confirms support relevance.",
+    "answer_correctness_reference_format": "100/100 NaN. expected_answer field is descriptive, not concise factual references.",
+    "faithfulness_partial_signal": "Usable (mean=0.71) but 10.8% NaN from length truncation. Only metric that partially works.",
+    "metric_adaptation_pending": "All metrics require domain-specific threshold calibration before use as quality gates."
+  },
+  "how_to_handle_later": [
+    "separate_phase_ragas_metric_adaptation",
+    "build_reference_answers for answer_correctness",
+    "calibrate_relevancy_threshold with LLM judge instead of BGE-M3 embeddings",
+    "judge_based_relevancy as alternative to embedding-based relevancy",
+    "RAGAS200 v2 with calibrated thresholds after fixes"
+  ],
+  "affects_phase21a_merge": false,
+  "notes": "RAGAS results are documented but excluded from Phase 21A merge gate. Smoke baseline remains the definitive quality standard. Future Phase 21B-Eval or dedicated RAGAS adaptation phase can re-address evaluation methodology."
+}

@@ -1,0 +1,12 @@
+{
+  "code_changes_stable": true,
+  "smoke150_stability_pass": true,
+  "smoke200_frozen_rebaseline_pass": true,
+  "safety_pass": true,
+  "dataset_manifest_consistent": true,
+  "known_residuals_explained": true,
+  "no_unexplained_regression": true,
+  "recommended_action": "ready_to_commit_and_merge_after_review",
+  "rationale": "All 6 residual explained. All safety checks pass. Smoke150/200 frozen baselines stable. Code fixes are generic (no sample/doc IDs). Dataset corrections are documented and validated. Ready for commit/merge.",
+  "notes": "Optional: run RAGAS200 as quality supplement before merge. Not required for safety/validity."
+}

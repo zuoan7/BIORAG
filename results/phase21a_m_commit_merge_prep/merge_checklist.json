@@ -1,0 +1,108 @@
+{
+  "checklist_items": [
+    {
+      "item": "smoke150 baseline accepted (real_P0=3)",
+      "status": "pass",
+      "evidence": "results/phase21a9y_smoke200_convergence_summary/final_smoke150_baseline.json",
+      "blocking": true
+    },
+    {
+      "item": "smoke200 baseline accepted (real_P0=6/200)",
+      "status": "pass",
+      "evidence": "results/phase21a9y_smoke200_convergence_summary/final_smoke200_baseline.json",
+      "blocking": true
+    },
+    {
+      "item": "doc_hit_rate=1.0, doc_miss=0",
+      "status": "pass",
+      "evidence": "smoke200_frozen_baseline",
+      "blocking": true
+    },
+    {
+      "item": "frozen rewrite cache complete (200/200)",
+      "status": "pass",
+      "evidence": "200/200 cache entries for smoke200",
+      "blocking": true
+    },
+    {
+      "item": "no live rewrite (live=0)",
+      "status": "pass",
+      "evidence": "3 runs identical, 0 live calls",
+      "blocking": true
+    },
+    {
+      "item": "no rewrite fallback (fallback=0)",
+      "status": "pass",
+      "evidence": "fail-fast guard confirmed",
+      "blocking": true
+    },
+    {
+      "item": "negative_safety PASS",
+      "status": "pass",
+      "evidence": "6/6 negative, 0 citation, correct route",
+      "blocking": true
+    },
+    {
+      "item": "citation_safety PASS (0 wrong-doc, 0 inflation)",
+      "status": "pass",
+      "evidence": "citation_binding=0, 0 wrong_doc",
+      "blocking": true
+    },
+    {
+      "item": "bad5 removed, replacement5 added",
+      "status": "pass",
+      "evidence": "dataset_fix_ledger.csv",
+      "blocking": true
+    },
+    {
+      "item": "manifest/registry updated",
+      "status": "pass",
+      "evidence": "smoke200_manifest.json, registry.json",
+      "blocking": true
+    },
+    {
+      "item": "residual ledger present (6 explained)",
+      "status": "pass",
+      "evidence": "final_residual_ledger.csv",
+      "blocking": false
+    },
+    {
+      "item": "RAGAS excluded from merge gate",
+      "status": "pass",
+      "evidence": "ragas_exclusion_note.json",
+      "blocking": false
+    },
+    {
+      "item": "no unexplained regressions",
+      "status": "pass",
+      "evidence": "smoke150 3→3 stable, smoke200 regression audit",
+      "blocking": true
+    },
+    {
+      "item": "no unexpected src files modified",
+      "status": "pass",
+      "evidence": "git diff --name-only: only 9 expected files",
+      "blocking": true
+    },
+    {
+      "item": "tests pass or known status recorded",
+      "status": "pass",
+      "evidence": "tests/test_phase21a9* all pass (25/25 R1B tests also pass)",
+      "blocking": false
+    },
+    {
+      "item": "PR description generated",
+      "status": "pass",
+      "evidence": "reports/phase21a_m_commit_merge_prep/pr_description.md",
+      "blocking": false
+    },
+    {
+      "item": "commit split plan ready",
+      "status": "pass",
+      "evidence": "commit_split_plan.json",
+      "blocking": false
+    }
+  ],
+  "overall_merge_ready": "after_review",
+  "notes": "All blocking items pass. Ready for 3-commit split, PR, and merge after reviewer approval. The only deferred items are: (1) RAGAS metric adaptation, (2) 6 smoke200 residuals → Phase 21B backlog."
+}

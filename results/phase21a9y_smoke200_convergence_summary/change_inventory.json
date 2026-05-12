@@ -1,0 +1,153 @@
+{
+  "code_changes_by_phase": [
+    {
+      "phase": "21A-9C",
+      "changed_files": [
+        "pipeline.py",
+        "config.py",
+        "query_rewrite_service.py",
+        "openai_compatible.py"
+      ],
+      "change_type": "fix",
+      "purpose": "rewrite llm_client=None → inject LLM client",
+      "risk_level": "medium",
+      "validation_summary": "rewrite probe passed; fallback rate dropped"
+    },
+    {
+      "phase": "21A-9G",
+      "changed_files": [
+        "support_selector.py"
+      ],
+      "change_type": "feature",
+      "purpose": "doc diversity retention after seed protection + support floor",
+      "risk_level": "low",
+      "validation_summary": "safety confirmed; no citation inflation; no negative regression"
+    },
+    {
+      "phase": "21A-9I",
+      "changed_files": [
+        "schemas.py",
+        "router.py",
+        "support_selector.py",
+        "pipeline.py"
+      ],
+      "change_type": "feature",
+      "purpose": "negative route detection + support/citation suppression",
+      "risk_level": "low",
+      "validation_summary": "5/5 negative fixed; 0 false positive on controls"
+    },
+    {
+      "phase": "21A-9K",
+      "changed_files": [
+        "query_rewrite_service.py",
+        "config.py",
+        "pipeline.py"
+      ],
+      "change_type": "feature",
+      "purpose": "frozen eval rewrite cache + fail-fast guard",
+      "risk_level": "low",
+      "validation_summary": "smoke150 stability PASS; 3 runs identical; eval 100% reproducible"
+    },
+    {
+      "phase": "21A-9M",
+      "changed_files": [
+        "support_selector.py"
+      ],
+      "change_type": "feature",
+      "purpose": "summary quality filter tune + close-margin capacity+1",
+      "risk_level": "low",
+      "validation_summary": "smoke150 RP 9→6; support_sel 5→3; no regression"
+    },
+    {
+      "phase": "21A-9O",
+      "changed_files": [
+        "citation_binder.py"
+      ],
+      "change_type": "feature",
+      "purpose": "used-support citation completion",
+      "risk_level": "low",
+      "validation_summary": "citation_binding 3→0; smoke150 RP 6→3; 0 wrong-doc"
+    },
+    {
+      "phase": "21A-9Q",
+      "changed_files": [
+        "branch_parser.py"
+      ],
+      "change_type": "feature",
+      "purpose": "CN comparison parser pattern for A和B作为X",
+      "risk_level": "low",
+      "validation_summary": "parser correctly extracts branches; no false positives"
+    }
+  ],
+  "dataset_changes_by_phase": [
+    {
+      "phase": "21A-1",
+      "changed_files": [
+        "smoke50.jsonl",
+        "smoke100.jsonl",
+        "smoke150.jsonl",
+        "schemas/",
+        "manifests/",
+        "registry.json"
+      ],
+      "removed_samples": [],
+      "added_samples": [],
+      "reason": "canonicalize smoke50+smoke100 → smoke150; copy not move",
+      "validation_summary": "150 unique IDs; 0 conflicts; schema pass"
+    },
+    {
+      "phase": "21A-9V-2",
+      "changed_files": [
+        "smoke200.jsonl",
+        "smoke200_rewrites.jsonl",
+        "manifests/smoke200_manifest.json",
+        "registry.json"
+      ],
+      "removed_samples": [
+        "p21a_added50_014",
+        "p21a_added50_015",
+        "p21a_added50_016",
+        "p21a_added50_017",
+        "p21a_added50_018"
+      ],
+      "added_samples": [
+        "p21a9v2_fact_001",
+        "p21a9v2_fact_002",
+        "p21a9v2_fact_003",
+        "p21a9v2_fact_004",
+        "p21a9v2_fact_005"
+      ],
+      "reason": "replace 5 bad metadata/fragment negative samples with reviewed factoid replacements",
+      "validation_summary": "200 samples; 200 unique IDs; source overlap check pass; rewrite cache updated"
+    }
+  ],
+  "cache_manifest_changes_by_phase": [
+    {
+      "phase": "21A-9K",
+      "changed_files": [
+        "smoke150_rewrites.jsonl"
+      ],
+      "purpose": "frozen smoke150 rewrite cache",
+      "validation_summary": "150/150; 0 empty; 0 fallback"
+    },
+    {
+      "phase": "21A-9S",
+      "changed_files": [
+        "smoke200_rewrites.jsonl"
+      ],
+      "purpose": "frozen smoke200 rewrite cache",
+      "validation_summary": "200/200; smoke150_equiv pass; dry_run pass"
+    },
+    {
+      "phase": "21A-9V-2",
+      "changed_files": [
+        "smoke200_rewrites.jsonl",
+        "smoke200_manifest.json",
+        "registry.json"
+      ],
+      "purpose": "update after bad5 replacement",
+      "validation_summary": "200/200; s150_equiv; replacement rewrite quality good"
+    }
+  ],
+  "notes": "Phase 21A-0, 21A-9A/B/D/E/F/H/J/L/N/P/R/T/U/V-0/1/X are audit/report phases (no code/data changes)."
+}

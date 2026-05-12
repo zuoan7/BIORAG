@@ -1,0 +1,19 @@
+{
+  "phase": "21A-M",
+  "title": "Commit Split, PR Preparation, and Merge Review",
+  "based_on": "Phase 21A-Z Final Closeout",
+  "ragas_excluded": true,
+  "primary_quality_gate": "smoke200 baseline (real_P0=6, doc_hit=1.0)",
+  "commit_strategy": "3-commit split: code, data, diagnostics",
+  "no_code_changes": true,
+  "no_rerun": true,
+  "outputs": {
+    "final_git_diff_review": "results/phase21a_m_commit_merge_prep/final_git_diff_review.json",
+    "commit_split_plan": "results/phase21a_m_commit_merge_prep/commit_split_plan.json",
+    "ragas_file_handling_decision": "results/phase21a_m_commit_merge_prep/ragas_file_handling_decision.json",
+    "pr_description": "reports/phase21a_m_commit_merge_prep/pr_description.md",
+    "merge_checklist": "results/phase21a_m_commit_merge_prep/merge_checklist.json",
+    "commit_commands": "reports/phase21a_m_commit_merge_prep/commit_commands.md"
+  },
+  "timestamp": "2026-05-12"
+}

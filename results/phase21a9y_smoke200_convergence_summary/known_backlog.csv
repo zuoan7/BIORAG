@@ -1,0 +1,8 @@
+backlog_id,sample_id_or_scope,issue_type,description,why_deferred,suggested_future_phase,risk_if_fixed_now,priority,notes
+BL-001,ent_083,branch_query_context_enhancement,Parser correctly extracts branches but branch queries lack shared context (NeuAc). Expected docs not retrieved.,"Requires broader retrieval/branch-query design, not a single-pattern fix.",Phase 21B or later,medium,medium,
+BL-002,ent_058,support_selection_close_margin,Expected doc_0098 close to selected but not selected. Capacity+1 added higher-scored different doc.,Section-priority-aware capacity expansion riskier. Current fix already helps many cases.,Phase 21B,medium,low,
+BL-003,ent_094,expected_doc_score_too_low,Expected doc_0003 has negative support score. Cannot be safely retained.,Forcing low-score doc into support would be wrong-doc citation risk.,never or major scoring redesign,high,low,
+BL-004,p21a9v2_fact_001,replacement_support_selection,"Similar to ent_058 pattern — expected doc in final, not in support.",Analogous to existing smoke150 residual.,Phase 21B,medium,low,
+BL-005,p21a9v2_fact_002,replacement_query_doc_matching,Expected doc_0100 not in final — retrieval recall issue for replacement query.,Not a pipeline bug. Query-doc alignment or retrieval recall.,query/doc alignment review,low,P2,
+BL-006,p21a9v2_fact_004,replacement_query_doc_matching,Expected doc_0444 not in final — retrieval recall issue for replacement query.,Same as BL-005.,query/doc alignment review,low,P2,
+BL-007,RAGAS evaluation,quality_scoring,Run RAGAS200 as supplementary quality evaluation on smoke200 frozen baseline.,"Smoke200 convergence first; RAGAS is quality metric, not blocking.",Phase 21B (RAGAS200),none,medium,

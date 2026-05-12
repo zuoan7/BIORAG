@@ -1,0 +1,3 @@
+phase,dataset,change,removed_samples,added_samples,reason,validation,effect_on_metrics,should_keep,notes
+21A-1,smoke50/smoke100/smoke150,canonicalization,,,normalize smoke50+smoke100 → canonical JSONL smoke150,150 unique IDs; 0 conflicts; schema pass,none (data unchanged),true,
+21A-9V-2,smoke200,bad5 replacement,p21a_added50_014-018,p21a9v2_fact_001-005,replace 5 metadata/fragment negative samples with reviewed factoid replacements,200 samples; source overlap 0; rewrite cache updated,smoke200 RP 8→6 (5 false negative_abstention removed),true,p21a9v2_fact_003/005 OK; 001/002/004 are valid questions with retrieval/support residual
