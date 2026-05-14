@@ -1,0 +1,47 @@
+doc_id,block_id,original_block_type,caption_text,baseline_caption_focused_chunk_count,cleanup_caption_focused_chunk_count,baseline_caption_only_false_chunk_count,cleanup_caption_only_false_chunk_count,cleanup_retained_as_paragraph_chunk_count,baseline_caption_focused_chunk_ids,cleanup_caption_focused_chunk_ids,cleanup_retained_chunk_ids
+doc_0027,p5_b0081,figure_caption,Fig. 4. The P.,1,0,1,0,1,doc_0027_sec11_chunk12,,doc_0027_sec10_chunk11
+doc_0083,p11_b0104,figure_caption,Figure S1. The S.,1,0,1,0,1,doc_0083_sec21_chunk22,,doc_0083_sec20_chunk21
+doc_0104,p2_b0022,table_caption,Table 1. E.,1,0,1,0,1,doc_0104_sec04_chunk05,,doc_0104_sec03_chunk04
+doc_0105,p2_b0018,table_caption,Table 1. E.,0,0,0,0,0,,,
+doc_0118,p6_b0065,figure_caption,Fig 4. The C.,1,0,1,0,1,doc_0118_sec13_chunk14,,doc_0118_sec12_chunk13
+doc_0119,p2_b0016,table_caption,Table S1. E.,0,0,0,0,0,,,
+doc_0120,p3_b0025,table_caption,Table 1. E.,1,0,1,0,1,doc_0120_sec06_chunk07,,doc_0120_sec05_chunk06
+doc_0128,p8_b0095,table_caption,Table 1. E.,1,0,1,0,1,doc_0128_sec38_chunk39,,doc_0128_sec37_chunk38
+doc_0128,p8_b0105,table_caption,Table 1. E.,1,0,1,0,1,doc_0128_sec43_chunk44,,doc_0128_sec40_chunk41
+doc_0129,p8_b0095,table_caption,Table 1. E.,1,0,1,0,1,doc_0129_sec38_chunk39,,doc_0129_sec37_chunk38
+doc_0129,p8_b0105,table_caption,Table 1. E.,1,0,1,0,1,doc_0129_sec43_chunk44,,doc_0129_sec40_chunk41
+doc_0151,p2_b0021,table_caption,Table 1. E.,0,0,0,0,0,,,
+doc_0151,p2_b0025,table_caption,Table 1. E.,0,0,0,0,0,,,
+doc_0158,p8_b0066,table_caption,Table 1. The K.,0,0,0,0,0,,,
+doc_0167,p3_b0032,table_caption,Table 1. E.,1,0,1,0,1,doc_0167_sec08_chunk09,,doc_0167_sec07_chunk08
+doc_0170,p2_b0016,table_caption,Table S1. E.,0,0,0,0,0,,,
+doc_0172,p2_b0021,table_caption,Table S1. The E.,0,0,0,0,0,,,
+doc_0183,p3_b0030,figure_caption,FIGURE 1 3 of 12,1,0,1,0,1,doc_0183_sec05_chunk06,,doc_0183_sec04_chunk05
+doc_0183,p5_b0047,figure_caption,FIGURE 3 5 of 12,1,0,1,0,1,doc_0183_sec09_chunk10,,doc_0183_sec08_chunk09
+doc_0183,p7_b0062,figure_caption,FIGURE 4 7 of 12,1,0,1,0,1,doc_0183_sec17_chunk18,,doc_0183_sec14_chunk15
+doc_0192,p3_b0027,table_caption,Table 2. E.,1,0,1,0,1,doc_0192_sec03_chunk04,,doc_0192_sec02_chunk03
+doc_0192,p4_b0038,table_caption,Table 2. E.,1,0,1,0,1,doc_0192_sec06_chunk07,,doc_0192_sec04_chunk05
+doc_0195,p3_b0027,table_caption,Table 2. E.,1,0,1,0,1,doc_0195_sec03_chunk04,,doc_0195_sec02_chunk03
+doc_0195,p4_b0038,table_caption,Table 2. E.,1,0,1,0,1,doc_0195_sec06_chunk07,,doc_0195_sec04_chunk05
+doc_0196,p3_b0021,table_caption,Table 1. E.,1,0,1,0,1,doc_0196_sec07_chunk08,,doc_0196_sec06_chunk07
+doc_0202,p2_b0024,table_caption,Table 1. E.,1,0,1,0,1,doc_0202_sec04_chunk05,,doc_0202_sec03_chunk04
+doc_0212,p2_b0018,table_caption,Table S1. The E.,1,0,1,0,1,doc_0212_sec05_chunk06,,doc_0212_sec04_chunk05
+doc_0316,p7_b0069,table_caption,Table S1. E.,1,0,1,0,1,doc_0316_sec17_chunk18,,doc_0316_sec16_chunk17
+doc_0335,p7_b0095,figure_caption,Figure 2. The B.,1,0,1,0,1,doc_0335_sec13_chunk14,,doc_0335_sec12_chunk13
+doc_0335,p8_b0107,figure_caption,Figure 3. The B.,1,0,1,0,1,doc_0335_sec15_chunk16,,doc_0335_sec12_chunk13
+doc_0353,p7_b0026,table_caption,Table 1. E.,1,0,1,0,1,doc_0353_sec06_chunk07,,doc_0353_sec05_chunk06
+doc_0387,p2_b0017,table_caption,Table 1. E.,1,0,1,0,1,doc_0387_sec03_chunk04,,doc_0387_sec02_chunk03
+doc_0387,p3_b0032,table_caption,Table 1. E.,1,0,1,0,1,doc_0387_sec06_chunk07,,doc_0387_sec04_chunk05
+doc_0388,p3_b0024,table_caption,Table 1. E.,1,0,1,0,1,doc_0388_sec07_chunk08,,doc_0388_sec06_chunk07
+doc_0436,p10_b0075,table_caption,Table S1. P.,1,0,1,0,1,doc_0436_sec11_chunk12,,doc_0436_sec10_chunk11
+doc_0436,p14_b0121,table_caption,Table S1. P.,1,0,1,0,1,doc_0436_sec22_chunk23,,doc_0436_sec19_chunk20
+doc_0437,p1_b0014,table_caption,Table 1. E.,1,0,1,0,1,doc_0437_sec03_chunk04,,doc_0437_sec02_chunk03
+doc_0462,p6_b0065,figure_caption,Fig 4. The C.,1,0,1,0,1,doc_0462_sec13_chunk14,,doc_0462_sec12_chunk13
+doc_0510,p3_b0032,table_caption,Table 1. E.,1,0,1,0,1,doc_0510_sec08_chunk09,,doc_0510_sec07_chunk08
+doc_0512,p2_b0021,table_caption,Table S1. The E.,0,0,0,0,0,,,
+doc_0518,p3_b0029,table_caption,Table 1. E.,1,0,1,0,1,doc_0518_sec06_chunk07,,doc_0518_sec05_chunk06
+doc_0533,p2_b0016,table_caption,Table S1. E.,0,0,0,0,0,,,
+doc_0661,p2_b0017,table_caption,Table S1. E.,0,0,0,0,0,,,
+doc_0671,p3_b0027,table_caption,Table 1. E.,1,0,1,0,1,doc_0671_sec04_chunk05,,doc_0671_sec03_chunk04
+doc_0679,p3_b0027,table_caption,Table 1. E.,1,0,1,0,1,doc_0679_sec04_chunk05,,doc_0679_sec03_chunk04
+doc_0683,p3_b0022,table_caption,Table 1. S.,1,0,1,0,1,doc_0683_sec07_chunk08,,doc_0683_sec06_chunk07

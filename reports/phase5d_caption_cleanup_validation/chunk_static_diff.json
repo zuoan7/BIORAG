@@ -1,0 +1,26 @@
+{
+  "baseline_chunk_count": 15802,
+  "cleanup_chunk_count": 15738,
+  "chunk_count_delta": -64,
+  "table_focused_chunk_count_before": 826,
+  "table_focused_chunk_count_after": 799,
+  "figure_focused_chunk_count_before": 2877,
+  "figure_focused_chunk_count_after": 2868,
+  "caption_only_false_chunk_count_before": 36,
+  "caption_only_false_chunk_count_after": 0,
+  "false_caption_focused_chunk_count_before": 36,
+  "false_caption_focused_chunk_count_after": 0,
+  "demoted_retained_as_paragraph_or_noncaption_chunks": 36,
+  "demoted_text_retained_in_parsed": 46,
+  "demoted_metadata_ok_in_parsed": 46,
+  "chunks_schema_same": true,
+  "field_set_count_baseline": 1,
+  "field_set_count_cleanup": 1,
+  "top_level_field_diff": {
+    "baseline_only": [],
+    "cleanup_only": []
+  },
+  "doc_0367_figure5_chunk_exists": true,
+  "normal_paragraph_chunk_count_before": 11282,
+  "normal_paragraph_chunk_count_after": 11254
+}
