@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from scripts.ingestion.preprocess_and_chunk import process_document
 
 
@@ -11,6 +13,7 @@ def clean_block(
     page: int = 1,
     block_id: str | None = None,
     source_block_id: str | None = None,
+    section_path: list[str] | None = None,
 ) -> dict:
     bid = block_id or f"p{page}_b{order:04d}"
     sid = source_block_id or bid
@@ -18,7 +21,7 @@ def clean_block(
         "block_id": bid,
         "type": block_type,
         "text": text,
-        "section_path": ["Introduction"],
+        "section_path": section_path or ["Introduction"],
         "page": page,
         "metadata": {
             "source_block_id": sid,
@@ -189,6 +192,17 @@ def test_table_text_retained_even_when_short() -> None:
     assert chunks[0].contains_table_text is True
 
 
+def test_numeric_table_text_survives_when_isolated() -> None:
+    chunks = chunk_doc([
+        clean_block("0.13 0.018 0.030 0.022 0.012", "table_text", 1),
+    ])
+
+    assert len(chunks) == 1
+    assert chunks[0].block_types == ["table_text"]
+    assert chunks[0].contains_table_text is True
+    assert "[TABLE TEXT] 0.13 0.018 0.030" in chunks[0].text
+
+
 def test_table_caption_and_table_text_adjacency() -> None:
     chunks = chunk_doc([
         clean_block("Table 1: Strains", "table_caption", 1),
@@ -198,6 +212,226 @@ def test_table_caption_and_table_text_adjacency() -> None:
     assert len(chunks) == 1
     assert "[TABLE CAPTION]" in chunks[0].text
     assert "[TABLE TEXT]" in chunks[0].text
+
+
+def test_figure_caption_is_separated_from_surrounding_paragraphs() -> None:
+    chunks = chunk_doc([
+        clean_block("Introduction", "section_heading", 1),
+        clean_block("The first paragraph describes useful fermentation context.", "paragraph", 2),
+        clean_block("Fig. 1. Overview of the pathway.", "figure_caption", 3),
+        clean_block("The following paragraph continues the body discussion.", "paragraph", 4),
+    ])
+
+    assert len(chunks) == 3
+    assert chunks[0].block_types == ["paragraph", "section_heading"]
+    assert chunks[1].block_types == ["figure_caption"]
+    assert chunks[2].block_types == ["paragraph"]
+    assert chunks[1].contains_figure_caption is True
+    assert "[FIGURE CAPTION] Fig. 1. Overview" in chunks[1].text
+    assert "first paragraph" not in chunks[1].text
+    assert "following paragraph" not in chunks[1].text
+
+
+def test_table_caption_and_text_are_separated_from_surrounding_paragraphs() -> None:
+    chunks = chunk_doc([
+        clean_block("Introduction", "section_heading", 1),
+        clean_block("The paragraph before the table describes the experiment.", "paragraph", 2),
+        clean_block("Table 1: Strains used in this study.", "table_caption", 3),
+        clean_block("Strain Plasmid Product Titer", "table_text", 4),
+        clean_block("The paragraph after the table interprets the results.", "paragraph", 5),
+    ])
+
+    assert len(chunks) == 3
+    assert chunks[0].block_types == ["paragraph", "section_heading"]
+    assert chunks[1].block_types == ["table_caption", "table_text"]
+    assert chunks[2].block_types == ["paragraph"]
+    assert chunks[1].contains_table_caption is True
+    assert chunks[1].contains_table_text is True
+    assert "[TABLE CAPTION] Table 1: Strains" in chunks[1].text
+    assert "[TABLE TEXT] Strain Plasmid Product Titer" in chunks[1].text
+    assert "paragraph before" not in chunks[1].text
+    assert "paragraph after" not in chunks[1].text
+
+
+def test_orphan_table_text_rows_form_table_text_focused_chunk() -> None:
+    chunks = chunk_doc([
+        clean_block("Introduction", "section_heading", 1),
+        clean_block("The paragraph before orphan rows describes measurements.", "paragraph", 2),
+        clean_block("OD600 0.5 1.0 1.5", "table_text", 3),
+        clean_block("Titer 10 20 30 mg/L", "table_text", 4),
+        clean_block("The paragraph after orphan rows resumes body text.", "paragraph", 5),
+    ])
+
+    assert len(chunks) == 3
+    assert chunks[1].block_types == ["table_text"]
+    assert chunks[1].evidence_types == ["table_text"]
+    assert chunks[1].contains_table_text is True
+    assert chunks[1].contains_table_caption is False
+    assert "[TABLE TEXT] OD600 0.5 1.0 1.5" in chunks[1].text
+    assert "[TABLE TEXT] Titer 10 20 30 mg/L" in chunks[1].text
+    assert "paragraph before" not in chunks[1].text
+    assert "paragraph after" not in chunks[1].text
+
+
+def test_table_and_figure_focused_chunks_retain_provenance_and_flags() -> None:
+    chunks = chunk_doc([
+        clean_block("Introduction", "section_heading", 1, page=1),
+        clean_block("Table 1: Strains", "table_caption", 2, page=1, source_block_id="raw_caption"),
+        clean_block("Strain Plasmid Product Titer", "table_text", 3, page=2, source_block_id="raw_table_text"),
+        clean_block("Fig. 1. Pathway overview.", "figure_caption", 4, page=2, source_block_id="raw_figure"),
+    ])
+
+    table_chunk = next(chunk for chunk in chunks if chunk.contains_table_caption)
+    assert table_chunk.block_types == ["table_caption", "table_text"]
+    assert table_chunk.evidence_types == ["table_caption", "table_text"]
+    assert table_chunk.source_block_ids == ["raw_caption", "raw_table_text"]
+    assert table_chunk.block_ids == ["p1_b0002", "p2_b0003"]
+    assert table_chunk.page_numbers == [1, 2]
+    assert table_chunk.contains_table_caption is True
+    assert table_chunk.contains_table_text is True
+    assert table_chunk.contains_figure_caption is False
+
+    figure_chunk = next(chunk for chunk in chunks if chunk.contains_figure_caption)
+    assert figure_chunk.block_types == ["figure_caption"]
+    assert figure_chunk.evidence_types == ["figure_caption"]
+    assert figure_chunk.source_block_ids == ["raw_figure"]
+    assert figure_chunk.block_ids == ["p2_b0004"]
+    assert figure_chunk.page_numbers == [2]
+    assert figure_chunk.contains_figure_caption is True
+    assert figure_chunk.contains_table_caption is False
+    assert figure_chunk.contains_table_text is False
+
+
+def test_table_caption_can_join_same_table_text_across_intervening_figure_caption() -> None:
+    chunks = chunk_doc([
+        clean_block("Introduction", "section_heading", 1),
+        clean_block("Table 1: Strains", "table_caption", 2),
+        clean_block("Fig. 1. Pathway overview.", "figure_caption", 3),
+        clean_block("Strain Plasmid Product Titer", "table_text", 4),
+    ])
+
+    table_chunk = next(chunk for chunk in chunks if chunk.contains_table_caption)
+    figure_chunk = next(chunk for chunk in chunks if chunk.contains_figure_caption)
+    assert table_chunk.block_types == ["table_caption", "table_text"]
+    assert "[TABLE CAPTION] Table 1: Strains" in table_chunk.text
+    assert "[TABLE TEXT] Strain Plasmid Product Titer" in table_chunk.text
+    assert "FIGURE CAPTION" not in table_chunk.text
+    assert figure_chunk.block_types == ["figure_caption"]
+
+
+def test_evidence_chunk_section_prefers_non_title_section_path() -> None:
+    chunks = chunk_doc([
+        clean_block(
+            "Fig. 1. Pathway overview.",
+            "figure_caption",
+            1,
+            section_path=["Title", "2.1. Materials"],
+        ),
+    ])
+
+    assert chunks[0].section == "2.1. Materials"
+    assert "section: 2.1. Materials" in chunks[0].retrieval_text
+
+
+def test_paragraph_only_chunking_remains_aggregated() -> None:
+    chunks = chunk_doc([
+        clean_block("First paragraph contains ordinary body evidence.", "paragraph", 1),
+        clean_block("Second paragraph continues ordinary body evidence.", "paragraph", 2),
+        clean_block("Third paragraph remains in the same ordinary flow.", "paragraph", 3),
+    ])
+
+    assert len(chunks) == 1
+    assert chunks[0].block_types == ["paragraph"]
+    assert chunks[0].contains_table_caption is False
+    assert chunks[0].contains_table_text is False
+    assert chunks[0].contains_figure_caption is False
+    assert "First paragraph" in chunks[0].text
+    assert "Third paragraph" in chunks[0].text
+
+
+def test_evidence_context_mode_off_leaves_paragraph_retrieval_text_unchanged() -> None:
+    blocks = [
+        clean_block("First paragraph contains ordinary body evidence.", "paragraph", 1),
+        clean_block("Second paragraph continues ordinary body evidence.", "paragraph", 2),
+    ]
+
+    default_chunks = chunk_doc(blocks)
+    off_chunks = chunk_doc(blocks, evidence_context_mode="off")
+
+    assert len(default_chunks) == len(off_chunks) == 1
+    assert default_chunks[0].text == off_chunks[0].text
+    assert default_chunks[0].retrieval_text == off_chunks[0].retrieval_text
+    assert "[Table Evidence]" not in off_chunks[0].retrieval_text
+    assert "[Figure Evidence]" not in off_chunks[0].retrieval_text
+
+
+def test_compact_evidence_context_enriches_table_and_figure_only() -> None:
+    blocks = [
+        clean_block("Introduction", "section_heading", 1, page=1),
+        clean_block("The paragraph before the table describes the experiment.", "paragraph", 2, page=1),
+        clean_block("Table 1: Strains used in this study.", "table_caption", 3, page=2),
+        clean_block("Strain Plasmid Product Titer", "table_text", 4, page=2),
+        clean_block("Fig. 1. Pathway overview.", "figure_caption", 5, page=3),
+        clean_block("The paragraph after the figure resumes body text.", "paragraph", 6, page=3),
+    ]
+
+    off_chunks = chunk_doc(blocks, evidence_context_mode="off")
+    compact_chunks = chunk_doc(blocks, evidence_context_mode="compact")
+
+    assert [chunk.text for chunk in compact_chunks] == [chunk.text for chunk in off_chunks]
+    assert {tuple(asdict(chunk).keys()) for chunk in compact_chunks} == {
+        tuple(asdict(chunk).keys()) for chunk in off_chunks
+    }
+
+    table_chunk = next(chunk for chunk in compact_chunks if chunk.contains_table_caption)
+    assert table_chunk.retrieval_text.startswith("[Table Evidence]\n")
+    assert "Section: Introduction" in table_chunk.retrieval_text
+    assert "Page: 2" in table_chunk.retrieval_text
+    assert "[TABLE CAPTION] Table 1: Strains" in table_chunk.retrieval_text
+    assert "[TABLE TEXT] Strain Plasmid Product Titer" in table_chunk.retrieval_text
+
+    figure_chunk = next(chunk for chunk in compact_chunks if chunk.contains_figure_caption)
+    assert figure_chunk.retrieval_text.startswith("[Figure Evidence]\n")
+    assert "Section: Introduction" in figure_chunk.retrieval_text
+    assert "Page: 3" in figure_chunk.retrieval_text
+    assert "[FIGURE CAPTION] Fig. 1. Pathway overview." in figure_chunk.retrieval_text
+
+    paragraph_chunks = [
+        chunk for chunk in compact_chunks
+        if not (chunk.contains_table_caption or chunk.contains_table_text or chunk.contains_figure_caption)
+    ]
+    assert paragraph_chunks
+    assert all("[Table Evidence]" not in chunk.retrieval_text for chunk in paragraph_chunks)
+    assert all("[Figure Evidence]" not in chunk.retrieval_text for chunk in paragraph_chunks)
+
+
+def test_compact_context_preserves_supporting_information_figure_caption() -> None:
+    chunks = chunk_doc([
+        clean_block(
+            "Figure 5. Comparison of Opto-T7RNAPs "
+            "(Supporting Information: paT7P-1 Characterization).",
+            "figure_caption",
+            1,
+        ),
+    ], evidence_context_mode="compact")
+
+    assert len(chunks) == 1
+    assert chunks[0].contains_figure_caption is True
+    assert "[Figure Evidence]" in chunks[0].retrieval_text
+    assert "Supporting Information: paT7P-1 Characterization" in chunks[0].text
+    assert "Supporting Information: paT7P-1 Characterization" in chunks[0].retrieval_text
+
+
+def test_compact_context_keeps_numeric_only_table_text() -> None:
+    chunks = chunk_doc([
+        clean_block("0.13 0.018 0.030 0.022 0.012", "table_text", 1),
+    ], evidence_context_mode="compact")
+
+    assert len(chunks) == 1
+    assert chunks[0].contains_table_text is True
+    assert chunks[0].text.startswith("[TABLE TEXT] 0.13 0.018")
+    assert chunks[0].retrieval_text.startswith("[Table Evidence]\n")
+    assert "[TABLE TEXT] 0.13 0.018" in chunks[0].retrieval_text
 
 
 def test_no_type_text_assumptions() -> None:
@@ -348,3 +582,32 @@ def test_fig6_caption_retained() -> None:
 
     assert "[FIGURE CAPTION] Fig. 6 Putative lignin degradation pathways" in chunks[0].text
     assert chunks[0].contains_figure_caption is True
+
+
+def test_fallback_fulltext_preserves_figure_caption_with_supporting_information() -> None:
+    doc = make_doc([
+        clean_block("Optogenetic control of T7 RNA polymerase", "title", 1, section_path=["Title"]),
+        clean_block("The paper describes a light-inducible transcription system.", "paragraph", 2, section_path=["Title"]),
+        clean_block(
+            "Figure 5. Comparison of Opto-T7RNAPs to paT7P-148 "
+            "(Supporting Information: paT7P-1 Characterization).",
+            "figure_caption",
+            3,
+            section_path=["Title"],
+        ),
+        clean_block("The following paragraph interprets the figure.", "paragraph", 4, section_path=["Title"]),
+    ], doc_id="doc_fallback_figure")
+
+    chunks, low_quality = process_document(
+        doc,
+        chunk_size=80,
+        chunk_overlap=10,
+        min_chunk_chars=1,
+        min_chunk_words=1,
+        quality_threshold=0.0,
+    )
+
+    assert not low_quality
+    figure_chunk = next(chunk for chunk in chunks if chunk.contains_figure_caption)
+    assert "p1_b0003" in figure_chunk.block_ids
+    assert "[FIGURE CAPTION] Figure 5. Comparison of Opto-T7RNAPs" in figure_chunk.text

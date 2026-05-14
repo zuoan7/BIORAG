@@ -36,6 +36,16 @@ from typing import Any, Optional
 
 import fitz
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.synbio_rag.ingestion.cleaning_rules import (
+    classify_noise_rule,
+    match_journal_preproof_noise,
+    normalize_cleaning_text,
+)
+
 
 # ============================================================
 # 常量
@@ -594,13 +604,7 @@ def clean_line_text(text: str) -> str:
 
 def normalize_pdf_noise_text(text: str) -> str:
     """用于噪声规则的保守归一化 key。"""
-    text = unicodedata.normalize("NFKC", text)
-    text = UNICODE_SPACE_CHARS_RE.sub(" ", text)
-    text = DASH_CHARS_RE.sub("-", text)
-    text = ZERO_WIDTH_CHARS_RE.sub("", text)
-    text = CONTROL_CHARS_RE.sub(" ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip().lstrip("#").strip().lower()
+    return normalize_cleaning_text(text).lstrip("#").strip().lower()
 
 
 def merge_consecutive_titles(lines: list[TextLine]) -> list[TextLine]:
@@ -698,7 +702,8 @@ def should_strip_journal_preproof_noise(
     del total_pages  # 当前规则不依赖总页数，保留参数便于诊断调用一致。
     normalized = normalize_pdf_noise_text(line.text)
 
-    if JOURNAL_PREPROOF_EXACT_RE.match(normalized):
+    shared_preproof_match, shared_preproof_rule_id = match_journal_preproof_noise(line.text)
+    if shared_preproof_rule_id == "journal_preproof_exact":
         return True, "journal_preproof_exact_line"
 
     if "journal pre-proof" in normalized:
@@ -710,7 +715,7 @@ def should_strip_journal_preproof_noise(
 
     if front_matter_active:
         text = clean_line_text(line.text)
-        if any(pat.search(text) for pat in JOURNAL_PREPROOF_NOISE_PATTERNS):
+        if shared_preproof_match or any(pat.search(text) for pat in JOURNAL_PREPROOF_NOISE_PATTERNS):
             if re.match(r"^(?:PII|DOI|Reference|To appear in|Received Date|Revised Date|Accepted Date):", text, re.I):
                 return True, "journal_preproof_metadata_line"
             return True, "journal_preproof_front_matter_disclaimer"
@@ -734,6 +739,7 @@ def strip_journal_preproof_noise(
         "stripped_count": 0,
         "examples": [],
         "reason_counts": {},
+        "rule_id_counts": {},
     }
 
     filtered: list[TextLine] = []
@@ -751,8 +757,12 @@ def strip_journal_preproof_noise(
             repeated_journal_preproof_keys=repeated_journal_preproof_keys,
         )
         if should_strip:
+            _matched_rule, rule_id = classify_noise_rule(text)
+            if not rule_id:
+                rule_id = reason
             diagnostics["stripped_count"] += 1
             diagnostics["reason_counts"][reason] = diagnostics["reason_counts"].get(reason, 0) + 1
+            diagnostics["rule_id_counts"][rule_id] = diagnostics["rule_id_counts"].get(rule_id, 0) + 1
             if len(diagnostics["examples"]) < 8:
                 diagnostics["examples"].append(text[:160])
             continue
@@ -1395,6 +1405,7 @@ def process_pdf(
         "stripped_noise_line_count": 0,
         "stripped_noise_examples": [],
         "stripped_noise_reason_counts": {},
+        "stripped_noise_rule_id_counts": {},
         "figure_caption_candidate_count": 0,
         "table_caption_candidate_count": 0,
     }
@@ -1446,6 +1457,10 @@ def process_pdf(
             for reason, count in preproof_diag["reason_counts"].items():
                 diagnostics["stripped_noise_reason_counts"][reason] = (
                     diagnostics["stripped_noise_reason_counts"].get(reason, 0) + count
+                )
+            for rule_id, count in preproof_diag["rule_id_counts"].items():
+                diagnostics["stripped_noise_rule_id_counts"][rule_id] = (
+                    diagnostics["stripped_noise_rule_id_counts"].get(rule_id, 0) + count
                 )
 
         record["lines"] = page_lines

@@ -11,9 +11,19 @@ source/layout provenance and excluding non-evidence material.
 from __future__ import annotations
 
 import re
-import unicodedata
+import sys
 from collections import Counter
+from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.synbio_rag.ingestion.cleaning_rules import (
+    match_contamination,
+    normalize_cleaning_text,
+)
 
 
 SCHEMA_VERSION = "document_cleaning_v5"
@@ -142,11 +152,7 @@ SENTENCE_VERBS = re.compile(
 
 def normalize_text(text: str) -> str:
     """Normalize PDF text for stable evidence keys and contamination checks."""
-    text = unicodedata.normalize("NFKC", text or "")
-    for ch in ("\u00a0", "\u202f", "\u2009", "\u2007"):
-        text = text.replace(ch, " ")
-    text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
-    return re.sub(r"\s+", " ", text).strip()
+    return normalize_cleaning_text(text)
 
 
 def _preview(text: str, limit: int = 180) -> str:
@@ -265,11 +271,36 @@ def looks_like_false_table_text_body_sentence(text: str, strong_table_context: b
 
 
 def is_contaminated_evidence_text(text: str) -> tuple[bool, str]:
+    matched, rule_id = match_contamination(text)
+    if matched:
+        return True, _contamination_reason_from_rule_id(rule_id)
     normalized = normalize_text(text)
     for label, pattern in CONTAMINATION_PATTERNS.items():
         if pattern.search(normalized):
             return True, label
     return False, ""
+
+
+def contamination_rule_id(text: str, reason: str = "") -> str:
+    """Return the shared contamination rule_id for audit metadata."""
+    matched, rule_id = match_contamination(text)
+    if matched:
+        return rule_id
+    if reason:
+        return f"contamination_{reason}"
+    return ""
+
+
+def _contamination_reason_from_rule_id(rule_id: str) -> str:
+    """Map shared rule_id values to legacy exclusion reason labels."""
+    return {
+        "journal_preproof_disclaimer": "journal_preproof",
+        "journal_preproof_exact": "journal_preproof",
+        "metadata_correspondence": "correspondence",
+        "contamination_cover_metadata": "cover_metadata",
+        "running_header_footer": "running_header_footer",
+        "contamination_annotation_noise": "annotation_noise",
+    }.get(rule_id, rule_id.removeprefix("contamination_"))
 
 
 def _new_group_id(doc_id: str, kind: str, index: int) -> str:
@@ -331,6 +362,7 @@ def build_evidence_pack(clean_data: dict[str, Any]) -> dict[str, Any]:
             continue
         contaminated, contamination_reason = is_contaminated_evidence_text(text)
         if contaminated:
+            rule_id = contamination_rule_id(text, contamination_reason)
             excluded_block_counts[f"contamination:{contamination_reason}"] += 1
             if len(excluded_examples) < 40:
                 excluded_examples.append({
@@ -341,6 +373,7 @@ def build_evidence_pack(clean_data: dict[str, Any]) -> dict[str, Any]:
                     "text_preview": _preview(text),
                     "layout": block_layout(block),
                     "reason": contamination_reason,
+                    "rule_id": rule_id,
                 })
             continue
 
@@ -482,6 +515,17 @@ def validate_evidence_pack_units(
     contamination = []
     for unit in evidence_units:
         text = unit.get("text", "")
+        common_contaminated, common_reason = is_contaminated_evidence_text(text)
+        if common_contaminated:
+            contamination.append({
+                "evidence_id": unit.get("evidence_id"),
+                "type": unit.get("type"),
+                "page": unit.get("page"),
+                "matched_reason": common_reason,
+                "rule_id": contamination_rule_id(text, common_reason),
+                "text_preview": _preview(text),
+            })
+            continue
         for name, pattern in CONTAMINATION_PATTERNS.items():
             if pattern.search(text):
                 contamination.append({
@@ -489,6 +533,7 @@ def validate_evidence_pack_units(
                     "type": unit.get("type"),
                     "page": unit.get("page"),
                     "matched_reason": name,
+                    "rule_id": contamination_rule_id(text, name),
                     "text_preview": _preview(text),
                 })
                 break

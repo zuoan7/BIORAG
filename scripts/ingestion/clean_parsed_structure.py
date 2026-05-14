@@ -34,6 +34,25 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.synbio_rag.ingestion.cleaning_rules import (
+    CleaningContext,
+    classify_noise_rule,
+    classify_noise_rule_with_context,
+    is_false_heading_candidate,
+    is_false_heading_with_context,
+    looks_like_affiliation_or_address as shared_looks_like_affiliation_or_address,
+    looks_like_back_matter_metadata,
+    looks_like_reference_entry_with_context,
+    match_journal_preproof_noise,
+    match_metadata_noise,
+    match_reference_noise,
+    match_running_header_footer,
+)
+
 
 # ============================================================
 # 断词修复词典（保守）
@@ -525,7 +544,8 @@ def is_references_heading(text: str, recent_block_types: list[str] | None = None
     4. 不是 "content references" 等表格列名形式。
     """
     heading = text.lstrip("#").strip()
-    if not REFERENCES_HEADING_PATTERN.match(heading):
+    shared_reference_match, _rule_id = match_reference_noise(heading)
+    if not shared_reference_match and not REFERENCES_HEADING_PATTERN.match(heading):
         return False
 
     # 如果是 "content references" 等表格列名，不进入 references
@@ -569,6 +589,9 @@ def should_exit_references(heading_text: str) -> str | None:
 
 def is_false_heading_metadata(line: str) -> bool:
     """检测日期/期刊侧栏 metadata 误判标题"""
+    matched, _rule_id = is_false_heading_candidate(line)
+    if matched:
+        return True
     for pat in METADATA_HEADING_PATTERNS:
         if pat.match(line):
             return True
@@ -577,6 +600,9 @@ def is_false_heading_metadata(line: str) -> bool:
 
 def is_metadata_heading_text(text: str) -> bool:
     heading = text.lstrip("#").strip()
+    shared_metadata_match, _rule_id = match_metadata_noise(heading)
+    if shared_metadata_match:
+        return True
     if METADATA_HEADING_TEXT_PATTERN.match(heading):
         return True
     return any(pat.match(heading) for pat in METADATA_LINE_PATTERNS)
@@ -614,6 +640,33 @@ def _is_marginal_bbox(metadata: dict[str, Any]) -> bool:
     return width < 35 or height / width >= 4 or x0 < 35 or x0 >= 560
 
 
+def _cleaning_context(
+    *,
+    block_type: str = "",
+    page_num: int | None = None,
+    total_pages: int = 0,
+    metadata: dict[str, Any] | None = None,
+    section_path: list[str] | None = None,
+    in_references: bool = False,
+    recent_block_types: list[str] | None = None,
+) -> CleaningContext:
+    metadata = metadata or {}
+    bbox = _bbox_values(metadata)
+    y0 = bbox[1] if bbox else None
+    y1 = bbox[3] if bbox else None
+    return CleaningContext(
+        block_type=block_type,
+        page=page_num,
+        y0=y0,
+        y1=y1,
+        column=str(metadata.get("column", "")),
+        section_path=list(section_path or []),
+        in_front_matter=bool(page_num is not None and is_front_matter_page(page_num, total_pages)),
+        in_references=in_references,
+        recent_table_caption=bool(recent_block_types and "table_caption" in recent_block_types[-5:]),
+    )
+
+
 def is_front_matter_page(page_num: int, total_pages: int = 0) -> bool:
     del total_pages
     return page_num <= 3
@@ -623,19 +676,22 @@ def is_front_matter_metadata_line(text: str, page_num: int, total_pages: int = 0
     if not is_front_matter_page(page_num, total_pages):
         return False
     stripped = normalize_pdf_text(text)
-    if CREDIT_AUTHOR_CONTRIBUTION_PATTERN.search(stripped):
+    context = _cleaning_context(page_num=page_num, total_pages=total_pages, in_references=True)
+    if looks_like_back_matter_metadata(stripped, context)[0] or CREDIT_AUTHOR_CONTRIBUTION_PATTERN.search(stripped):
         return True
     return any(pat.match(stripped) for pat in FRONT_MATTER_METADATA_PATTERNS)
 
 
 def is_journal_preproof_clean_noise(text: str) -> bool:
     stripped = normalize_pdf_text(text)
-    return any(pat.match(stripped) for pat in JOURNAL_PREPROOF_CLEAN_PATTERNS)
+    matched, _rule_id = match_journal_preproof_noise(stripped)
+    return matched or any(pat.match(stripped) for pat in JOURNAL_PREPROOF_CLEAN_PATTERNS)
 
 
 def looks_like_running_header_footer(text: str) -> bool:
     stripped = normalize_pdf_text(text)
-    return bool(stripped and RUNNING_HEADER_FOOTER_PATTERN.match(stripped))
+    matched, _rule_id = match_running_header_footer(stripped)
+    return bool(stripped and (matched or RUNNING_HEADER_FOOTER_PATTERN.match(stripped)))
 
 
 def looks_like_annotation_noise(text: str) -> bool:
@@ -649,6 +705,10 @@ def looks_like_front_matter_affiliation_metadata(
     metadata: dict[str, Any],
 ) -> tuple[bool, str]:
     stripped = normalize_pdf_text(text)
+    context = _cleaning_context(page_num=page_num, metadata=metadata)
+    shared_match, shared_rule = shared_looks_like_affiliation_or_address(stripped, context)
+    if shared_match:
+        return True, shared_rule
     normalized = normalize_metadata_text(stripped)
     if not stripped:
         return False, ""
@@ -742,6 +802,9 @@ def is_metadata_line(text: str, page_num: int | None = None, total_pages: int = 
         )
         if any(re.match(pat, stripped, re.I) for pat in front_only):
             return False
+    shared_metadata_match, _rule_id = match_metadata_noise(stripped)
+    if shared_metadata_match:
+        return True
     return any(pat.match(stripped) for pat in METADATA_LINE_PATTERNS)
 
 
@@ -1179,6 +1242,9 @@ def is_false_heading(line: str) -> bool:
     for pat in FALSE_HEADING_PATTERNS:
         if pat.match(line):
             return True
+    matched, _rule_id = is_false_heading_candidate(line)
+    if matched:
+        return True
     return False
 
 
@@ -1889,10 +1955,19 @@ def _make_clean_block(
     text: str,
     section_path: list[str],
     metadata_extra: Optional[dict[str, Any]] = None,
+    cleaning_context: CleaningContext | None = None,
 ) -> Block:
     metadata = _source_metadata(raw_block)
     if metadata_extra:
         metadata.update(metadata_extra)
+    if block_type in {"metadata", "noise", "references"}:
+        if cleaning_context is not None:
+            matched, rule_id = classify_noise_rule_with_context(text, cleaning_context)
+        else:
+            matched, rule_id = classify_noise_rule(text)
+        if matched:
+            metadata.setdefault("cleaning_rule_id", rule_id)
+            metadata.setdefault("cleaning_reason", block_type)
     return Block(
         block_id=raw_block.get("block_id", f"p{page_num}_b{block_idx:04d}"),
         type=block_type,
@@ -1901,6 +1976,24 @@ def _make_clean_block(
         page=page_num,
         metadata=metadata,
     )
+
+
+def _mark_block_cleaning_rule(block: Block, rule_id: str, reason: str) -> None:
+    """Attach cleaning audit metadata to a block without changing its schema."""
+    if rule_id:
+        block.metadata.setdefault("cleaning_rule_id", rule_id)
+    if reason:
+        block.metadata.setdefault("cleaning_reason", reason)
+
+
+def _mark_block_by_shared_rule(block: Block, reason: str, context: CleaningContext | None = None) -> None:
+    """Attach the first shared cleaning rule_id that matches block.text."""
+    if context is not None:
+        matched, rule_id = classify_noise_rule_with_context(block.text, context)
+    else:
+        matched, rule_id = classify_noise_rule(block.text)
+    if matched:
+        _mark_block_cleaning_rule(block, rule_id, reason)
 
 
 def _classify_v4_text_block(
@@ -1917,13 +2010,24 @@ def _classify_v4_text_block(
         return "noise"
     if is_page_number_or_line_number(raw_block, stripped):
         return "noise"
+    context = _cleaning_context(
+        block_type="paragraph",
+        page_num=page_num,
+        total_pages=total_pages,
+        metadata=raw_block,
+        in_references=in_references,
+        recent_block_types=recent_block_types,
+    )
     if looks_like_running_header_footer(stripped) or looks_like_annotation_noise(stripped):
         return "metadata"
     if is_journal_preproof_clean_noise(stripped):
         return "metadata"
     if looks_like_marginal_access_banner(stripped, raw_block, repeated_metadata_keys)[0]:
         return "metadata"
-    if looks_like_front_matter_affiliation_metadata(stripped, page_num, raw_block)[0]:
+    if (
+        looks_like_front_matter_affiliation_metadata(stripped, page_num, raw_block)[0]
+        or looks_like_back_matter_metadata(stripped, context)[0]
+    ):
         return "metadata"
     if is_front_matter_metadata_line(stripped, page_num, total_pages):
         return "metadata"
@@ -2039,10 +2143,16 @@ def process_page_blocks_v4(
         elif block_type == "references":
             in_references = True
 
+        marginal_banner = False
+        marginal_rule = ""
+        affiliation_metadata = False
+        affiliation_rule = ""
         if in_references and block_type == "paragraph":
-            if looks_like_marginal_access_banner(text, raw_block, repeated_metadata_keys)[0]:
+            marginal_banner, marginal_rule = looks_like_marginal_access_banner(text, raw_block, repeated_metadata_keys)
+            affiliation_metadata, affiliation_rule = looks_like_front_matter_affiliation_metadata(text, page_num, raw_block)
+            if marginal_banner:
                 block_type = "metadata"
-            elif looks_like_front_matter_affiliation_metadata(text, page_num, raw_block)[0]:
+            elif affiliation_metadata:
                 block_type = "metadata"
             else:
                 exit_type = should_exit_references(text)
@@ -2084,7 +2194,32 @@ def process_page_blocks_v4(
                 _append_recent_block_type(recent_block_types, "table_text")
             continue
 
-        block = _make_clean_block(raw_block, page_num, block_idx, block_type, text, section_path)
+        metadata_extra = None
+        if block_type == "metadata" and in_references:
+            rule_id = marginal_rule if marginal_banner else ""
+            if not rule_id and affiliation_metadata:
+                rule_id = affiliation_rule
+            metadata_extra = {"cleaning_rule_id": rule_id, "cleaning_reason": "metadata_in_references"} if rule_id else None
+
+        cleaning_context = _cleaning_context(
+            block_type=block_type,
+            page_num=page_num,
+            total_pages=total_pages,
+            metadata=raw_block,
+            section_path=section_path,
+            in_references=in_references,
+            recent_block_types=recent_block_types,
+        )
+        block = _make_clean_block(
+            raw_block,
+            page_num,
+            block_idx,
+            block_type,
+            text,
+            section_path,
+            metadata_extra,
+            cleaning_context,
+        )
         blocks.append(block)
         counters.total_blocks += 1
         block_idx += 1
@@ -2157,12 +2292,45 @@ def _post_process_table_and_metadata(
         heading_text = text.lstrip("#").strip()
 
         if text and block.type not in {"metadata", "noise", "image"}:
-            if looks_like_marginal_access_banner(text, block.metadata, repeated_metadata_keys)[0]:
+            marginal_banner, marginal_rule = looks_like_marginal_access_banner(text, block.metadata, repeated_metadata_keys)
+            affiliation_metadata, affiliation_rule = looks_like_front_matter_affiliation_metadata(text, block.page, block.metadata)
+            context = _cleaning_context(
+                block_type=block.type,
+                page_num=block.page,
+                total_pages=total_pages,
+                metadata=block.metadata,
+                section_path=block.section_path,
+                in_references=block.type == "references",
+                recent_block_types=[b.type for b in processed[-5:]],
+            )
+            reference_entry, reference_rule = looks_like_reference_entry_with_context(text, context)
+            back_matter_metadata, back_matter_rule = looks_like_back_matter_metadata(text, context)
+            running_header, running_rule = match_running_header_footer(text)
+            annotation_noise = looks_like_annotation_noise(text)
+            if marginal_banner:
                 block.type = "metadata"
-            elif looks_like_running_header_footer(text) or looks_like_annotation_noise(text):
+                _mark_block_cleaning_rule(block, marginal_rule, "marginal_access_banner")
+            elif running_header or annotation_noise or looks_like_running_header_footer(text):
                 block.type = "metadata"
-            elif looks_like_front_matter_affiliation_metadata(text, block.page, block.metadata)[0]:
+                _mark_block_cleaning_rule(
+                    block,
+                    running_rule or "contamination_annotation_noise",
+                    "running_header_or_annotation_noise",
+                )
+            elif affiliation_metadata:
                 block.type = "metadata"
+                _mark_block_cleaning_rule(block, affiliation_rule, "front_matter_affiliation_metadata")
+            elif reference_entry:
+                if reference_rule == "reference_section":
+                    _mark_block_cleaning_rule(block, reference_rule, "references")
+                elif block.type == "references":
+                    _mark_block_cleaning_rule(block, reference_rule, "references")
+                else:
+                    block.type = "references"
+                    _mark_block_cleaning_rule(block, reference_rule, "references")
+            elif back_matter_metadata:
+                block.type = "metadata"
+                _mark_block_cleaning_rule(block, back_matter_rule, "back_matter_metadata")
             elif block.type == "table_text" and looks_like_body_sentence_continuation(text):
                 block.type = "paragraph"
             elif block.type == "table_text" and looks_like_protocol_or_recipe_continuation(text):
@@ -2199,8 +2367,30 @@ def _post_process_table_and_metadata(
                 table_context_active = False
 
         if block.type in ("section_heading", "subsection_heading"):
-            if is_metadata_heading_text(heading_text):
+            context = _cleaning_context(
+                block_type=block.type,
+                page_num=block.page,
+                total_pages=total_pages,
+                metadata=block.metadata,
+                section_path=block.section_path,
+                in_references=block.type == "references",
+                recent_block_types=[b.type for b in processed[-5:]],
+            )
+            context_false_heading, context_rule = is_false_heading_with_context(heading_text, context)
+            if context_false_heading and context_rule in {
+                "context_body_fragment_heading",
+                "context_back_matter_metadata",
+                "context_author_contribution",
+                "context_affiliation_address",
+                "context_correspondence_metadata",
+            }:
                 block.type = "metadata"
+                _mark_block_cleaning_rule(block, context_rule, "context_false_heading")
+                counters.demoted_false_headings += 1
+                metadata_context = heading_text.lower().rstrip(":")
+            elif is_metadata_heading_text(heading_text):
+                block.type = "metadata"
+                _mark_block_by_shared_rule(block, "metadata_heading", context)
                 counters.demoted_false_headings += 1
                 metadata_context = heading_text.lower().rstrip(":")
             elif table_context_active and looks_like_table_row_or_cell(
@@ -2217,6 +2407,7 @@ def _post_process_table_and_metadata(
         elif metadata_context == "nomenclature":
             if block.type == "paragraph" and (looks_like_nomenclature_entry(text) or is_metadata_line(text, block.page, total_pages)):
                 block.type = "metadata"
+                _mark_block_by_shared_rule(block, "metadata_context")
             elif block.type in ("section_heading", "subsection_heading", "table_caption", "figure_caption"):
                 metadata_context = None
             elif block.type == "paragraph" and looks_like_body_paragraph(text):
@@ -2224,11 +2415,13 @@ def _post_process_table_and_metadata(
         elif metadata_context in {"a r t i c l e i n f o", "keywords", "keyword"}:
             if block.type == "paragraph" and (is_metadata_line(text, block.page, total_pages) or not looks_like_body_paragraph(text)):
                 block.type = "metadata"
+                _mark_block_by_shared_rule(block, "metadata_context")
             else:
                 metadata_context = None
 
         if block.type == "paragraph" and is_metadata_line(text, block.page, total_pages):
             block.type = "metadata"
+            _mark_block_by_shared_rule(block, "metadata_line")
 
         if (
             table_context_active

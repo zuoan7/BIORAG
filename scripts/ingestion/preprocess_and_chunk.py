@@ -37,6 +37,15 @@ from scripts.ingestion.document_cleaning_v5 import (
     is_contaminated_evidence_text,
     looks_like_false_table_text_body_sentence,
 )
+from src.synbio_rag.ingestion.cleaning_rules import (
+    CleaningContext,
+    is_false_heading_candidate,
+    is_false_heading_with_context,
+    match_journal_preproof_noise,
+    match_metadata_noise,
+    match_reference_noise,
+    match_running_header_footer,
+)
 
 
 # ============================================================
@@ -86,6 +95,8 @@ _METADATA_HEADINGS = {
     "supplementary material", "supplementary data", "supplementary information",
 }
 
+# TODO(cleaning-rules): keep legacy page/article/sidebar patterns here until
+# they have focused regression tests and can be proven equivalent centrally.
 NOISE_LINE_PATTERNS = [
     re.compile(r"^\s*\d+\s*$"),
     re.compile(r"^\s*doi\s*:", re.I),
@@ -163,6 +174,8 @@ _FALLBACK_NUMBERED_HEADING = re.compile(
 
 # Patterns that should NOT be treated as section headings even if they
 # contain section-like keywords.
+# TODO(cleaning-rules): keep context-specific address/grant/body-fragment filters here
+# until they can be regression-tested against section fallback behavior.
 _FALSE_HEADING_FILTERS: list[re.Pattern] = [
     re.compile(r"^\s*(?:#+\s*)?(?:Received|Accepted|Published|Revised)\s*:", re.I),
     re.compile(r"^\s*(?:#+\s*)?(?:DOI|ORCID)\s*[:\d]", re.I),
@@ -289,6 +302,13 @@ def _is_noise_line(line: str) -> bool:
     if not line:
         return False
 
+    if (
+        match_journal_preproof_noise(line)[0]
+        or match_metadata_noise(line)[0]
+        or match_running_header_footer(line)[0]
+    ):
+        return True
+
     for pat in NOISE_LINE_PATTERNS:
         if pat.search(line):
             return True
@@ -312,6 +332,8 @@ def _is_front_matter_noise(line: str) -> bool:
         return False
     if _looks_like_title(line):
         return False
+    if match_journal_preproof_noise(line)[0] or match_metadata_noise(line)[0]:
+        return True
     lowered = line.lower()
     if lowered in {"article", "research article", "review article", "accepted manuscript"}:
         return True
@@ -371,7 +393,8 @@ def truncate_at_references(text: str) -> str:
     lines = text.split("\n")
     result_lines = []
     for line in lines:
-        if REFERENCE_SECTION_PATTERN.match(line.strip()):
+        stripped = line.strip()
+        if match_reference_noise(stripped)[0] or REFERENCE_SECTION_PATTERN.match(stripped):
             break
         result_lines.append(line)
     return "\n".join(result_lines)
@@ -677,6 +700,9 @@ def _clean_heading_candidate(text: str) -> str:
 
 def _is_false_heading(text: str) -> bool:
     """检查文本是否为误标 heading（作者名、地址、元数据等）。"""
+    context = CleaningContext(block_type="section_heading")
+    if is_false_heading_with_context(text, context)[0] or is_false_heading_candidate(text)[0]:
+        return True
     for pat in _FALSE_HEADING_FILTERS:
         if pat.search(text):
             return True
@@ -902,7 +928,12 @@ def _filter_body_blocks(blocks: list[dict]) -> list[dict]:
     result = []
     for b in blocks:
         text = b.get("text", "").strip()
+        if b.get("type") in {"figure_caption", "table_caption", "table_text"} and len(text) >= 20:
+            result.append(b)
+            continue
         if len(text) < 20:
+            continue
+        if match_metadata_noise(text)[0] or match_running_header_footer(text)[0]:
             continue
         lower = text.lower()
         if any(kw in lower for kw in (
@@ -1072,8 +1103,16 @@ def _estimate_page_range(
 # Block-based chunking（优先路径，基于 parsed_clean 的 blocks）
 # ============================================================
 
-def _chunk_source_block(block: dict, btype: str, text: str, page_num: int) -> dict:
-    metadata = block.get("metadata", {}) or {}
+def _chunk_source_block(
+    block: dict,
+    btype: str,
+    text: str,
+    page_num: int,
+    table_group_id: str | None = None,
+) -> dict:
+    metadata = dict(block.get("metadata", {}) or {})
+    if table_group_id:
+        metadata.setdefault("table_group_id", table_group_id)
     block_id = _normalize_block_id(block)
     source_block_id = _normalize_source_block_id(block) or block_id
     bbox = _normalize_bbox_value(block)
@@ -1092,6 +1131,10 @@ def _chunk_source_block(block: dict, btype: str, text: str, page_num: int) -> di
         "column": column,
         "reading_order": reading_order,
     }
+
+
+def _new_chunk_table_group_id(doc_id: str, index: int) -> str:
+    return f"{doc_id}_table{index:04d}"
 
 
 def _block_text_for_chunk(block: dict) -> str:
@@ -1283,6 +1326,7 @@ def chunk_by_blocks(
     chunk_overlap: int = 120,
     skip_references: bool = True,
     base_excluded_block_counts: Optional[dict[str, int]] = None,
+    evidence_context_mode: str = "off",
 ) -> list[Chunk]:
     """
     基于 pages[].blocks 的结构化分块。
@@ -1305,6 +1349,9 @@ def chunk_by_blocks(
                 excluded_block_counts[key] = excluded_block_counts.get(key, 0) + value
     doc_title = ""
     last_table_caption_page: int | None = None
+    table_group_index = 0
+    last_table_group_id: str | None = None
+    last_table_group_page: int | None = None
     for p in pages:
         page_num = p.get("page", 1)
         for block in p.get("blocks", []):
@@ -1324,7 +1371,7 @@ def chunk_by_blocks(
             # 跳过 References section heading 本身
             if btype == "section_heading" and skip_references:
                 heading_text = btext.lstrip("#").strip()
-                if REFERENCE_SECTION_PATTERN.match(heading_text):
+                if match_reference_noise(heading_text)[0] or REFERENCE_SECTION_PATTERN.match(heading_text):
                     continue
             contaminated, _contamination_reason = is_contaminated_evidence_text(btext)
             if contaminated:
@@ -1338,6 +1385,26 @@ def chunk_by_blocks(
             )
             if btype == "table_text" and looks_like_false_table_text_body_sentence(btext, strong_table_context):
                 btype = "paragraph"
+            table_group_id = None
+            if btype == "table_caption":
+                table_group_index += 1
+                table_group_id = _new_chunk_table_group_id(doc_id, table_group_index)
+                last_table_group_id = table_group_id
+                if isinstance(page_num, int):
+                    last_table_group_page = page_num
+            elif btype == "table_text":
+                if (
+                    last_table_group_id
+                    and isinstance(page_num, int)
+                    and (last_table_group_page is None or page_num <= last_table_group_page + 1)
+                ):
+                    table_group_id = last_table_group_id
+                else:
+                    table_group_index += 1
+                    table_group_id = _new_chunk_table_group_id(doc_id, table_group_index)
+                    last_table_group_id = table_group_id
+                if isinstance(page_num, int):
+                    last_table_group_page = page_num
             if btype == "table_caption":
                 last_table_caption_page = page_num if isinstance(page_num, int) else last_table_caption_page
             elif btype in {"figure_caption", "section_heading", "subsection_heading"}:
@@ -1352,7 +1419,7 @@ def chunk_by_blocks(
                     all_blocks.extend(split_blocks)
                     continue
 
-            all_blocks.append(_chunk_source_block(block, btype, btext, page_num))
+            all_blocks.append(_chunk_source_block(block, btype, btext, page_num, table_group_id))
 
     if not all_blocks:
         return []
@@ -1376,7 +1443,11 @@ def chunk_by_blocks(
             normalized = _normalize_heading_line(heading_text)
             standard_name = _match_section_title(normalized)
 
-            is_metadata = normalized.lower().strip().rstrip(".") in _METADATA_HEADINGS
+            is_metadata = (
+                normalized.lower().strip().rstrip(".") in _METADATA_HEADINGS
+                or match_metadata_noise(normalized)[0]
+                or match_reference_noise(normalized)[0]
+            )
 
             if standard_name:
                 # 保存当前 section group
@@ -1521,6 +1592,13 @@ def chunk_by_blocks(
             chunk_text_parts = [_block_text_for_chunk(blk) for blk in group if blk.get("text")]
             meta = _chunk_metadata_from_blocks(group)
             evidence_hints = meta["evidence_types"]
+            chunk_section_path = list(sec_path)
+            if not chunk_section_path:
+                for source_meta in meta["source_block_metadata"]:
+                    source_section_path = source_meta.get("section_path", [])
+                    if source_section_path:
+                        chunk_section_path = list(source_section_path)
+                        break
 
             chunk_text = "\n\n".join(chunk_text_parts)
             tc = count_tokens(chunk_text)
@@ -1533,8 +1611,10 @@ def chunk_by_blocks(
             chunk_id = f"{doc_id}_sec{len(all_chunks):02d}_chunk{chunk_idx:02d}"
 
             section_display = sec_name
-            if sec_path and len(sec_path) > 1:
-                section_display = sec_path[0]
+            if chunk_section_path and len(chunk_section_path) > 1:
+                section_display = chunk_section_path[0]
+            if any(item in evidence_hints for item in ("figure_caption", "table_caption", "table_text")):
+                section_display = _evidence_section_display(section_display, chunk_section_path)
 
             retrieval_text = build_retrieval_text(
                 title=doc_title,
@@ -1543,6 +1623,15 @@ def chunk_by_blocks(
                 doc_id=doc_id,
                 chunk_text=chunk_text,
                 evidence_types=evidence_hints,
+            )
+            retrieval_text = enrich_evidence_retrieval_text(
+                retrieval_text=retrieval_text,
+                section=section_display,
+                page_numbers=meta["page_numbers"],
+                contains_table_caption=meta["contains_table_caption"],
+                contains_table_text=meta["contains_table_text"],
+                contains_figure_caption=meta["contains_figure_caption"],
+                mode=evidence_context_mode,
             )
 
             all_chunks.append(Chunk(
@@ -1558,7 +1647,7 @@ def chunk_by_blocks(
                 text=chunk_text,
                 retrieval_text=retrieval_text,
                 quality_score=qs,
-                section_path=list(sec_path),
+                section_path=chunk_section_path,
                 block_types=meta["block_types"],
                 source_block_ids=meta["source_block_ids"],
                 block_ids=meta["block_ids"],
@@ -1586,6 +1675,17 @@ def chunk_by_blocks(
     return all_chunks
 
 
+def _evidence_section_display(section_display: str, section_path: list[Any]) -> str:
+    weak_sections = {"", "Title", "Unknown"}
+    if section_display not in weak_sections:
+        return section_display
+    for item in section_path:
+        text = str(item).strip()
+        if text and text not in weak_sections:
+            return text
+    return section_display
+
+
 def _aggregate_blocks_into_chunks(
     blocks: list[dict],
     chunk_size: int,
@@ -1602,16 +1702,52 @@ def _aggregate_blocks_into_chunks(
     groups: list[list[dict]] = []
     current: list[dict] = []
     current_tokens = 0
+    table_groups_by_id: dict[Any, list[dict]] = {}
+
+    def flush_current() -> None:
+        nonlocal current, current_tokens
+        if current:
+            groups.append(current)
+        current = []
+        current_tokens = 0
 
     for block in blocks:
+        block_type = block.get("type")
         block_tokens = count_tokens(block["text"])
-        joins_previous_table_caption = (
-            block.get("type") == "table_text"
-            and current
-            and current[-1].get("type") == "table_caption"
-        )
 
-        if current_tokens + block_tokens > chunk_size and current_tokens > 0 and not joins_previous_table_caption:
+        if block_type == "figure_caption":
+            flush_current()
+            groups.append([block])
+            continue
+
+        if block_type in {"table_caption", "table_text"}:
+            table_group_id = _block_table_group_id(block)
+            if (
+                block_type == "table_text"
+                and table_group_id
+                and table_group_id in table_groups_by_id
+                and table_groups_by_id[table_group_id] is not current
+            ):
+                if current and not _is_table_evidence_group(current):
+                    flush_current()
+                target_group = table_groups_by_id[table_group_id]
+                if _group_token_count(target_group) + block_tokens <= chunk_size:
+                    target_group.append(block)
+                    continue
+            if current and not _can_join_table_evidence_group(current, block):
+                flush_current()
+            if current_tokens + block_tokens > chunk_size and current_tokens > 0:
+                flush_current()
+            current.append(block)
+            current_tokens += block_tokens
+            if table_group_id:
+                table_groups_by_id[table_group_id] = current
+            continue
+
+        if current and _is_table_evidence_group(current):
+            flush_current()
+
+        if current_tokens + block_tokens > chunk_size and current_tokens > 0:
             groups.append(current)
             overlap_text = _get_overlap_text_from_blocks(current, chunk_overlap)
             current = []
@@ -1623,10 +1759,47 @@ def _aggregate_blocks_into_chunks(
         current.append(block)
         current_tokens += block_tokens
 
-    if current:
-        groups.append(current)
+    flush_current()
 
     return groups
+
+
+def _is_table_evidence_group(group: list[dict]) -> bool:
+    real_blocks = [block for block in group if block.get("type") != "overlap"]
+    return bool(real_blocks) and all(block.get("type") in {"table_caption", "table_text"} for block in real_blocks)
+
+
+def _group_token_count(group: list[dict]) -> int:
+    return sum(count_tokens(block.get("text", "")) for block in group)
+
+
+def _block_table_group_id(block: dict) -> Any:
+    metadata = block.get("metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return metadata.get("table_group_id") or block.get("table_group_id")
+
+
+def _can_join_table_evidence_group(group: list[dict], block: dict) -> bool:
+    if block.get("type") not in {"table_caption", "table_text"}:
+        return False
+    if not _is_table_evidence_group(group):
+        return False
+    if block.get("type") == "table_caption":
+        return False
+
+    group_ids = {
+        group_id
+        for existing in group
+        for group_id in [_block_table_group_id(existing)]
+        if group_id
+    }
+    block_group_id = _block_table_group_id(block)
+    if group_ids and block_group_id:
+        return block_group_id in group_ids
+    if group_ids or block_group_id:
+        return False
+    return True
 
 
 def _get_overlap_text_from_blocks(blocks: list[dict], overlap_tokens: int) -> str:
@@ -1846,6 +2019,36 @@ def build_retrieval_text(
     return "\n".join(header_parts) + "\n\n" + chunk_text
 
 
+def enrich_evidence_retrieval_text(
+    retrieval_text: str,
+    section: str,
+    page_numbers: list[int],
+    contains_table_caption: bool,
+    contains_table_text: bool,
+    contains_figure_caption: bool,
+    mode: str = "off",
+) -> str:
+    """Optionally add compact context to table/figure focused retrieval text."""
+    if mode == "off":
+        return retrieval_text
+    if mode != "compact":
+        raise ValueError(f"Unsupported evidence_context_mode: {mode}")
+
+    has_table = contains_table_caption or contains_table_text
+    has_figure = contains_figure_caption
+    if not has_table and not has_figure:
+        return retrieval_text
+
+    label = "[Table Evidence]" if has_table else "[Figure Evidence]"
+    context_lines = [label]
+    if section:
+        context_lines.append(f"Section: {section}")
+    if page_numbers:
+        pages = ", ".join(str(page) for page in page_numbers)
+        context_lines.append(f"Page: {pages}")
+    return "\n".join(context_lines) + "\n" + retrieval_text
+
+
 # ============================================================
 # 输入文件读取
 # ============================================================
@@ -2013,6 +2216,7 @@ def process_document(
     min_chunk_chars: int = 50,
     min_chunk_words: int = 10,
     quality_threshold: float = 0.3,
+    evidence_context_mode: str = "off",
 ) -> tuple[list[Chunk], bool]:
     """
     处理单篇论文，返回 (chunks, is_low_quality)。
@@ -2036,6 +2240,7 @@ def process_document(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             base_excluded_block_counts=doc_data.get("excluded_block_counts", {}) or {},
+            evidence_context_mode=evidence_context_mode,
         )
         # block-based 路径下，用 raw_text 判断是否有内容
         has_content = bool(raw_text and raw_text.strip())
@@ -2074,7 +2279,7 @@ def process_document(
         )
         min_chars = 20 if has_evidence else min_chunk_chars
         min_words = 3 if has_evidence else min_chunk_words
-        quality_floor = min(quality_threshold, 0.05) if has_evidence or has_table_text else quality_threshold
+        quality_floor = 0.0 if has_evidence or has_table_text else quality_threshold
 
         if len(chunk.text) < min_chars:
             continue
@@ -2104,6 +2309,7 @@ def batch_process(
     min_chunk_chars: int = 50,
     min_chunk_words: int = 10,
     quality_threshold: float = 0.3,
+    evidence_context_mode: str = "off",
 ) -> ProcessingStats:
     """
     批量处理输入目录下的所有 txt/json 文件，输出 JSONL。
@@ -2145,6 +2351,7 @@ def batch_process(
                     min_chunk_chars=min_chunk_chars,
                     min_chunk_words=min_chunk_words,
                     quality_threshold=quality_threshold,
+                    evidence_context_mode=evidence_context_mode,
                 )
 
                 for chunk in chunks:
@@ -2203,6 +2410,12 @@ def main():
         "--quality_threshold", type=float, default=0.3,
         help="chunk 最低质量分（默认 0.3）",
     )
+    parser.add_argument(
+        "--evidence_context_mode",
+        choices=("off", "compact"),
+        default="off",
+        help="table/figure evidence retrieval_text context mode（默认 off）",
+    )
 
     args = parser.parse_args()
 
@@ -2220,6 +2433,7 @@ def main():
     print(f"输出目录:   {output_dir}")
     print(f"chunk_size: {args.chunk_size}")
     print(f"chunk_overlap: {args.chunk_overlap}")
+    print(f"evidence_context_mode: {args.evidence_context_mode}")
     print()
 
     start_time = time.time()
@@ -2231,6 +2445,7 @@ def main():
         min_chunk_chars=args.min_chunk_chars,
         min_chunk_words=args.min_chunk_words,
         quality_threshold=args.quality_threshold,
+        evidence_context_mode=args.evidence_context_mode,
     )
     elapsed = time.time() - start_time
 
