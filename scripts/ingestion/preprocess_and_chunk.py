@@ -1287,6 +1287,26 @@ def _chunk_metadata_from_blocks(group: list[dict]) -> dict[str, Any]:
             "section_path": b.get("section_path", []),
             "text_preview": _compact_text_preview(b.get("text", "")),
         }
+        # Phase 5C-1 pilot only: preserve table-like paragraph association
+        # metadata inside the existing source_block_metadata field. This is
+        # metadata-compatible and leaves Chunk dataclass/top-level fields
+        # unchanged; non-pilot inputs do not carry these keys.
+        block_metadata = b.get("metadata", {}) or {}
+        if isinstance(block_metadata, dict) and block_metadata.get("table_related") is True:
+            for key in (
+                "table_related",
+                "table_related_type",
+                "table_association_rule",
+                "associated_table_caption_block_id",
+                "association_confidence",
+                "table_enhancement_enabled",
+                "table_enhancement_mode",
+                "table_enhancement_rule_hits",
+                "phase5c1_pilot",
+                "phase5c1_rule_hits",
+            ):
+                if key in block_metadata:
+                    meta[key] = block_metadata[key]
         source_block_metadata.append({k: v for k, v in meta.items() if v is not None})
 
     return {
@@ -1352,6 +1372,17 @@ def chunk_by_blocks(
     table_group_index = 0
     last_table_group_id: str | None = None
     last_table_group_page: int | None = None
+    table_group_by_caption_block_id: dict[str, str] = {}
+    for p in pages:
+        for block in p.get("blocks", []) or []:
+            if block.get("type") != "table_caption":
+                continue
+            caption_block_id = str(_normalize_block_id(block) or _normalize_source_block_id(block) or "")
+            if not caption_block_id or caption_block_id in table_group_by_caption_block_id:
+                continue
+            table_group_index += 1
+            table_group_by_caption_block_id[caption_block_id] = _new_chunk_table_group_id(doc_id, table_group_index)
+    table_group_index = len(table_group_by_caption_block_id)
     for p in pages:
         page_num = p.get("page", 1)
         for block in p.get("blocks", []):
@@ -1387,8 +1418,11 @@ def chunk_by_blocks(
                 btype = "paragraph"
             table_group_id = None
             if btype == "table_caption":
-                table_group_index += 1
-                table_group_id = _new_chunk_table_group_id(doc_id, table_group_index)
+                caption_block_id = str(_normalize_block_id(block) or _normalize_source_block_id(block) or "")
+                table_group_id = table_group_by_caption_block_id.get(caption_block_id)
+                if not table_group_id:
+                    table_group_index += 1
+                    table_group_id = _new_chunk_table_group_id(doc_id, table_group_index)
                 last_table_group_id = table_group_id
                 if isinstance(page_num, int):
                     last_table_group_page = page_num
@@ -1405,6 +1439,13 @@ def chunk_by_blocks(
                     last_table_group_id = table_group_id
                 if isinstance(page_num, int):
                     last_table_group_page = page_num
+            elif _is_phase5c1_table_related_block(block):
+                # Phase 5C-1 pilot only: table-like paragraph blocks remain
+                # their original type, but join the associated caption's table
+                # group when the enhancer wrote metadata for that association.
+                metadata = block.get("metadata", {}) or {}
+                associated_caption_id = str(metadata.get("associated_table_caption_block_id") or "")
+                table_group_id = table_group_by_caption_block_id.get(associated_caption_id)
             if btype == "table_caption":
                 last_table_caption_page = page_num if isinstance(page_num, int) else last_table_caption_page
             elif btype in {"figure_caption", "section_heading", "subsection_heading"}:
@@ -1714,16 +1755,17 @@ def _aggregate_blocks_into_chunks(
     for block in blocks:
         block_type = block.get("type")
         block_tokens = count_tokens(block["text"])
+        is_phase5c1_table_related = _is_phase5c1_table_related_block(block)
 
         if block_type == "figure_caption":
             flush_current()
             groups.append([block])
             continue
 
-        if block_type in {"table_caption", "table_text"}:
+        if block_type in {"table_caption", "table_text"} or is_phase5c1_table_related:
             table_group_id = _block_table_group_id(block)
             if (
-                block_type == "table_text"
+                (block_type == "table_text" or is_phase5c1_table_related)
                 and table_group_id
                 and table_group_id in table_groups_by_id
                 and table_groups_by_id[table_group_id] is not current
@@ -1766,7 +1808,10 @@ def _aggregate_blocks_into_chunks(
 
 def _is_table_evidence_group(group: list[dict]) -> bool:
     real_blocks = [block for block in group if block.get("type") != "overlap"]
-    return bool(real_blocks) and all(block.get("type") in {"table_caption", "table_text"} for block in real_blocks)
+    return bool(real_blocks) and all(
+        block.get("type") in {"table_caption", "table_text"} or _is_phase5c1_table_related_block(block)
+        for block in real_blocks
+    )
 
 
 def _group_token_count(group: list[dict]) -> int:
@@ -1780,12 +1825,23 @@ def _block_table_group_id(block: dict) -> Any:
     return metadata.get("table_group_id") or block.get("table_group_id")
 
 
+def _is_phase5c1_table_related_block(block: dict) -> bool:
+    metadata = block.get("metadata", {}) or {}
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("table_related") is True
+        and metadata.get("table_related_type") == "table_like_paragraph"
+        and (
+            metadata.get("table_enhancement_enabled") is True
+            or metadata.get("phase5c1_pilot") is True
+        )
+    )
+
+
 def _can_join_table_evidence_group(group: list[dict], block: dict) -> bool:
-    if block.get("type") not in {"table_caption", "table_text"}:
+    if block.get("type") not in {"table_caption", "table_text"} and not _is_phase5c1_table_related_block(block):
         return False
     if not _is_table_evidence_group(group):
-        return False
-    if block.get("type") == "table_caption":
         return False
 
     group_ids = {
@@ -1796,7 +1852,13 @@ def _can_join_table_evidence_group(group: list[dict], block: dict) -> bool:
     }
     block_group_id = _block_table_group_id(block)
     if group_ids and block_group_id:
+        if block.get("type") == "table_caption" and any(
+            existing.get("type") == "table_caption" for existing in group
+        ):
+            return False
         return block_group_id in group_ids
+    if block.get("type") == "table_caption":
+        return False
     if group_ids or block_group_id:
         return False
     return True

@@ -1,9 +1,28 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..domain.config import Settings
+from .table_enhancement import (
+    config_from_settings,
+    derive_suffixed_path,
+    make_run_id,
+    run_table_enhancement,
+)
+
+
+@dataclass(frozen=True)
+class Round1BuildPaths:
+    parsed_input_dir: Path
+    chunk_dir: Path
+    chunk_jsonl: Path
+    bm25_cache_path: Path
+    milvus_uri: str
+    collection_name: str
+    table_enhancement_output_dir: Path | None = None
+    table_enhancement_audit_dir: Path | None = None
 
 
 class KnowledgeBaseBuilder:
@@ -13,6 +32,8 @@ class KnowledgeBaseBuilder:
 
     def build_round1(self) -> None:
         self.settings.ensure_directories()
+        table_config = self.settings.table_enhancement
+        build_paths = self._round1_build_paths()
         self._run(
             [
                 "python",
@@ -36,14 +57,47 @@ class KnowledgeBaseBuilder:
                 self.settings.kb.parsed_preview_dir,
             ]
         )
+        print(
+            "[table_enhancement] "
+            f"enabled={table_config.enabled} dry_run={table_config.dry_run}"
+        )
+        if table_config.enabled:
+            if build_paths.table_enhancement_output_dir is None or build_paths.table_enhancement_audit_dir is None:
+                raise RuntimeError("table enhancement paths were not initialized")
+            result = run_table_enhancement(
+                input_dir=self.settings.kb.parsed_dir,
+                output_dir=build_paths.table_enhancement_output_dir,
+                audit_dir=build_paths.table_enhancement_audit_dir,
+                config=config_from_settings(table_config),
+                process_all_docs=True,
+            )
+            print(
+                "[table_enhancement] "
+                f"input_dir={self.settings.kb.parsed_dir} "
+                f"output_dir={build_paths.table_enhancement_output_dir} "
+                f"audit_dir={build_paths.table_enhancement_audit_dir} "
+                f"associations={result.association_count} "
+                f"safety_gate_passed={result.safety_gate_passed}"
+            )
+            if not result.safety_gate_passed:
+                raise RuntimeError(
+                    "table enhancement safety gate failed; see "
+                    f"{build_paths.table_enhancement_audit_dir}"
+                )
+        else:
+            print(
+                "[table_enhancement] "
+                f"input_dir={self.settings.kb.parsed_dir} "
+                "output_dir=n/a audit_dir=n/a associations=0 safety_gate_passed=n/a"
+            )
         self._run(
             [
                 "python",
                 "scripts/ingestion/preprocess_and_chunk.py",
                 "--input_dir",
-                self.settings.kb.parsed_dir,
+                str(build_paths.parsed_input_dir),
                 "--output_dir",
-                self.settings.kb.chunk_dir,
+                str(build_paths.chunk_dir),
                 "--chunk_size",
                 str(self.settings.kb.chunk_size),
                 "--chunk_overlap",
@@ -55,11 +109,11 @@ class KnowledgeBaseBuilder:
                 "python",
                 "scripts/ingestion/import_to_milvus.py",
                 "--jsonl",
-                self.settings.kb.chunk_jsonl,
+                str(build_paths.chunk_jsonl),
                 "--collection_name",
-                self.settings.retrieval.collection_name,
+                build_paths.collection_name,
                 "--milvus_uri",
-                self.settings.retrieval.milvus_uri,
+                build_paths.milvus_uri,
                 "--embedding",
                 "bge-m3",
                 "--model_path",
@@ -72,3 +126,89 @@ class KnowledgeBaseBuilder:
 
     def _run(self, cmd: list[str]) -> None:
         subprocess.run(cmd, cwd=self.root, check=True)
+
+    def _round1_build_paths(self) -> Round1BuildPaths:
+        table_config = self.settings.table_enhancement
+        parsed_dir = Path(self.settings.kb.parsed_dir)
+        chunk_dir = Path(self.settings.kb.chunk_dir)
+        chunk_jsonl = Path(self.settings.kb.chunk_jsonl)
+        bm25_cache_path = Path(self.settings.retrieval.bm25_cache_path)
+        if not table_config.enabled:
+            return Round1BuildPaths(
+                parsed_input_dir=parsed_dir,
+                chunk_dir=chunk_dir,
+                chunk_jsonl=chunk_jsonl,
+                bm25_cache_path=bm25_cache_path,
+                milvus_uri=self.settings.retrieval.milvus_uri,
+                collection_name=self.settings.retrieval.collection_name,
+            )
+
+        suffix = table_config.output_suffix
+        enhanced_parsed_dir = derive_suffixed_path(parsed_dir, suffix)
+        enhanced_chunk_dir = derive_suffixed_path(chunk_dir, suffix)
+        enhanced_chunk_jsonl = enhanced_chunk_dir / chunk_jsonl.name
+        enhanced_bm25_cache_path = enhanced_chunk_dir / bm25_cache_path.name
+        enhanced_milvus_uri = self._suffixed_milvus_uri(self.settings.retrieval.milvus_uri, suffix)
+        enhanced_collection = f"{self.settings.retrieval.collection_name}_{suffix}"
+        audit_dir = Path(table_config.audit_root)
+        if not getattr(table_config, "audit_dir_exact", False):
+            audit_dir = audit_dir / make_run_id()
+
+        self._guard_isolated_paths(
+            parsed_dir=parsed_dir,
+            chunk_dir=chunk_dir,
+            chunk_jsonl=chunk_jsonl,
+            bm25_cache_path=bm25_cache_path,
+            enhanced_parsed_dir=enhanced_parsed_dir,
+            enhanced_chunk_dir=enhanced_chunk_dir,
+            enhanced_chunk_jsonl=enhanced_chunk_jsonl,
+            enhanced_bm25_cache_path=enhanced_bm25_cache_path,
+            enhanced_milvus_uri=enhanced_milvus_uri,
+            enhanced_collection=enhanced_collection,
+        )
+
+        parsed_input = parsed_dir if table_config.dry_run else enhanced_parsed_dir
+        return Round1BuildPaths(
+            parsed_input_dir=parsed_input,
+            chunk_dir=chunk_dir if table_config.dry_run else enhanced_chunk_dir,
+            chunk_jsonl=chunk_jsonl if table_config.dry_run else enhanced_chunk_jsonl,
+            bm25_cache_path=bm25_cache_path if table_config.dry_run else enhanced_bm25_cache_path,
+            milvus_uri=self.settings.retrieval.milvus_uri if table_config.dry_run else enhanced_milvus_uri,
+            collection_name=self.settings.retrieval.collection_name if table_config.dry_run else enhanced_collection,
+            table_enhancement_output_dir=enhanced_parsed_dir,
+            table_enhancement_audit_dir=audit_dir,
+        )
+
+    @staticmethod
+    def _suffixed_milvus_uri(uri: str, suffix: str) -> str:
+        if uri.startswith(("http://", "https://", "unix://", "tcp://")):
+            return uri
+        return str(derive_suffixed_path(uri, suffix))
+
+    @staticmethod
+    def _guard_isolated_paths(
+        *,
+        parsed_dir: Path,
+        chunk_dir: Path,
+        chunk_jsonl: Path,
+        bm25_cache_path: Path,
+        enhanced_parsed_dir: Path,
+        enhanced_chunk_dir: Path,
+        enhanced_chunk_jsonl: Path,
+        enhanced_bm25_cache_path: Path,
+        enhanced_milvus_uri: str,
+        enhanced_collection: str,
+    ) -> None:
+        path_pairs = [
+            ("parsed_dir", parsed_dir, enhanced_parsed_dir),
+            ("chunk_dir", chunk_dir, enhanced_chunk_dir),
+            ("chunk_jsonl", chunk_jsonl, enhanced_chunk_jsonl),
+            ("bm25_cache_path", bm25_cache_path, enhanced_bm25_cache_path),
+        ]
+        for name, baseline, enhanced in path_pairs:
+            if baseline.resolve() == enhanced.resolve():
+                raise ValueError(f"table enhancement {name} target collides with baseline path")
+        if not enhanced_collection or enhanced_collection == "synbio_papers":
+            raise ValueError("table enhancement collection_name must be isolated")
+        if enhanced_milvus_uri and enhanced_milvus_uri == "":
+            raise ValueError("table enhancement milvus_uri must not be empty")

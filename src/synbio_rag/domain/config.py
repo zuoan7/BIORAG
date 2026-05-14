@@ -275,6 +275,21 @@ class KnowledgeBaseConfig:
 
 
 @dataclass
+class TableEnhancementConfig:
+    enabled: bool = False
+    mode: str = "conservative_caption_nearby"
+    window_after_caption: int = 5
+    window_before_caption: int = 1
+    max_associated_blocks_per_caption: int = 5
+    min_confidence: str = "low"
+    write_audit: bool = True
+    fail_on_schema_drift: bool = True
+    output_suffix: str = "table_enhanced"
+    audit_root: str = "./reports/table_enhancement"
+    dry_run: bool = False
+
+
+@dataclass
 class QueryRewriteConfig:
     """Phase 19: English-mirror query rewrite feature flag. Default: OFF."""
     mode: str = "off"  # off | shadow | enabled
@@ -309,6 +324,7 @@ class Settings:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     round8: Round8PolicyConfig = field(default_factory=Round8PolicyConfig)
     query_rewrite: QueryRewriteConfig = field(default_factory=QueryRewriteConfig)
+    table_enhancement: TableEnhancementConfig = field(default_factory=TableEnhancementConfig)
     llm: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-plus"))
     reranker: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-rerank"))
 
@@ -646,6 +662,55 @@ class Settings:
         settings.kb.embedding_max_length = int(
             get_value("BGE_EMBED_MAX_LENGTH", str(settings.kb.embedding_max_length))
         )
+        settings.table_enhancement.enabled = _parse_bool(
+            get_value("TABLE_ENHANCEMENT_ENABLED", str(settings.table_enhancement.enabled))
+        )
+        settings.table_enhancement.mode = get_value(
+            "TABLE_ENHANCEMENT_MODE",
+            settings.table_enhancement.mode,
+        ).strip()
+        settings.table_enhancement.window_after_caption = int(
+            get_value(
+                "TABLE_ENHANCEMENT_WINDOW_AFTER_CAPTION",
+                str(settings.table_enhancement.window_after_caption),
+            )
+        )
+        settings.table_enhancement.window_before_caption = int(
+            get_value(
+                "TABLE_ENHANCEMENT_WINDOW_BEFORE_CAPTION",
+                str(settings.table_enhancement.window_before_caption),
+            )
+        )
+        settings.table_enhancement.max_associated_blocks_per_caption = int(
+            get_value(
+                "TABLE_ENHANCEMENT_MAX_ASSOCIATED_BLOCKS_PER_CAPTION",
+                str(settings.table_enhancement.max_associated_blocks_per_caption),
+            )
+        )
+        settings.table_enhancement.min_confidence = get_value(
+            "TABLE_ENHANCEMENT_MIN_CONFIDENCE",
+            settings.table_enhancement.min_confidence,
+        ).strip().lower()
+        settings.table_enhancement.write_audit = _parse_bool(
+            get_value("TABLE_ENHANCEMENT_WRITE_AUDIT", str(settings.table_enhancement.write_audit))
+        )
+        settings.table_enhancement.fail_on_schema_drift = _parse_bool(
+            get_value(
+                "TABLE_ENHANCEMENT_FAIL_ON_SCHEMA_DRIFT",
+                str(settings.table_enhancement.fail_on_schema_drift),
+            )
+        )
+        settings.table_enhancement.output_suffix = get_value(
+            "TABLE_ENHANCEMENT_OUTPUT_SUFFIX",
+            settings.table_enhancement.output_suffix,
+        ).strip()
+        settings.table_enhancement.audit_root = get_value(
+            "TABLE_ENHANCEMENT_AUDIT_ROOT",
+            settings.table_enhancement.audit_root,
+        ).strip()
+        settings.table_enhancement.dry_run = _parse_bool(
+            get_value("TABLE_ENHANCEMENT_DRY_RUN", str(settings.table_enhancement.dry_run))
+        )
         settings.llm.api_base = get_value("QWEN_CHAT_API_BASE", "")
         settings.llm.api_key = get_value("QWEN_CHAT_API_KEY", "")
         settings.reranker.api_base = get_value("QWEN_RERANK_API_BASE", "")
@@ -841,6 +906,7 @@ class Settings:
         self.kb.chunk_dir = _resolve_local_path(self.kb.chunk_dir)
         self.kb.chunk_jsonl = _resolve_local_path(self.kb.chunk_jsonl)
         self.kb.embedding_model_path = _resolve_local_path(self.kb.embedding_model_path)
+        self.table_enhancement.audit_root = _resolve_local_path(self.table_enhancement.audit_root)
         self.reranker.model_path = _resolve_local_path(self.reranker.model_path)
         self.audit.audit_log_path = _resolve_local_path(self.audit.audit_log_path)
         self.audit.session_store_path = _resolve_local_path(self.audit.session_store_path)

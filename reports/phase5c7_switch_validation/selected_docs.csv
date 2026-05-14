@@ -1,0 +1,9 @@
+doc_id,reason_selected,expected_has_association,risk_tag
+doc_0090,Phase 5C-3 carryover; high accepted association count in pilot audit,true,phase5c_association_present;high_table_caption_count
+doc_0137,Phase 5C-3 selected doc; table_caption plus accepted table-like associations,true,high_table_keyword;cjk_text_present
+doc_0282,Phase 5C-3 carryover; high table_caption count with pilot associations,true,phase5c_association_present;high_table_caption_count
+doc_0412,Phase 5C-3 selected complex-layout table-caption document with associations,true,complex_layout;long_doc
+doc_0442,Requested low-confidence risk sample option; table_caption and suspected table-like paragraphs,true,low_confidence_risk;high_table_caption;long_doc
+doc_0018,Phase 5C-3 low/no-table control,false,low_table_control
+doc_0069,Phase 5C-3 low/no-table control with no suspected table-like paragraphs,false,low_table_control;cjk_text_present
+doc_0108,Phase 5C-3 low/no-table control,false,low_table_control

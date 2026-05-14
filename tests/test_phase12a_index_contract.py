@@ -437,6 +437,26 @@ class TestBackwardCompatibility:
         parsed = json.loads(result)
         assert parsed["source_block_metadata"] == []
 
+    def test_table_enhancement_metadata_is_import_compatible(self):
+        chunk = {
+            "doc_id": "doc1",
+            "text": "table-related paragraph",
+            "source_block_metadata": [
+                {
+                    "block_id": "b2",
+                    "type": "paragraph",
+                    "page": 1,
+                    "table_related": True,
+                    "table_related_type": "table_like_paragraph",
+                    "table_enhancement_enabled": True,
+                }
+            ],
+        }
+        result = build_metadata_json(chunk)
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+        assert parsed["source_block_metadata"][0]["block_id"] == "b2"
+
 
 # ============================================================
 # 10. Config 新增字段测试
