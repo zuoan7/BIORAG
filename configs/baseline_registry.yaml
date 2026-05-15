@@ -1,0 +1,24 @@
+official_clean_baseline:
+  name: phase5f_official_clean_baseline
+  dataset_path: reports/phase5f_eval_semantic_enhancement_v2/strict_main_eval_set_v2.jsonl
+  dataset_sha256: 39e817bf492fe6d40a784dc457b9ab566cb3061d13fef6cec0443b19d5ca09b3
+  chunks_path: data/baselines/phase5f_official_clean_baseline/chunks/chunks.jsonl
+  chunk_count: 15802
+  bm25_path: data/baselines/phase5f_official_clean_baseline/bm25/bm25_index.json
+  bm25_records: 15802
+  milvus_uri: data/baselines/phase5f_official_clean_baseline/milvus/milvus_lite.db
+  milvus_collection: synbio_phase5f_official_clean_baseline
+  table_enhancement_enabled: false
+  caption_cleanup_enabled: false
+  status: official
+
+experimental_variants:
+  table_enhancement_on:
+    status: experimental
+    default_enabled: false
+
+legacy_production_reference:
+  name: current_default
+  milvus_collection: synbio_papers
+  chunk_count: 10610
+  status: legacy_production_reference
