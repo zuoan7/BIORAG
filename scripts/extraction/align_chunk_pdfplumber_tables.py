@@ -95,6 +95,16 @@ ALIGNMENT_GATE_HARDENING_RULES = {
     "AGH007": "keep_hybrid_candidate_cases_enter_binding_review_queue_only",
 }
 
+V2_READY_BLOCKING_ALIGNMENT_STATUSES = {"page_only_match", "caption_only_match", "conflict", "multiple_pdf_tables"}
+
+
+def alignment_allows_ready_candidate(alignment_status: str, alignment_confidence: str) -> bool:
+    """Phase7D v2 guard: weak/manual-review alignment cannot route to ready."""
+
+    if alignment_status in V2_READY_BLOCKING_ALIGNMENT_STATUSES:
+        return False
+    return alignment_status == "matched" and alignment_confidence in {"high", "medium"}
+
 
 def resolve_path(path: Path) -> Path:
     return path if path.is_absolute() else ROOT / path

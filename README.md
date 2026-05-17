@@ -8,6 +8,22 @@
 
 权威实验基线文档：[reports/phase20m_convergence_summary/summary.md](reports/phase20m_convergence_summary/summary.md)
 
+### Phase 7 表格证据链路状态（实验原型）
+
+Phase 7 当前推进到 table evidence / citation 原型阶段，仍不建议 production：
+
+- Phase7Q 定义了 `TableEvidenceCitation` typed schema prototype，明确区分 formal `canonical_source` 与 debug `provenance_debug`。
+- Phase7Q-1 完成独立 mapper dry-run，可将现有 table candidate/debug artifacts 映射为 prototype citation object 或 blocked record。
+- CSV / PDF crop / markdown card 路径只允许作为 debug provenance，不允许进入 formal citation source。
+- 当前 table units 仍为 `preview_only`、`production_ready=false`、`value_bboxes_available=false`，binding 仍为 warning-level。
+- 未接入 production `CitationBinder`，未生成 answer，未启用 formal table citation。
+- 下一步建议是 Phase7R production table index build / promote / rollback proposal；仍不建议直接 production。
+
+相关报告：
+
+- [Phase7Q Table Citation Schema Prototype](reports/v7_phase7_table_citation_schema_prototype/phase7q_summary.md)
+- [Phase7Q-1 Citation Mapper Dry-Run](reports/v7_phase7_table_citation_binder_prototype_dry_run/phase7q1_summary.md)
+
 ### Final Phase 20 核心指标 (smoke50 + smoke100 = 150 samples)
 
 | 指标 | Phase 20A (rewrite baseline) | Phase 20L-2 (final) |

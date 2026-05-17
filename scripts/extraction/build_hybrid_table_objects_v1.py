@@ -31,6 +31,17 @@ SOURCE_SPAN_LIMITATION = (
     "and is not inferred."
 )
 NUMERIC_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+HYBRID_V2_RULE_FIX_WARNINGS = {
+    "split_cell_warning",
+    "merged_cell_warning",
+    "row_continuation_warning",
+    "column_alignment_inconsistent",
+    "cell_grid_needs_rule_fix",
+    "metric_level_cell_gap",
+    "numeric_column_order_uncertain",
+    "missing_metric_cell_warning",
+    "metric_column_group_uncertain",
+}
 
 
 def resolve_path(path: Path) -> Path:
@@ -143,6 +154,12 @@ def normalized_source_span_granularity(value: str | None) -> str:
     if value == "value_level":
         return "mixed_or_unclear"
     return value or "table_row_level"
+
+
+def normalize_hybrid_v2_source_span_granularity(value: str | None) -> str:
+    """Keep Phase7D v2 from promoting absent token bboxes to value-level provenance."""
+
+    return normalized_source_span_granularity(value)
 
 
 def make_hybrid_id(chunk_obj: dict[str, Any]) -> str:

@@ -1,0 +1,13 @@
+# Phase7Q-1 Input Artifact Manifest
+
+All inputs are read-only artifacts from Phase7Q, Phase7M, Phase7L, and Phase7P. Phase7P reranker outputs are used only as static files; the reranker is not run.
+
+| artifact_path | exists | record_count | role | used_by_fixture_count |
+| --- | --- | --- | --- | --- |
+| `data/experiments/v7_phase7_table_citation_schema_prototype/table_evidence_citation_schema.json` | True | 1 | Phase7Q schema input | 0 |
+| `data/experiments/v7_phase7_table_citation_schema_prototype/citation_mapping_matrix.csv` | True | 21 | Phase7Q mapping matrix input | 0 |
+| `results/v7_phase7_table_rag_contract_hardening/generation_v2_contract_results.jsonl` | True | 3 | Phase7M candidate/debug rows | 7 |
+| `results/v7_phase7_table_rag_contract_hardening/citation_guard_results.csv` | True | 3 | Phase7M citation guard reference | 0 |
+| `results/v7_phase7_table_rag_smoke/support_pack_preview.jsonl` | True | 47 | Phase7L support metadata/header-path reference | 6 |
+| `data/experiments/v7_phase7_table_rag_reranker_compatibility_smoke/reranker_input_fixture.csv` | True | 28 | Phase7P fixture reference for non-table/normal cases | 2 |
+| `results/v7_phase7_table_rag_reranker_compatibility_smoke/reranker_smoke_results.csv` | True | 7 | Phase7P reranker result reference; not rerun | 1 |

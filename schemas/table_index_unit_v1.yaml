@@ -1,0 +1,220 @@
+schema_name: table_index_unit_v1
+schema_version: v1
+phase: v7_phase7I_table_index_unit_design
+status: preview_only_non_production
+primary_format: jsonl
+description: Minimal preview schema for BIORAG table index units derived from Phase7H formal seeds.
+
+top_level_allowed_fields:
+  - table_index_unit_id
+  - unit_type
+  - seed_id
+  - candidate_id
+  - doc_id
+  - table_id
+  - caption
+  - content_text_for_embedding
+  - content_markdown
+  - metadata
+  - provenance
+  - guardrail
+
+required_fields:
+  - table_index_unit_id
+  - unit_type
+  - seed_id
+  - candidate_id
+  - doc_id
+  - table_id
+  - caption
+  - content_text_for_embedding
+  - content_markdown
+  - metadata
+  - provenance
+  - guardrail
+
+enums:
+  unit_type:
+    - table_unit
+    - row_unit
+    - cell_group_unit
+  index_unit_status:
+    - preview_only
+  header_structure_type:
+    - single_header
+    - multirow_header
+    - spanning_header
+    - uncertain_header
+
+properties:
+  table_index_unit_id:
+    type: string
+    description: Stable preview unit id within Phase7I.
+  unit_type:
+    type: string
+    enum_ref: unit_type
+  seed_id:
+    type: string
+    description: Phase7H formal seed id.
+  candidate_id:
+    type: string
+    description: Phase7G review pack candidate id.
+  doc_id:
+    type: string
+  table_id:
+    type: string
+  caption:
+    type: string
+  content_text_for_embedding:
+    type: string
+    min_length: 1
+    description: Natural-language or compact semi-structured text for future offline retrieval preview.
+  content_markdown:
+    type: string
+    min_length: 1
+    description: Human-readable review rendering for this unit.
+
+  metadata:
+    type: object
+    required:
+      - page
+      - table_shape
+      - header_structure_type
+    properties:
+      page:
+        type: string
+        nullable: true
+      row_index:
+        type:
+          - integer
+          - string
+        nullable: true
+      row_label:
+        type: string
+        nullable: true
+      column_headers:
+        type: array
+        items:
+          type: string
+      header_path:
+        type: array
+        description: Header path list, or list of header path lists for row-level units.
+        items:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+      row_values:
+        type: array
+        items:
+          type: object
+      cell_group_values:
+        type: array
+        items:
+          type: object
+      table_shape:
+        type: object
+        properties:
+          csv_rows:
+            type: integer
+          data_rows:
+            type: integer
+          columns:
+            type: integer
+      header_structure_type:
+        type: string
+        enum_ref: header_structure_type
+
+  provenance:
+    type: object
+    required:
+      - source_csv_path
+      - source_markdown_path
+      - source_pdf_crop_path
+      - source_span_granularity
+      - value_bboxes_available
+      - cell_bboxes_available
+    properties:
+      source_csv_path:
+        type: string
+      source_markdown_path:
+        type: string
+      source_pdf_crop_path:
+        type: string
+      source_span_granularity:
+        type: string
+      value_bboxes_available:
+        type: boolean
+        const: false
+      cell_bboxes_available:
+        type: boolean
+
+  guardrail:
+    type: object
+    required:
+      - seed_status
+      - binding_review_mode
+      - binding_review_limitation
+      - unit_or_note_ok
+      - reference_ok
+      - seed_warnings
+      - index_unit_status
+      - is_official_benchmark_seed
+      - production_ready
+    properties:
+      seed_status:
+        type: string
+        const: confirmed_seed_with_warnings
+      binding_review_mode:
+        type: string
+      binding_review_limitation:
+        type: string
+      unit_or_note_ok:
+        type: string
+      reference_ok:
+        type: string
+      seed_warnings:
+        type: array
+        items:
+          type: string
+      index_unit_status:
+        type: string
+        enum_ref: index_unit_status
+        const: preview_only
+      is_official_benchmark_seed:
+        type: boolean
+        const: false
+      production_ready:
+        type: boolean
+        const: false
+
+forbidden_states:
+  - path: guardrail.production_ready
+    equals: true
+    reason: Phase7I preview units must not be production-ready.
+  - path: guardrail.is_official_benchmark_seed
+    equals: true
+    reason: Phase7I does not write official benchmark seeds.
+  - path: provenance.value_bboxes_available
+    equals: true
+    unless: true_value_level_bboxes_are_verified
+    reason: Phase7H confirmed value-level bboxes are unavailable.
+  - path: provenance.source_span_granularity
+    equals: value_level
+    unless: true_value_level_source_spans_are_verified
+    reason: Phase7H source spans are cell-level, not value-level.
+  - path: unit_type
+    equals: value_cell_unit
+    reason: Phase7I does not create independent value-level cell units.
+  - path: guardrail.index_unit_status
+    not_equals: preview_only
+    reason: Phase7I units are preview-only.
+
+non_goals:
+  - retrieval_evaluation
+  - embedding_experiment
+  - bm25_index_construction
+  - milvus_index_construction
+  - production_ingestion
+  - official_benchmark_update
