@@ -1,0 +1,330 @@
+schema_name: table_object_v1
+schema_version: v1
+phase: v7_phase7A_table_extraction_mvp
+status: offline_mvp_non_production
+primary_format: jsonl
+description: Offline table object schema for BIORAG structured table extraction MVP.
+
+required_fields:
+  - table_object_id
+  - doc_id
+  - source_file
+  - table_id
+  - caption
+  - page
+  - section_path
+  - caption_block_ids
+  - body_block_ids
+  - header_block_ids
+  - source_block_ids
+  - chunk_ids
+  - columns
+  - rows
+  - cells
+  - footnotes
+  - references
+  - source_spans
+  - source_span_granularity
+  - warnings
+  - extraction_method
+  - extraction_confidence
+  - validation_status
+
+properties:
+  table_object_id:
+    type: string
+    description: Stable offline table object id.
+  doc_id:
+    type: string
+  source_file:
+    type: string
+  table_id:
+    type: string
+    nullable: true
+    examples: ["Table 1", "TABLE 2", "Supplementary Table S1"]
+  caption:
+    type: string
+    nullable: true
+  page:
+    type: integer
+    nullable: true
+  section_path:
+    type: array
+    items:
+      type: string
+  caption_block_ids:
+    type: array
+    items:
+      type: string
+  body_block_ids:
+    type: array
+    items:
+      type: string
+  header_block_ids:
+    type: array
+    items:
+      type: string
+  source_block_ids:
+    type: array
+    items:
+      type: string
+  chunk_ids:
+    type: array
+    items:
+      type: string
+  boundary_status:
+    type: string
+    enum:
+      - boundary_pass
+      - boundary_pass_with_warnings
+      - boundary_partial
+      - boundary_fail
+  caption_body_relation_status:
+    type: string
+    enum:
+      - same_block
+      - adjacent_blocks
+      - same_chunk_split
+      - adjacent_chunk_split
+      - uncertain
+      - contaminated
+  columns:
+    type: array
+    items:
+      type: object
+      required:
+        - column_id
+        - column_index
+        - header
+      properties:
+        column_id:
+          type: string
+        column_index:
+          type: integer
+        header:
+          type: string
+        unit:
+          type: string
+          nullable: true
+        header_path:
+          type: array
+          items:
+            type: string
+        source_span_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+  rows:
+    type: array
+    items:
+      type: object
+      required:
+        - row_id
+        - row_index
+      properties:
+        row_id:
+          type: string
+        row_index:
+          type: integer
+        row_label:
+          type: string
+          nullable: true
+        row_text:
+          type: string
+          nullable: true
+        source_span_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+  cells:
+    type: array
+    items:
+      type: object
+      required:
+        - cell_id
+        - row_id
+        - column_id
+        - value_raw
+        - source_span_ids
+      properties:
+        cell_id:
+          type: string
+        row_id:
+          type: string
+        column_id:
+          type: string
+        value_raw:
+          type: string
+        value_normalized:
+          type: string
+          nullable: true
+        unit:
+          type: string
+          nullable: true
+        literal_marker:
+          type: string
+          nullable: true
+        footnote_refs:
+          type: array
+          items:
+            type: string
+        reference_refs:
+          type: array
+          items:
+            type: string
+        source_span_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+  footnotes:
+    type: array
+    items:
+      type: object
+      properties:
+        footnote_id:
+          type: string
+        marker:
+          type: string
+        text:
+          type: string
+        source_span_ids:
+          type: array
+          items:
+            type: string
+        binding_status:
+          type: string
+  references:
+    type: array
+    items:
+      type: object
+      properties:
+        reference_id:
+          type: string
+        text:
+          type: string
+        row_ids:
+          type: array
+          items:
+            type: string
+        cell_ids:
+          type: array
+          items:
+            type: string
+        source_span_ids:
+          type: array
+          items:
+            type: string
+        binding_status:
+          type: string
+  source_spans:
+    type: array
+    items:
+      type: object
+      required:
+        - source_span_id
+        - doc_id
+        - chunk_id
+        - block_id
+        - page
+        - span_text
+        - granularity
+      properties:
+        source_span_id:
+          type: string
+        doc_id:
+          type: string
+        chunk_id:
+          type: string
+        block_id:
+          type: string
+        page:
+          type: integer
+          nullable: true
+        span_text:
+          type: string
+        granularity:
+          type: string
+          enum:
+            - table_level
+            - table_row_level
+            - row_level
+            - cell_level
+            - value_level
+            - mixed_or_unclear
+        bbox:
+          type: "null"
+          description: Phase7A official chunks do not provide value-level bbox; do not fabricate bbox.
+  source_span_granularity:
+    type: string
+    enum:
+      - table_level
+      - table_row_level
+      - row_level
+      - cell_level
+      - value_level
+      - mixed_or_unclear
+  warnings:
+    type: array
+    items:
+      type: string
+    allowed_values:
+      - no_table_text_flag
+      - caption_body_split
+      - body_as_paragraph
+      - body_as_table_caption
+      - body_as_subsection_heading
+      - adjacent_non_table_content
+      - table_boundary_partial
+      - source_span_table_row_level_only
+      - source_span_not_value_level
+      - no_value_level_bbox
+      - numeric_column_order_uncertain
+      - unit_scope_uncertain
+      - footnote_binding_uncertain
+      - reference_binding_uncertain
+      - literal_value_requires_preservation
+      - matrix_binding_uncertain
+      - metric_level_cell_gap_risk
+      - parser_boundary_warning
+      - manual_review_dependency
+      - target_mapping_risk
+      - mixed_table_block_risk
+      - supplementary_required
+  extraction_method:
+    type: string
+    examples:
+      - official_chunks_heuristic_v1
+  extraction_confidence:
+    type: string
+    enum:
+      - high
+      - medium
+      - low
+  validation_status:
+    type: string
+    enum:
+      - pass
+      - pass_with_warnings
+      - partial
+      - fail
+
+non_production_constraints:
+  - Phase7A is an offline MVP.
+  - Do not write to Milvus.
+  - Do not rebuild BM25.
+  - Do not run retrieval, rerank, embedding, OCR, VLM, Qwen, or RAGAS.
+  - Do not modify official baseline assets.
+  - Do not fabricate value-level bbox.
+  - Do not embed full table_object JSON directly.
