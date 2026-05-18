@@ -1,6 +1,8 @@
 # BIORAG Script Inventory
 
-This inventory reflects Cleanup PR4 after the unknown-script proof and quarantine pass. It is descriptive; production code, retrieval, generation, accepted data, and configs were not changed by this document.
+This inventory reflects Cleanup PR5 after the PR4 unknown-script quarantine set
+was deleted from the archive. It is descriptive; production code, retrieval,
+generation, accepted data, and configs were not changed by this document.
 
 ## Counts
 
@@ -10,17 +12,19 @@ Python scripts quarantined in PR2 under `archive/scripts/phase_artifacts/`: 114.
 Python scripts currently archived under `archive/scripts/phase_artifacts/`: 0.
 Python scripts deleted after quarantine in PR3: 114.
 Python scripts quarantined in PR4 under `archive/scripts/unknown_candidates/`: 47.
+Python scripts deleted after quarantine in PR5: 47.
+Python scripts currently archived under `archive/scripts/unknown_candidates/`: 0.
 Retained `unknown` scripts still under `scripts/`: 5.
 
-| Directory | Original | PR2 quarantined | PR3 deleted_after_quarantine | PR4 quarantined_unknown | Remaining |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `scripts/audit` | 2 | 0 | 0 | 2 | 0 |
-| `scripts/data_prep` | 4 | 0 | 0 | 4 | 0 |
-| `scripts/diagnostics` | 21 | 1 | 1 | 18 | 2 |
-| `scripts/evaluation` | 210 | 113 | 113 | 23 | 74 |
-| `scripts/extraction` | 28 | 0 | 0 | 0 | 28 |
-| `scripts/ingestion` | 15 | 0 | 0 | 0 | 15 |
-| `scripts/ops` | 1 | 0 | 0 | 0 | 1 |
+| Directory | Original | PR2 quarantined | PR3 deleted_after_quarantine | PR4 quarantined_unknown | PR5 deleted_after_quarantine | Remaining |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `scripts/audit` | 2 | 0 | 0 | 2 | 2 | 0 |
+| `scripts/data_prep` | 4 | 0 | 0 | 4 | 4 | 0 |
+| `scripts/diagnostics` | 21 | 1 | 1 | 18 | 18 | 2 |
+| `scripts/evaluation` | 210 | 113 | 113 | 23 | 23 | 74 |
+| `scripts/extraction` | 28 | 0 | 0 | 0 | 0 | 28 |
+| `scripts/ingestion` | 15 | 0 | 0 | 0 | 0 | 15 |
+| `scripts/ops` | 1 | 0 | 0 | 0 | 0 | 1 |
 
 ## Current Keep Groups
 
@@ -45,7 +49,7 @@ original subdirectory under that archive root in PR2. PR3 deleted those 114
 quarantined Python scripts from the archive path. The full candidate matrix and
 proof method are recorded in `docs/architecture/scripts_archive_candidates.md`.
 
-## PR4 Quarantined Unknown Groups
+## PR4 Quarantined Unknown Groups And PR5 Delete
 
 - 2 audit scripts.
 - 4 data-prep scripts.
@@ -55,9 +59,11 @@ proof method are recorded in `docs/architecture/scripts_archive_candidates.md`.
 PR4 moved these 47 scripts to `archive/scripts/unknown_candidates/` with their
 original subdirectory under that archive root. Post-move closure checks found no
 remaining import refs and no exact path/module text refs from retained code/docs
-to the quarantined files.
+to the quarantined files. PR5 deleted those 47 archived Python scripts; no
+Python scripts now remain under `archive/scripts/unknown_candidates/`, and the
+empty archive directory was removed.
 
-## Not Archived After PR4
+## Not Archived After PR5
 
 - Current ops, ingestion, evaluation, Phase7 preview/final, and test-protected scripts.
 - `scripts/diagnostics/chunk_retrieval_smoke_v5.py`, because collect proved it is dynamically loaded by tests.
@@ -69,7 +75,7 @@ to the quarantined files.
 - No tests were moved to `tests/legacy/`; archive candidates had no direct test import/path refs.
 - PR3 deleted only the 114 PR2-quarantined Python scripts under `archive/scripts/phase_artifacts/`.
 - PR4 quarantined 47 previously unknown Python scripts under `archive/scripts/unknown_candidates/`.
-- No Python files were deleted in PR4.
+- PR5 deleted those 47 PR4-quarantined Python scripts from `archive/scripts/unknown_candidates/`.
 - The 5 retained `unknown` scripts remain unprocessed in `scripts/ingestion`.
 - Phase7 table evidence/citation remains preview/offline; no production wiring was changed.
 - Generation v2, the old generation path, retrieval, BM25, dense, hybrid, rerank, and `/v1/ask` production behavior were not changed.

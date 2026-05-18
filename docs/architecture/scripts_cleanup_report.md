@@ -4,7 +4,8 @@ Cleanup PR2 quarantined historical phase artifacts from `scripts/` into
 `archive/scripts/phase_artifacts/`. Cleanup PR3 deleted that quarantined set
 after the PR2 verification showed no collect decrease and focused checks passed.
 Cleanup PR4 proof-checked the retained `unknown` scripts and quarantined the
-subset that stayed inside the cleanup guardrails.
+subset that stayed inside the cleanup guardrails. Cleanup PR5 deleted the
+PR4-quarantined unknown candidates after the same focused checks had passed.
 
 ## Summary
 
@@ -15,8 +16,9 @@ subset that stayed inside the cleanup guardrails.
 | PR2 quarantined scripts | 114 | 113 from `scripts/evaluation`, 1 from `scripts/diagnostics`. |
 | PR3 `deleted_after_quarantine` scripts | 114 | Deleted only from `archive/scripts/phase_artifacts/`. |
 | Archived Python scripts currently under `archive/scripts/phase_artifacts/` | 0 | No `.py` files remain in the working tree under the archive path. |
-| PR4 quarantined unknown scripts | 47 | Moved to `archive/scripts/unknown_candidates/`; not deleted. |
-| Archived Python scripts currently under `archive/scripts/unknown_candidates/` | 47 | Awaiting a later delete-after-quarantine PR. |
+| PR4 quarantined unknown scripts | 47 | Moved to `archive/scripts/unknown_candidates/`. |
+| PR5 `deleted_after_quarantine` unknown scripts | 47 | Deleted only from `archive/scripts/unknown_candidates/`. |
+| Archived Python scripts currently under `archive/scripts/unknown_candidates/` | 0 | The archive root was removed after it emptied. |
 | PR4 reclassified test-protected scripts | 1 | `scripts/diagnostics/chunk_retrieval_smoke_v5.py` is dynamically loaded by tests. |
 | Retained `unknown` scripts | 5 | Still in `scripts/ingestion`; Phase7 guardrails treat ingestion git drift as pipeline drift. |
 | Legacy tests moved | 0 | Archive candidates had no direct test import/path references. |
@@ -46,7 +48,7 @@ After PR3, `archive/scripts/phase_artifacts/` has zero working-tree Python scrip
 No non-PR2-quarantine Python script was found under that archive path during the
 pre-delete cross-check.
 
-## What Moved In PR4
+## What Moved In PR4 And Was Deleted In PR5
 
 PR4 moved 47 previously unknown scripts to `archive/scripts/unknown_candidates/`,
 preserving their original subdirectory below that archive root:
@@ -56,8 +58,14 @@ preserving their original subdirectory below that archive root:
 - 18 from `scripts/diagnostics`;
 - 23 from `scripts/evaluation`.
 
-PR4 did not delete these files. It also did not move the 5 `scripts/ingestion`
-unknown scripts because the Phase7 baseline and rollback guardrails check
+PR5 deleted those 47 archived Python scripts and removed the
+`archive/scripts/unknown_candidates/` directory after it emptied. The pre-delete
+cross-check matched all 47 documented PR4 quarantine paths to the 47 working-tree
+Python files under that archive root, with zero extra archive `.py` files and
+zero missing documented paths.
+
+PR4 and PR5 did not move or delete the 5 `scripts/ingestion` unknown scripts
+because the Phase7 baseline and rollback guardrails check
 `git status --short -- scripts/ingestion` and fail on drift.
 
 One file was restored during validation and reclassified as test-protected:
@@ -84,13 +92,14 @@ Manual-run note: not applicable for tests; no legacy tests were moved.
 | After quarantine | 1042 |
 | After delete-after-quarantine | 1042 |
 | After PR4 unknown quarantine | 1042 |
+| After PR5 unknown delete-after-quarantine | 1042 |
 | Delta | 0 |
 
 There was no collect decrease. No tests were moved out of the active suite, and
-no import failure was introduced by the final PR4 quarantine set. An intermediate
-attempt to move `scripts/diagnostics/chunk_retrieval_smoke_v5.py` caused a
-collect error; it was restored and marked test-protected before final
-verification.
+no import failure was introduced by the final PR4 quarantine set or the PR5
+delete-after-quarantine pass. An intermediate PR4 attempt to move
+`scripts/diagnostics/chunk_retrieval_smoke_v5.py` caused a collect error; it was
+restored and marked test-protected before final verification.
 
 ## Verification
 
@@ -108,6 +117,7 @@ Results:
 - PR2 `compileall` including `archive`: passed.
 - PR3 `python -m compileall app src scripts tests`: passed.
 - PR4 `python -m compileall app src scripts tests`: passed.
+- PR5 `python -m compileall app src scripts tests`: passed.
 - `pytest --collect-only -q`: passed, 1042 tests collected.
 - `pytest tests/test_generation_v2.py -q`: passed, 16 tests.
 - Phase7/table preview focused set: passed, 96 tests.
@@ -120,8 +130,7 @@ No production code under `app/` or `src/` was changed by this cleanup pass.
 No official dataset, baseline data, accepted baseline artifact, or baseline
 registry was changed.
 
-`config/settings.example.env` was already modified before this cleanup pass and
-was not edited as part of the cleanup work.
+No config file was edited in PR5.
 
 The current ops, ingestion, and evaluation entries remain in `scripts/`.
 
@@ -138,7 +147,7 @@ Phase7 table evidence/citation remains preview/offline. This cleanup did not:
 - change `src/synbio_rag/application/table_preview.py`;
 - change production `CitationBinder` behavior.
 
-PR4 also left `scripts/ingestion` unchanged in the final diff so the Phase7
+PR4 and PR5 left `scripts/ingestion` unchanged in the final diff so the Phase7
 baseline and rollback guardrails continue to report no ingestion pipeline drift.
 
 ## Failed Or Restored Files
@@ -167,8 +176,7 @@ import or path-reference archived original scripts.
 
 ## Next Cleanup Round
 
-The next delete PR can delete only the 47 files quarantined in
-`archive/scripts/unknown_candidates/` after reviewing the PR4 verification. The
-5 retained `scripts/ingestion` unknown scripts need a separate decision because
-moving them trips Phase7 ingestion drift guardrails even though the reference
-scan found no direct tests, app/src refs, or user-doc refs.
+The remaining cleanup decision is the 5 retained `scripts/ingestion` unknown
+scripts. They need a separate plan because moving them trips Phase7 ingestion
+drift guardrails even though the reference scan found no direct tests, app/src
+refs, or user-doc refs.

@@ -6,7 +6,8 @@ deleted those already-quarantined scripts from `archive/scripts/phase_artifacts/
 Cleanup PR4 proof-checked the 53 retained `unknown` rows: 47 were quarantined,
 1 was reclassified as test-protected, and 5 ingestion scripts were retained
 because Phase7 guardrails treat `scripts/ingestion` git drift as ingestion
-pipeline drift.
+pipeline drift. Cleanup PR5 deleted the 47 PR4-quarantined unknown candidates
+from `archive/scripts/unknown_candidates/`.
 
 ## Scan Method
 
@@ -30,7 +31,7 @@ For rows marked `archive_candidate`, the AST/reference scan found no test import
 | --- | ---: | --- |
 | `keep` | 54 | Retained under `scripts/`. |
 | `protected_by_tests` | 61 | Retained under `scripts/`; PR4 added `scripts/diagnostics/chunk_retrieval_smoke_v5.py` after collect exposed dynamic test loading. |
-| `archive_candidate` | 161 | PR2 114 deleted after quarantine; PR4 47 quarantined under `archive/scripts/unknown_candidates/`. |
+| `archive_candidate` | 161 | PR2 114 deleted after quarantine; PR4 47 quarantined under `archive/scripts/unknown_candidates/` and deleted after quarantine in PR5. |
 | `delete_candidate` | 0 | None. |
 | `unknown` | 5 | Retained under `scripts/ingestion` because Phase7/ingestion guardrails block moving them in PR4. |
 
@@ -95,6 +96,39 @@ PR4 verification after the retained-file corrections:
 - Phase7/table preview focused set: passed, 96 tests.
 
 No RAGAS, Qwen, embedding, rerank, or retrieval evaluation was run.
+
+## PR5 Delete Scope
+
+PR5 deleted only the 47 Python scripts that PR4 had already quarantined under
+`archive/scripts/unknown_candidates/`.
+
+Pre-delete cross-check:
+
+- Candidate matrix PR4 unknown archive paths: 47.
+- Python scripts under `archive/scripts/unknown_candidates/`: 47.
+- Extra Python scripts in archive path outside the PR4 candidate matrix: 0.
+- Missing archived Python scripts from the PR4 candidate matrix: 0.
+
+Post-delete state:
+
+- PR4 quarantined unknown scripts: 47.
+- PR5 `deleted_after_quarantine`: 47.
+- Python scripts currently under `archive/scripts/unknown_candidates/`: 0.
+- `archive/scripts/unknown_candidates/`: removed after the directory emptied.
+- Python scripts currently under `scripts/`: 120.
+- Retained `unknown` scripts: 5, still under `scripts/ingestion`.
+
+Deletion basis: PR4 quarantine kept collect stable at 1042, `compileall`
+passed, `tests/test_generation_v2.py` passed with 16 tests, and the Phase7/table
+preview focused set passed with 96 tests. PR5 reran the same focused
+verification after deletion.
+
+No production code, Phase7 preview wiring, generation v2 algorithm, old
+generation path, retrieval, BM25, dense, hybrid, rerank, accepted baseline
+artifact, or `/v1/ask` behavior was changed.
+
+For PR5-deleted rows, the candidate matrix archive path records the PR4
+quarantine path before deletion.
 
 ## Candidate Matrix
 
