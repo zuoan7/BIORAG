@@ -31,9 +31,17 @@ class CitationBinder:
             text_ok = bool(c.text and len(c.text.strip()) >= 10)
             metadata_ok = bool(c.chunk_id and c.doc_id and c.source_file)
             citation_eligible = text_ok and metadata_ok
+            table_block_reason = _table_preview_citation_block_reason(
+                metadata=metadata,
+                source_file=c.source_file,
+            )
+            if table_block_reason:
+                citation_eligible = False
 
             drop_reason = ""
-            if not metadata_ok:
+            if table_block_reason:
+                drop_reason = table_block_reason
+            elif not metadata_ok:
                 drop_reason = "metadata_missing"
             elif not text_ok:
                 drop_reason = "text_missing"
@@ -112,12 +120,18 @@ class CitationBinder:
 
         ordered_eids: list[str] = []
         invalid_ids: list[str] = []
+        blocked_ids: list[str] = []
 
         def replace(match: re.Match[str]) -> str:
             evidence_id = match.group(1)
             cand = candidate_by_eid.get(evidence_id)
             if cand is None:
                 invalid_ids.append(evidence_id)
+                return ""
+            if not cand.citation_eligible:
+                blocked_ids.append(evidence_id)
+                if not cand.drop_reason:
+                    cand.drop_reason = "not_citation_eligible"
                 return ""
             if evidence_id not in ordered_eids:
                 ordered_eids.append(evidence_id)
@@ -171,6 +185,7 @@ class CitationBinder:
         debug = {
             "ordered_evidence_ids": ordered_eids,
             "invalid_evidence_ids": invalid_ids,
+            "blocked_evidence_ids": blocked_ids,
             "input_evidence_ids": [c.evidence_id for c in candidates],
             "uncited_selected_support_evidence_ids": uncited_eids,
             "drop_reasons_by_evidence_id": drop_reasons_by_eid,
@@ -201,3 +216,40 @@ def _compress_quote(text: str) -> str:
     if len(quote) <= 1200:
         return quote
     return quote[:1197].rstrip() + "..."
+
+
+def _table_preview_citation_block_reason(
+    *,
+    metadata: dict,
+    source_file: str,
+) -> str:
+    if metadata.get("object_type") != "table_index_unit":
+        return ""
+    reasons: list[str] = []
+    if metadata.get("table_preview_allow_formal_citation") is not True:
+        reasons.append("formal_citation_disabled")
+    if metadata.get("production_ready") is not True:
+        reasons.append("production_ready_false")
+    if metadata.get("index_unit_status") == "preview_only":
+        reasons.append("preview_only")
+    if metadata.get("value_bboxes_available") is False:
+        reasons.append("value_bboxes_unavailable")
+    if _looks_like_debug_path(source_file, metadata):
+        reasons.append("debug_path_not_formal_source")
+    if not reasons:
+        return ""
+    metadata["table_preview_citation_block_reasons"] = list(reasons)
+    return "table_preview_formal_citation_blocked"
+
+
+def _looks_like_debug_path(source_file: str, metadata: dict) -> bool:
+    if not source_file:
+        return False
+    debug_paths = {
+        metadata.get("source_csv_path"),
+        metadata.get("source_pdf_crop_path"),
+        metadata.get("source_markdown_path"),
+    }
+    if source_file in debug_paths:
+        return True
+    return source_file.lower().endswith((".csv", ".png", ".jpg", ".jpeg", ".md"))

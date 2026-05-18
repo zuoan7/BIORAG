@@ -28,6 +28,7 @@ from ..rewrite.query_rewrite_service import QueryRewriteService, QueryRewriteMod
 from .neighbor_expansion import ChunkNeighborExpander
 from .parent_expansion import ParentContextExpander
 from .rerank_service import QwenReranker
+from .table_preview import TablePreviewCandidateProvider, apply_table_preview
 
 
 class SynBioRAGPipeline:
@@ -95,6 +96,11 @@ class SynBioRAGPipeline:
                 parent_store = None
         self.parent_store = parent_store
         self.parent_expander = ParentContextExpander(parent_store=parent_store, config=settings.retrieval)
+        self.table_preview_provider = (
+            TablePreviewCandidateProvider(settings.retrieval.table_preview_units_path)
+            if settings.retrieval.table_preview_enabled
+            else None
+        )
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
         self.external_tools = ExternalToolManager(settings.tools)
         # Phase 19: query rewrite service (default off)
@@ -145,6 +151,13 @@ class SynBioRAGPipeline:
         )
         if cn_fallback_debug.get("triggered"):
             retrieved = cn_fallback_debug["merged_candidates"]
+        retrieved, table_preview_debug = _run_table_preview(
+            question=question,
+            retrieved=retrieved,
+            config=self.settings.retrieval,
+            generation_version=self.settings.generation.version,
+            provider=getattr(self, "table_preview_provider", None),
+        )
         reranked = self.reranker.rerank(
             question,
             retrieved,
@@ -228,15 +241,24 @@ class SynBioRAGPipeline:
 
             seed_confidence = self.confidence_scorer.score(seed_chunks)
             confidence = self.confidence_scorer.score(final_chunks)
+            generation_config = self.settings.generation
+            table_preview_answer_without_formal_citation = bool(
+                table_preview_debug.get("merged_count", 0)
+            )
+            if table_preview_answer_without_formal_citation:
+                generation_config = replace(generation_config, v2_require_citation=False)
             gen_result = self.generator_v2.run(
                 question=question,
                 analysis=analysis,
                 seed_chunks=final_chunks,
-                config=self.settings.generation,
+                config=generation_config,
                 history=history if self.settings.generation.v2_use_history else None,
             )
             # Merge supplement debug into generation debug (always, for diagnostics)
             gv2_debug = gen_result.debug
+            gv2_debug["table_preview_answer_without_formal_citation"] = (
+                table_preview_answer_without_formal_citation
+            )
             gv2_debug["summary_section_supplement"] = summary_supplement_debug
             gv2_lifecycle_debug = dict(gv2_debug.get("evidence_lifecycle_debug", {}))
             evidence_lifecycle_debug.update(gv2_lifecycle_debug)
@@ -277,6 +299,7 @@ class SynBioRAGPipeline:
                         "output_count": len(seed_chunks),
                     },
                     "original_cn_fallback": _sanitize_original_cn_fallback_debug(cn_fallback_debug),
+                    "table_preview": _sanitize_table_preview_debug(table_preview_debug),
                     "parent_expansion": parent_expansion_debug,
                     "filter_strategy": retrieval_debug,
                     "generation_v2": gen_result.debug,
@@ -333,6 +356,7 @@ class SynBioRAGPipeline:
                 "rerank_hits": getattr(self.reranker, "last_debug", {}),
                 "neighbor_expansion": getattr(self.neighbor_expander, "last_debug", {}),
                 "original_cn_fallback": _sanitize_original_cn_fallback_debug(cn_fallback_debug),
+                "table_preview": _sanitize_table_preview_debug(table_preview_debug),
                 "filter_strategy": retrieval_debug,
                 "evidence_quality": evidence_quality.__dict__,
             },
@@ -428,6 +452,42 @@ def _build_query_rewrite_llm_client(settings: Settings):
 
 
 def _sanitize_original_cn_fallback_debug(debug: dict) -> dict:
+    return {
+        key: value
+        for key, value in debug.items()
+        if key != "merged_candidates"
+    }
+
+
+def _run_table_preview(
+    *,
+    question: str,
+    retrieved: list[RetrievedChunk],
+    config,
+    generation_version: str,
+    provider: TablePreviewCandidateProvider | None = None,
+) -> tuple[list[RetrievedChunk], dict]:
+    if generation_version != "v2":
+        return list(retrieved), {
+            "enabled": False,
+            "reason": "generation_v2_required",
+            "input_count": len(retrieved),
+            "output_count": len(retrieved),
+            "candidate_count": 0,
+            "merged_count": 0,
+            "table_branch_executed": False,
+            "table_candidates_in_rerank_input": False,
+            "formal_citation_allowed": False,
+        }
+    return apply_table_preview(
+        question=question,
+        retrieved=retrieved,
+        config=config,
+        provider=provider,
+    )
+
+
+def _sanitize_table_preview_debug(debug: dict) -> dict:
     return {
         key: value
         for key, value in debug.items()

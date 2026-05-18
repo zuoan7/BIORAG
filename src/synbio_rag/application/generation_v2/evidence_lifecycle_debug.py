@@ -32,6 +32,7 @@ ALLOWED_DROP_REASONS = {
     "citation_output_limit",
     "comparison_branch_missing",
     "doc_local_evidence_miss",
+    "table_preview_formal_citation_blocked",
 }
 
 

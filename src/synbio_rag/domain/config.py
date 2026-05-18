@@ -134,6 +134,17 @@ class RetrievalConfig:
     original_cn_fallback_require_rewrite_enabled: bool = True
     original_cn_fallback_require_cjk: bool = True
     original_cn_fallback_min_query_diff: bool = True
+    # Phase7X: local preview-only table candidate sidecar. Default on with emergency off.
+    table_preview_enabled: bool = True
+    table_preview_units_path: str = (
+        "./data/experiments/v7_phase7_table_index_unit_qa/phase7j_preview_eligible_units.jsonl"
+    )
+    table_preview_max_candidates: int = 20
+    table_preview_merge_enabled: bool = True
+    table_preview_merge_strategy: str = "type_aware_merge_v1"
+    table_preview_merge_max_candidates: int = 5
+    table_preview_min_score: float = 0.05
+    table_preview_allow_formal_citation: bool = False
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     bm25_batch_size: int = 1000
@@ -544,6 +555,44 @@ class Settings:
         settings.retrieval.original_cn_fallback_max_total = int(
             get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL", str(settings.retrieval.original_cn_fallback_max_total))
         )
+        settings.retrieval.table_preview_enabled = _parse_bool(
+            get_value("TABLE_PREVIEW_ENABLED", str(settings.retrieval.table_preview_enabled))
+        )
+        settings.retrieval.table_preview_units_path = get_value(
+            "TABLE_PREVIEW_UNITS_PATH",
+            settings.retrieval.table_preview_units_path,
+        )
+        settings.retrieval.table_preview_max_candidates = int(
+            get_value(
+                "TABLE_PREVIEW_MAX_CANDIDATES",
+                str(settings.retrieval.table_preview_max_candidates),
+            )
+        )
+        settings.retrieval.table_preview_merge_enabled = _parse_bool(
+            get_value(
+                "TABLE_PREVIEW_MERGE_ENABLED",
+                str(settings.retrieval.table_preview_merge_enabled),
+            )
+        )
+        settings.retrieval.table_preview_merge_strategy = get_value(
+            "TABLE_PREVIEW_MERGE_STRATEGY",
+            settings.retrieval.table_preview_merge_strategy,
+        ).strip().lower()
+        settings.retrieval.table_preview_merge_max_candidates = int(
+            get_value(
+                "TABLE_PREVIEW_MERGE_MAX_CANDIDATES",
+                str(settings.retrieval.table_preview_merge_max_candidates),
+            )
+        )
+        settings.retrieval.table_preview_min_score = float(
+            get_value("TABLE_PREVIEW_MIN_SCORE", str(settings.retrieval.table_preview_min_score))
+        )
+        settings.retrieval.table_preview_allow_formal_citation = _parse_bool(
+            get_value(
+                "TABLE_PREVIEW_ALLOW_FORMAL_CITATION",
+                str(settings.retrieval.table_preview_allow_formal_citation),
+            )
+        )
         settings.retrieval.alias_expansion_enabled = _parse_bool(
             get_value("RETRIEVAL_ALIAS_EXPANSION_ENABLED", str(settings.retrieval.alias_expansion_enabled))
         )
@@ -899,6 +948,9 @@ class Settings:
         self.retrieval.milvus_uri = _resolve_local_path(self.retrieval.milvus_uri)
         self.retrieval.bm25_cache_path = _resolve_local_path(self.retrieval.bm25_cache_path)
         self.retrieval.parent_index_path = _resolve_local_path(self.retrieval.parent_index_path)
+        self.retrieval.table_preview_units_path = _resolve_local_path(
+            self.retrieval.table_preview_units_path
+        )
         self.kb.paper_dir = _resolve_local_path(self.kb.paper_dir)
         self.kb.parsed_raw_dir = _resolve_local_path(self.kb.parsed_raw_dir)
         self.kb.parsed_dir = _resolve_local_path(self.kb.parsed_dir)
