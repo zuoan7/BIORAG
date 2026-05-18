@@ -1,84 +1,118 @@
 # BIORAG — 合成生物学领域 RAG 服务
 
-面向合成生物学领域的知识问答 RAG 服务。支持论文知识库的语义检索、混合检索（Dense + BM25）、重排序与证据约束生成。
+BIORAG 是面向合成生物学论文知识库的企业级 RAG 服务。当前主链路围绕
+FastAPI 问答接口、Dense + BM25 混合检索、本地 BGE rerank、parent context
+扩展、证据选择和 generation v2 证据约束生成构建，目标是让回答可追溯到
+知识库 chunk、doc、section 和 citation。
 
-## 当前项目状态
+## 当前能力
 
-当前 accepted baseline 是 **Phase 20 convergence baseline**（Phase 20M）。
+- **问答服务**：`app/main.py` 暴露 `/v1/ask`、`/v1/sessions/{session_id}` 和
+  `/healthz`，应用层入口为 `RAGApplicationService`。
+- **意图路由**：`QueryRouter` 识别 `factoid`、`summary`、`comparison`、
+  `negative` 等查询意图，并决定检索与 rerank 规模。
+- **混合检索**：`HybridRetriever` 组合 Milvus dense 检索与 BM25 检索，通过
+  weighted RRF、comparison 子查询、source-floor、同文档 body 扩展和结构标记
+  boost 召回候选。
+- **查询改写**：`QUERY_REWRITE_MODE` 默认关闭；可按需启用中文问题的英文镜像
+  改写，并保留 original-CN fallback 作为跨语言召回补偿。
+- **本地重排**：`LocalBGERerankerService` 负责 BGE rerank、comparison 子查询
+  聚合、route/evidence/structure bonus、guarded rerank 和同文档正文覆盖策略。
+- **上下文扩展**：`ParentContextExpander` 基于 `parent_index.jsonl` 扩展
+  `chunk_window`、`caption_context`、`page`、`section_path`、`evidence_type_context`
+  等 parent context。
+- **表格候选预览**：`table_preview` 可把离线 table index unit 作为候选合入检索
+  池，但默认仍是 preview-only；`TABLE_PREVIEW_ALLOW_FORMAL_CITATION=false` 时不
+  生成正式表格 citation。
+- **generation v2**：`GenerationV2Service` 将 evidence ledger、support
+  selection、answer planning、extractive/Qwen synthesis、citation binding 和
+  validation 拆成独立阶段。
+- **会话与审计**：`SessionStore` 保存多轮会话，`AuditLogger` 写入请求、过滤器
+  和响应审计记录。
+- **离线评测**：支持 retrieval/RAGAS 回归、enterprise gates、biorag rule metrics
+  和多阶段 smoke 验证。
 
-当前可用配置记录：[results/phase20m_convergence_summary/current_best_config.md](results/phase20m_convergence_summary/current_best_config.md)
+## 主链路
 
-仓库清理边界文档：
+一次 `/v1/ask` 请求的核心执行顺序：
 
-- [当前 inventory](docs/architecture/current_inventory.md)
-- [cleanup policy](docs/architecture/cleanup_policy.md)
-- [scripts inventory](docs/architecture/script_inventory.md)
+```text
+FastAPI request
+  -> RAGApplicationService
+  -> SynBioRAGPipeline
+  -> QueryRouter
+  -> optional query rewrite
+  -> HybridRetriever (Milvus dense + BM25 + RRF/post-process)
+  -> original-CN fallback
+  -> table preview merge
+  -> LocalBGERerankerService
+  -> summary supplement
+  -> ParentContextExpander + evidence selection
+  -> GenerationV2Service
+  -> response/citation/debug assembly
+  -> session + audit persistence
+```
 
-### Phase 7 表格证据链路状态（实验原型）
+## 模块划分
 
-Phase 7 当前推进到 table evidence / citation 原型阶段，仍不建议 production：
+```text
+app/
+  main.py                         # FastAPI HTTP 入口
 
-- Phase7Q 定义了 `TableEvidenceCitation` typed schema prototype，明确区分 formal `canonical_source` 与 debug `provenance_debug`。
-- Phase7Q-1 完成独立 mapper dry-run，可将现有 table candidate/debug artifacts 映射为 prototype citation object 或 blocked record。
-- CSV / PDF crop / markdown card 路径只允许作为 debug provenance，不允许进入 formal citation source。
-- 当前 table units 仍为 `preview_only`、`production_ready=false`、`value_bboxes_available=false`，binding 仍为 warning-level。
-- 未接入 production `CitationBinder`，未生成 answer，未启用 formal table citation。
-- 下一步建议是 Phase7R production table index build / promote / rollback proposal；仍不建议直接 production。
+src/synbio_rag/
+  application/
+    rag_service.py                # 应用服务、session、audit 编排
+    pipeline.py                   # RAG 主链路编排
+    query_rewrite_adapter.py      # query rewrite 接入
+    original_cn_fallback.py       # 中文原问题 fallback 检索补偿
+    query_semantics.py            # query 语义拆分、alias、comparison 子查询
+    retrieval_postprocess.py      # 检索后处理：source-floor、boost、diversity
+    rerank_*.py                   # rerank query/features/selection/guarded policy
+    parent_expansion*.py          # parent context 扩展、候选、计划和 debug
+    neighbor_*.py                 # chunk 邻居索引与 generation v2 audit
+    table_preview*.py             # preview-only table candidate sidecar
+    evidence_selection_stage.py   # generation 前 evidence selection
+    generation_v2/                # 证据约束生成链路
+      evidence_ledger.py
+      support_selector.py
+      summary_support_selector.py
+      support_retention.py
+      limited_support.py
+      answer_planner.py
+      answer_builder.py
+      qwen_synthesizer.py
+      citation_binder.py
+      validator.py
 
-相关报告：
+  domain/
+    config.py                     # Settings 和 feature flags
+    router.py                     # QueryRouter
+    schemas.py                    # QueryAnalysis / RetrievedChunk / RAGResponse
+    confidence.py                 # confidence scoring
 
-- [Phase7Q Table Citation Schema Prototype](reports/v7_phase7_table_citation_schema_prototype/phase7q_summary.md)
-- [Phase7Q-1 Citation Mapper Dry-Run](reports/v7_phase7_table_citation_binder_prototype_dry_run/phase7q1_summary.md)
+  infrastructure/
+    embedding/bge.py              # BGE-M3 embedding adapter
+    reranker/local_bge.py         # BGE reranker adapter
+    vectorstores/
+      milvus.py                   # dense retrieval
+      bm25.py                     # sparse retrieval
+      fusion.py                   # RRF helpers
+      hybrid.py                   # hybrid retrieval orchestration
+    index/parent_store.py         # parent index loader
+    clients/openai_compatible.py  # Qwen/OpenAI-compatible client
+    persistence/                  # audit/session persistence
 
-### Final Phase 20 核心指标 (smoke50 + smoke100 = 150 samples)
+  ingestion/                      # 清洗、chunk、table enhancement 库代码
+  rewrite/                        # query rewrite service
+  evaluation/                     # failure taxonomy
 
-| 指标 | Phase 20A (rewrite baseline) | Phase 20L-2 (final) |
-|------|---------------------------|---------------------|
-| corrected real P0 | 9 | **0** |
-| doc_miss | 9 | **0** |
-| doc_hit_rate | 0.97 | **1.0** |
-| zero_citation | 0 | 0 |
-| new real P0 | - | 0 |
-| wrong-doc citation | - | 0 |
-| citation inflation | - | 0 |
-
-### Phase 20 已接受的修复
-
-| Fix | Phase | Module | 说明 |
-|-----|-------|--------|------|
-| Factoid doc diversity | 20D | support_selector | `_select_factoid` 新增 max_per_doc=2，防止单文档独占 support |
-| Summary quality filter | 20G | support_selector | 移除 title hard-drop，Full Text section priority=2 |
-| Comparison decomposition | 20K | hybrid/pipeline | CN query 用于 comparison subquery，修复 period bug |
-| CN fallback floor | 20L-2 | pipeline/config | EN rewrite 后 CN fallback，dense 2 + BM25 2，max 4 candidates |
-
-### 生产默认 vs 实验最佳配置
-
-| Feature Flag | 生产默认 | 离线实验推荐 |
-|-------------|---------|------------|
-| QUERY_REWRITE_MODE | `off` | `enabled` |
-| original_cn_fallback_enabled | `false` | `true` |
-| alias_expansion_enabled | `false` | `false` |
-| qwen_synthesis | `false` | `false` |
-
-生产环境默认不改动，所有实验功能通过 feature flag 或 env var 开启。
-
-## 核心特性
-
-- **混合检索**: Dense（BGE-M3）+ BM25 + RRF 融合
-- **智能路由**: QueryRouter 自动分析问题意图（factoid / summary / comparison）
-- **英文镜像查询改写**: 中文查询 → 英文检索查询，显著改善跨语言召回
-- **多级重排**: BGE-Reranker-v2-m3 / subquery aggregation / 启发式兜底
-- **Parent-child 索引**: chunk_window / section_path / caption_context / page 7 种 parent 类型
-- **Source-floor**: 保留 dense/BM25 各 top-N 候选，防止 RRF 融合丢失
-- **证据约束生成**: v2 generation pipeline，支持 support selection / citation binding / answer validation
-
-## 技术栈
-
-- Python 3.10+
-- FastAPI + Uvicorn
-- Milvus Lite（本地向量存储）
-- BGE-M3（Embedding）/ BGE-Reranker-v2-m3（重排）
-- Qwen-plus / OpenAI-compatible LLM（生成）
+scripts/
+  ingestion/                      # 建库、清洗、Milvus 导入、parent index 构建
+  extraction/                     # 表格抽取和 table index unit 离线流程
+  evaluation/                     # RAGAS、enterprise gate、phase smoke
+  diagnostics/                    # 诊断脚本
+  ops/                            # 运维/交互式工具
+```
 
 ## 快速开始
 
@@ -92,13 +126,27 @@ pip install -r requirements.txt
 
 ```bash
 cp config/settings.example.env .env
-# 按需编辑 .env，配置模型路径、API 密钥等
+# 按需编辑 .env，配置模型路径、Milvus 路径和 Qwen/OpenAI-compatible API。
 ```
+
+常用本地资源默认路径：
+
+- `MILVUS_URI=./runtime/vectorstores/milvus/papers.db`
+- `BGE_M3_MODEL_PATH=./models/BAAI/bge-m3`
+- `BGE_RERANKER_MODEL_PATH=./models/BAAI/bge-reranker-v2-m3`
+- `RETRIEVAL_PARENT_INDEX_PATH=./data/paper_round1/chunks/parent_index.jsonl`
 
 ### 3. 构建知识库
 
 ```bash
 python scripts/ingestion/build_round1_kb.py
+```
+
+必要时可单独运行：
+
+```bash
+python scripts/ingestion/import_to_milvus.py
+python scripts/ingestion/build_parent_index.py
 ```
 
 ### 4. 启动服务
@@ -107,8 +155,8 @@ python scripts/ingestion/build_round1_kb.py
 uvicorn app.main:app --host 0.0.0.0 --port 9000
 ```
 
-Reranker 在主服务进程内直接加载本地 BGE-Reranker 模型，不需要单独启动
-HTTP reranker 服务。
+Reranker 在主服务进程内加载本地 BGE-Reranker 模型，不需要单独启动 HTTP
+reranker 服务。
 
 ### 5. 请求示例
 
@@ -118,75 +166,98 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
   -d '{
     "question": "比较 2'\''-FL 和 6'\''-SL 的工程化合成路径差异",
     "session_id": "demo-session-1",
-    "tenant_id": "default"
+    "tenant_id": "default",
+    "include_debug": true
   }'
 ```
 
 ## 关键配置
 
-核心参数在 `src/synbio_rag/domain/config.py`，可通过 `.env` 覆盖：
+核心配置在 `src/synbio_rag/domain/config.py`，可通过 `.env` 覆盖。
 
-| 参数 | 默认值 | 说明 |
+| 配置 | 默认值 | 说明 |
 |------|--------|------|
-| `QUERY_REWRITE_MODE` | `off` | 英文镜像查询改写（`off`/`shadow`/`enabled`） |
-| `RETRIEVAL_SOURCE_FLOOR_ENABLED` | `true` | 保留 dense/BM25 各 top-N 候选 |
-| `RETRIEVAL_SOURCE_FLOOR_DENSE_TOP_N` | `3` | Dense source-floor 保留数 |
-| `RETRIEVAL_SOURCE_FLOOR_BM25_TOP_N` | `3` | BM25 source-floor 保留数 |
-| `RETRIEVAL_PARENT_EXPANSION_ENABLED` | `true` | Parent-child index 扩展 |
-| `RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED` | `false` | EN rewrite 后 CN fallback floor |
-| `RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL` | `4` | CN fallback 最大候选数 |
-| `RETRIEVAL_SEARCH_LIMIT` | `40` | 混合检索召回数 |
-| `RETRIEVAL_RERANK_TOP_K` | `10` | Rerank 后保留数 |
-| `RETRIEVAL_FINAL_TOP_K` | `8` | 最终 seed chunk 数 |
+| `RETRIEVAL_HYBRID_ENABLED` | `true` | 启用 Dense + BM25 混合检索 |
+| `RETRIEVAL_BM25_ENABLED` | `true` | 启用 BM25 sparse 检索 |
+| `RETRIEVAL_SEARCH_LIMIT` | `40` | 每轮检索候选规模 |
+| `RETRIEVAL_RERANK_TOP_K` | `10` | rerank 后保留候选数 |
+| `RETRIEVAL_FINAL_TOP_K` | `8` | generation 前 seed chunk 数 |
+| `RETRIEVAL_RERANK_MODE` | `plain` | rerank 模式，支持关闭或 guarded 策略 |
+| `RETRIEVAL_SOURCE_FLOOR_ENABLED` | `true` | 保留 dense/BM25 单源 top-N 候选 |
+| `RETRIEVAL_PARENT_EXPANSION_ENABLED` | `true` | 启用 parent context 扩展 |
+| `QUERY_REWRITE_MODE` | `off` | query rewrite 模式：`off`/`shadow`/`enabled` |
+| `RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED` | `false` | 英文改写后追加中文原问题 fallback |
+| `TABLE_PREVIEW_ENABLED` | `true` | 合入 preview-only table candidate |
+| `TABLE_PREVIEW_ALLOW_FORMAL_CITATION` | `false` | 是否允许 table preview 进入正式 citation |
+| `GENERATION_V2_PROFILE` | `stable` | generation v2 配置档位 |
+| `GENERATION_V2_USE_QWEN_SYNTHESIS` | `false` | 是否使用 Qwen 生成综合答案 |
+| `GENERATION_V2_ENABLE_COMPARISON_COVERAGE` | `false` | comparison 覆盖分析增强 |
+| `GENERATION_V2_ENABLE_NEIGHBOR_AUDIT` | `false` | 邻居证据 dry-run audit |
 
-完整参数列表见 `src/synbio_rag/domain/config.py`。
+`GENERATION_V2_PROFILE` 支持：
 
-## 评测
+| Profile | 行为 |
+|---------|------|
+| `stable` | 默认稳定档，extractive generation，关闭 comparison/neighbor 增强 |
+| `qwen` | 开启 Qwen synthesis |
+| `comparison` | 开启 Qwen synthesis 和 comparison coverage |
+| `debug` | 开启 Qwen synthesis、comparison coverage 和 neighbor audit |
 
-当前 smoke100 / smoke50 评测以 Phase 20 脚本为准。
+## 评测与验证
+
+最小链路验证：
 
 ```bash
-# 全量离线评测 (smoke50 + smoke100)
-python scripts/evaluation/run_phase20l2_cn_fallback_feature.py
-
-# Phase 20 相关测试
-pytest tests/test_phase20*.py -v
+python scripts/evaluation/evaluate_ragas.py \
+  --dataset data/eval/datasets/enterprise_ragas_smoke20.json \
+  --base-url http://127.0.0.1:9000 \
+  --include-debug \
+  --skip-generation-metrics
 ```
 
-## 项目结构
+日常 gate：
 
-```
-biorag/
-├── app/                    # FastAPI 入口
-├── config/                 # 环境变量模板
-├── data/                   # 论文、评测集
-│   ├── eval/               # 评测数据集 (smoke50, smoke100)
-│   └── paper_round1/       # 生产知识库 (chunks, parent_index)
-├── models/                 # 本地模型（BGE-M3、BGE-Reranker）
-├── reports/                # Phase 评测报告
-├── runtime/                # 运行时产物（Milvus、日志）
-├── scripts/
-│   ├── evaluation/         # 离线评测脚本 (Phase 20A-20M)
-│   ├── ingestion/          # 建库与预处理
-│   └── ops/                # 调试工具
-├── src/synbio_rag/         # 业务源码
-│   ├── application/        # pipeline, generation_v2, rerank
-│   ├── domain/             # config, schemas, router
-│   ├── infrastructure/     # vectorstores (hybrid, BM25, Milvus)
-│   ├── rewrite/            # query rewrite service
-│   └── evaluation/         # failure taxonomy
-├── docs/architecture/      # cleanup inventory / policy / script inventory
-├── tests/                  # 单元、集成与 phase regression 测试
-├── results/                # Phase 实验结果 (20A-20M)
-└── resources/prompts/      # LLM prompt 模板
+```bash
+python scripts/evaluation/run_validation_suite.py --stage smoke --label local
 ```
 
-## Phase 20 文档索引
+完整 RAGAS 回归：
 
-- [当前实验最佳配置](results/phase20m_convergence_summary/current_best_config.md)
+```bash
+python scripts/evaluation/run_ragas_regression.py \
+  --dataset data/eval/datasets/enterprise_ragas_smoke20.json \
+  --label local
+```
 
-部分 Phase 20 报告路径在历史记录中出现过，但当前工作树未恢复对应
-`reports/phase20*` markdown 文件。本轮 cleanup 不重建这些报告，也不把缺失路径作为当前状态依据。
+单元测试：
+
+```bash
+pytest -q
+```
+
+最近一次 smoke20 链路验证结果：
+
+- 数据集：`data/eval/datasets/enterprise_ragas_smoke20.json`
+- 样本数：20
+- `enterprise_gates.overall_status`: `pass`
+- `doc_id_hit_rate`: `1.0`
+- `source_file_hit_rate`: `1.0`
+- `route_match_rate`: `0.8`
+- `min_citation_pass_rate`: `1.0`
+- 报告：`results/ad_hoc/enterprise_ragas_smoke20/20260518_231308/report.json`
+
+该验证使用 `--skip-generation-metrics`，因此 faithfulness 和 answer relevancy 的
+RAGAS 裁判指标为 `not_applicable`。需要质量回归时应运行不跳过 generation
+metrics 的 RAGAS 流程。
+
+## 当前状态说明
+
+- accepted baseline 仍以 Phase 20 convergence baseline（Phase 20M）为当前记录。
+- production 默认保持 query rewrite、original-CN fallback、Qwen synthesis 等实验能力
+  关闭；离线实验通过 feature flag 或 profile 显式启用。
+- table preview 是候选召回/诊断 sidecar，不等同于 production formal table citation。
+- 历史 Phase7/Phase20 脚本和报告仍保留为回归与审计材料，当前 README 以正在运行的
+  模块边界和主链路为准。
 
 ## License
 
