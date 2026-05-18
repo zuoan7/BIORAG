@@ -17,7 +17,7 @@ from .evidence_selection_stage import select_generation_v2_evidence
 from .generation_v2 import GenerationV2Service
 from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_v2_response import build_generation_v2_response
-from .neighbor_expansion import ChunkNeighborExpander
+from .neighbor_index import ChunkNeighborExpander
 from .original_cn_fallback import (
     contains_cjk as _contains_cjk,
     run_original_cn_fallback as _run_original_cn_fallback,
@@ -32,8 +32,8 @@ from .summary_supplement import (
     build_empty_supplement_debug as _build_empty_supplement_debug,
     supplement_summary_sections as _supplement_summary_sections,
 )
-from .table_preview import TablePreviewCandidateProvider
-from .table_preview_pipeline import (
+from .table_preview import (
+    TablePreviewCandidateProvider,
     run_table_preview as _run_table_preview,
 )
 

@@ -2,10 +2,39 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
-import re
 from ..domain.config import RetrievalConfig
-from ..domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
+from ..domain.schemas import QueryAnalysis, RetrievedChunk
 from ..infrastructure.index.parent_store import ParentRecord, ParentStore
+from .parent_expansion_candidates import (
+    allow_candidate,
+    caption_candidate_matches_type,
+    chunk_index,
+    has_caption_like_signal,
+    page_candidate_matches_type,
+    rank_children_for_seed,
+    same_page,
+)
+from .parent_expansion_debug import (
+    build_parent_expansion_debug,
+    initialize_optional_debug_reasons,
+    record_parent_expansion_skip,
+)
+from .parent_expansion_plan import (
+    build_caption_plan,
+    build_non_caption_window_plan,
+    comparison_caption_allowed,
+    effective_limits,
+    explicit_caption_query_type,
+    false_table_trigger_guarded,
+    is_caption_seed,
+    is_table_hint_or_parameter_query,
+    matching_caption_seed_docs,
+    preferred_evidence_type,
+    seed_caption_type,
+    seed_matches_caption_query_type,
+    select_mode,
+    weak_caption_reference,
+)
 
 
 class ParentContextExpander:
@@ -19,75 +48,7 @@ class ParentContextExpander:
         seed_chunks: list[RetrievedChunk],
         analysis: QueryAnalysis,
     ) -> tuple[list[RetrievedChunk], dict]:
-        debug = {
-            "enabled": self.config.parent_expansion_enabled,
-            "reason": "",
-            "input_count": len(seed_chunks),
-            "output_count": len(seed_chunks),
-            "added_chunk_ids": [],
-            "added_parent_ids": [],
-            "added_parent_types": [],
-            "per_seed_added": {},
-            "per_doc_added": {},
-            "strategy": analysis.intent.value,
-            "effective_intent": "",
-            "effective_max_total": 0,
-            "effective_per_seed_limit": 0,
-            "limit_reason": "",
-            "comparison_mode": False,
-            "comparison_seed_considered": [],
-            "comparison_seed_skipped_by_rank": [],
-            "skipped_by_doc_cap": [],
-            "selected_parent_types": [],
-            "comparison_caption_allowed": False,
-            "caption_mode": False,
-            "caption_anchor_doc_id": "",
-            "same_doc_only": False,
-            "same_page_candidates_found": 0,
-            "caption_context_candidates_found": 0,
-            "caption_context_added": 0,
-            "page_context_added": 0,
-            "skipped_cross_doc": 0,
-            "skipped_after_caption_limit": 0,
-            "page_candidates_found": 0,
-            "page_candidates_added": 0,
-            "page_skipped_reason": "",
-            "evidence_candidates_found": 0,
-            "evidence_candidates_added": 0,
-            "evidence_skipped_reason": "",
-            "summary_docs_considered": [],
-            "summary_sections_added": [],
-            "summary_sections_skipped_existing": [],
-            "summary_no_candidate_docs": [],
-            "figure_query": False,
-            "table_query": False,
-            "caption_query_type": "none",
-            "caption_mode_trigger_source": "disabled",
-            "false_table_trigger_guarded": False,
-            "caption_type_filter": "none",
-            "caption_candidates_before_type_filter": 0,
-            "caption_candidates_filtered_by_type": 0,
-            "caption_candidates_added_by_type": 0,
-            "caption_seed_docs": [],
-            "caption_target_doc_ids": [],
-            "skipped_non_target_doc": [],
-            "target_doc_selection_reason": "",
-            "page_candidates_before_filter": 0,
-            "page_candidates_filtered_by_doc": 0,
-            "page_candidates_filtered_by_type": 0,
-            "page_plain_paragraph_skipped": 0,
-            "page_fallback_used": False,
-            "primary_doc_window_gating": False,
-            "window_target_doc_id": "",
-            "window_gating_reason": "",
-            "window_skipped_non_target_doc": [],
-            "primary_doc_local_context_gating": False,
-            "local_context_target_doc_id": "",
-            "local_context_gating_reason": "",
-            "local_context_skipped_non_target_doc": [],
-            "local_context_blocked_parent_types": [],
-            "section_path_skipped_non_target_doc": [],
-        }
+        debug = build_parent_expansion_debug(self.config, seed_chunks, analysis)
         if not self.config.parent_expansion_enabled:
             debug["reason"] = "disabled"
             return list(seed_chunks), debug
@@ -325,7 +286,7 @@ class ParentContextExpander:
                         seen=seen,
                     )
                     if not allowed:
-                        self._record_skip(debug, parent_type, skip_reason)
+                        record_parent_expansion_skip(debug, parent_type, skip_reason)
                         continue
                     seen.add(child.chunk_id)
                     collected.append((child, parent, reason))
@@ -467,58 +428,13 @@ class ParentContextExpander:
         analysis: QueryAnalysis,
         caption_plan: dict | None = None,
     ) -> str:
-        if analysis.intent == QueryIntent.SUMMARY:
-            return "summary"
-        if analysis.intent == QueryIntent.COMPARISON:
-            return "comparison"
-        if (caption_plan or {}).get("caption_mode_enabled"):
-            return "caption"
-        if seed_chunks and self._preferred_evidence_type(question, seed_chunks[0]) in {"method", "result", "numeric"}:
-            return "method_result"
-        return "factoid"
+        return select_mode(question, seed_chunks, analysis, caption_plan)
 
     def _effective_limits(self, mode: str) -> tuple[int, int, str]:
-        configured_total = max(0, int(self.config.parent_expansion_max_total))
-        configured_per_seed = max(0, int(self.config.parent_expansion_per_seed_limit))
-        if mode == "summary":
-            return min(configured_total, 12), min(configured_per_seed, 2), "summary_conservative"
-        if mode == "comparison":
-            return min(configured_total, 8), 1, "comparison_conservative"
-        if mode == "caption":
-            return min(configured_total, 10), min(configured_per_seed, 1), "caption_same_doc_conservative"
-        if mode == "method_result":
-            return min(configured_total, 10), min(configured_per_seed, 1), "method_result_conservative"
-        return min(configured_total, 10), min(configured_per_seed, 1), "factoid_conservative"
+        return effective_limits(self.config, mode)
 
     def _rank_children_for_seed(self, parent: ParentRecord, seed: RetrievedChunk) -> list[RetrievedChunk]:
-        if self.parent_store is None:
-            return []
-        children = self.parent_store.get_children(parent.parent_id)
-        if not children or not isinstance(children[0], RetrievedChunk):
-            return []
-        typed_children = [child for child in children if isinstance(child, RetrievedChunk)]
-        if parent.parent_type == "evidence_type_context":
-            preferred = self._preferred_evidence_type("", seed)
-            if preferred and parent.evidence_type and parent.evidence_type != preferred:
-                return []
-
-        seed_idx = _chunk_index(seed)
-        if parent.parent_type == "caption_context":
-            seed_pages = set(seed.metadata.get("page_numbers", [])) if isinstance(seed.metadata, dict) else set()
-            typed_children.sort(
-                key=lambda child: (
-                    0 if child.doc_id == seed.doc_id else 1,
-                    0 if seed_pages and set(child.metadata.get("page_numbers", [])) & seed_pages else 1,
-                    abs(_chunk_index(child) - seed_idx),
-                    _chunk_index(child),
-                    child.chunk_id,
-                )
-            )
-        elif parent.parent_type in {"section_path", "chunk_window", "page"}:
-            typed_children.sort(key=lambda child: (abs(_chunk_index(child) - seed_idx), _chunk_index(child), child.chunk_id))
-        else:
-            typed_children.sort(key=lambda child: (_chunk_index(child), child.chunk_id))
-        return typed_children
+        return rank_children_for_seed(self.parent_store, parent, seed)
 
     def _clone_from_seed(
         self,
@@ -564,53 +480,24 @@ class ParentContextExpander:
         parent_type: str,
         seen: set[str],
     ) -> tuple[bool, str]:
-        if candidate.chunk_id in seen:
-            return False, "duplicate_chunk"
-        if mode == "caption":
-            if candidate.doc_id != seed.doc_id:
-                return False, "cross_doc"
-            caption_query_type = self._explicit_caption_query_type(question)
-            if caption_query_type == "none" and self._weak_caption_reference(question) and self._is_caption_seed(seed):
-                caption_query_type = self._seed_caption_type(seed)
-            if parent_type == "caption_context":
-                if not self._caption_candidate_matches_type(candidate, caption_query_type):
-                    return False, "caption_type_mismatch"
-            if parent_type == "page" and not self._same_page(seed, candidate):
-                return False, "no_seed_page_numbers"
-            if parent_type == "page":
-                if not self._page_candidate_matches_type(candidate, caption_query_type):
-                    if not self._has_caption_like_signal(candidate):
-                        return False, "page_plain_paragraph"
-                    return False, "page_type_mismatch"
-        if mode == "comparison":
-            if parent_type == "caption_context" and not self._comparison_caption_allowed(question):
-                return False, "intent_not_allowed"
-        return True, ""
+        return allow_candidate(
+            seed=seed,
+            candidate=candidate,
+            parent=parent,
+            question=question,
+            mode=mode,
+            parent_type=parent_type,
+            seen=seen,
+        )
 
     def _record_skip(self, debug: dict, parent_type: str, reason: str) -> None:
-        if reason == "cross_doc":
-            debug["skipped_cross_doc"] += 1
-            if parent_type == "page":
-                debug["page_candidates_filtered_by_doc"] += 1
-        if reason == "caption_type_mismatch":
-            debug["caption_candidates_filtered_by_type"] += 1
-        if reason == "page_type_mismatch":
-            debug["page_candidates_filtered_by_type"] += 1
-        if reason == "page_plain_paragraph":
-            debug["page_plain_paragraph_skipped"] += 1
-        if parent_type == "page" and reason and not debug["page_skipped_reason"]:
-            debug["page_skipped_reason"] = reason
-        if parent_type == "evidence_type_context" and reason and not debug["evidence_skipped_reason"]:
-            debug["evidence_skipped_reason"] = reason
+        record_parent_expansion_skip(debug, parent_type, reason)
 
     def _same_page(self, left: RetrievedChunk, right: RetrievedChunk) -> bool:
-        left_pages = set(left.metadata.get("page_numbers", [])) if isinstance(left.metadata, dict) else set()
-        right_pages = set(right.metadata.get("page_numbers", [])) if isinstance(right.metadata, dict) else set()
-        return bool(left_pages and right_pages and left_pages & right_pages)
+        return same_page(left, right)
 
     def _is_caption_seed(self, seed: RetrievedChunk) -> bool:
-        meta = seed.metadata or {}
-        return bool(meta.get("contains_table_caption") or meta.get("contains_figure_caption") or meta.get("contains_table_text"))
+        return is_caption_seed(seed)
 
     def _initialize_optional_debug_reasons(
         self,
@@ -620,82 +507,22 @@ class ParentContextExpander:
         question: str,
         seed_chunks: list[RetrievedChunk],
     ) -> None:
-        if not self.config.parent_expansion_page_enabled:
-            debug["page_skipped_reason"] = "disabled"
-        elif mode != "caption":
-            debug["page_skipped_reason"] = "intent_not_allowed" if mode == "comparison" else "no_query_trigger"
-        elif not any((chunk.metadata or {}).get("page_numbers") for chunk in seed_chunks):
-            debug["page_skipped_reason"] = "no_seed_page_numbers"
-
-        if not self.config.parent_expansion_evidence_enabled:
-            debug["evidence_skipped_reason"] = "disabled"
-            return
         preferred = ""
         if seed_chunks:
             preferred = self._preferred_evidence_type(question, seed_chunks[0])
-        if mode == "comparison" and not preferred:
-            debug["evidence_skipped_reason"] = "intent_not_allowed"
-        elif not preferred:
-            debug["evidence_skipped_reason"] = "no_query_trigger"
+        initialize_optional_debug_reasons(
+            debug=debug,
+            config=self.config,
+            mode=mode,
+            seed_chunks=seed_chunks,
+            preferred_evidence_type=preferred,
+        )
 
     def _comparison_caption_allowed(self, question: str) -> bool:
-        return self._explicit_caption_query_type(question) != "none"
+        return comparison_caption_allowed(question)
 
     def _build_caption_plan(self, question: str, seed_chunks: list[RetrievedChunk]) -> dict:
-        query_type = self._explicit_caption_query_type(question)
-        figure_query = query_type in {"figure", "mixed"}
-        table_query = query_type in {"table", "mixed"}
-        has_caption_seed = any(self._is_caption_seed(seed) for seed in seed_chunks)
-        weak_seed_fallback = query_type == "none" and has_caption_seed and self._weak_caption_reference(question)
-
-        if weak_seed_fallback:
-            inferred_type = "none"
-            for seed in seed_chunks:
-                inferred_type = self._seed_caption_type(seed)
-                if inferred_type != "none":
-                    break
-            if inferred_type != "none":
-                query_type = inferred_type
-
-        caption_seed_docs = self._matching_caption_seed_docs(seed_chunks, query_type)
-        trigger_source = "disabled"
-        enabled = False
-        if query_type != "none":
-            enabled = True
-            trigger_source = "query"
-        elif weak_seed_fallback and query_type != "none":
-            enabled = True
-            trigger_source = "seed_metadata"
-
-        target_doc_ids: list[str] = []
-        target_reason = ""
-        if enabled and seed_chunks:
-            top_two_match_docs: list[str] = []
-            for seed in seed_chunks[:2]:
-                if self._seed_matches_caption_query_type(seed, query_type) and seed.doc_id not in top_two_match_docs:
-                    top_two_match_docs.append(seed.doc_id)
-            if len(top_two_match_docs) == 2:
-                target_doc_ids = top_two_match_docs[:2]
-                target_reason = "top_two_matching_caption_seed_docs"
-            elif caption_seed_docs:
-                target_doc_ids = [caption_seed_docs[0]]
-                target_reason = "matching_caption_seed_doc"
-            else:
-                target_doc_ids = [seed_chunks[0].doc_id]
-                target_reason = "top_rank_seed_doc_fallback"
-
-        return {
-            "caption_mode_enabled": enabled,
-            "figure_query": figure_query,
-            "table_query": table_query,
-            "caption_query_type": query_type,
-            "caption_mode_trigger_source": trigger_source,
-            "false_table_trigger_guarded": self._false_table_trigger_guarded(question),
-            "caption_type_filter": query_type if query_type != "none" else "seed_type_fallback" if weak_seed_fallback else "none",
-            "caption_seed_docs": caption_seed_docs,
-            "caption_target_doc_ids": target_doc_ids,
-            "target_doc_selection_reason": target_reason,
-        }
+        return build_caption_plan(question, seed_chunks)
 
     def _build_non_caption_window_plan(
         self,
@@ -704,179 +531,40 @@ class ParentContextExpander:
         mode: str,
         caption_plan: dict,
     ) -> dict:
-        if caption_plan.get("caption_mode_enabled"):
-            return {"enabled": False, "target_doc_id": "", "reason": ""}
-        if mode not in {"factoid", "method_result"}:
-            return {"enabled": False, "target_doc_id": "", "reason": ""}
-        doc_ids = [chunk.doc_id for chunk in seed_chunks if chunk.doc_id]
-        unique_doc_ids = list(dict.fromkeys(doc_ids))
-        if len(unique_doc_ids) <= 1:
-            return {"enabled": False, "target_doc_id": "", "reason": ""}
-        top_seed = seed_chunks[0]
-        preferred = self._preferred_evidence_type(question, top_seed)
-        if not (self._is_table_hint_or_parameter_query(question) or preferred in {"method", "result", "numeric"}):
-            return {"enabled": False, "target_doc_id": "", "reason": ""}
-        return {
-            "enabled": True,
-            "target_doc_id": top_seed.doc_id,
-            "reason": "multi_doc_table_hint_or_method_result_primary_doc_only",
-        }
+        return build_non_caption_window_plan(question, seed_chunks, mode, caption_plan)
 
     def _explicit_caption_query_type(self, question: str) -> str:
-        q = question.lower()
-        figure_query = bool(
-            re.search(r"\bfigure\b", q)
-            or re.search(r"\bfig\.\s*\d*", q)
-            or re.search(r"\bfig\s+\d+", q)
-            or "shown in figure" in q
-            or "panel" in q
-            or "microscopy" in q
-            or "fluorescent" in q
-            or "图中" in question
-            or "图 " in question
-            or re.search(r"图\s*\d+", question)
-        )
-        table_query = bool(
-            re.search(r"\btable\b", q)
-            or "tabular" in q
-            or "表格" in question
-            or re.search(r"表\s*\d+", question)
-            or any(
-                token in q
-                for token in [
-                    "primer table",
-                    "sequence table",
-                    "strain table",
-                    "parameter table",
-                    "restriction enzyme table",
-                ]
-            )
-        )
-        if figure_query and table_query:
-            return "mixed"
-        if figure_query:
-            return "figure"
-        if table_query:
-            return "table"
-        return "none"
+        return explicit_caption_query_type(question)
 
     def _weak_caption_reference(self, question: str) -> bool:
-        q = question.lower()
-        return any(token in q for token in ["shown", "described", "listed", "caption"]) or any(
-            token in question for token in ["图中", "表格中", "表中", "图里"]
-        )
+        return weak_caption_reference(question)
 
     def _false_table_trigger_guarded(self, question: str) -> bool:
-        q = question.lower()
-        has_guard_term = any(
-            token in q
-            for token in [
-                "expression",
-                "expression cassette",
-                "expression vector",
-                "phenotypic",
-                "phenotype",
-            ]
-        ) or any(token in question for token in ["表达", "表达盒", "表达载体", "表征", "表型", "表面"])
-        return has_guard_term and self._explicit_caption_query_type(question) == "none"
+        return false_table_trigger_guarded(question)
 
     def _matching_caption_seed_docs(self, seed_chunks: list[RetrievedChunk], query_type: str) -> list[str]:
-        docs: list[str] = []
-        for seed in seed_chunks:
-            if self._seed_matches_caption_query_type(seed, query_type) and seed.doc_id not in docs:
-                docs.append(seed.doc_id)
-        return docs
+        return matching_caption_seed_docs(seed_chunks, query_type)
 
     def _seed_matches_caption_query_type(self, seed: RetrievedChunk, query_type: str) -> bool:
-        if query_type == "none":
-            return self._is_caption_seed(seed)
-        seed_type = self._seed_caption_type(seed)
-        if query_type == "mixed":
-            return seed_type in {"figure", "table", "mixed"}
-        if query_type == "figure":
-            return seed_type in {"figure", "mixed"}
-        if query_type == "table":
-            return seed_type in {"table", "mixed"}
-        return False
+        return seed_matches_caption_query_type(seed, query_type)
 
     def _seed_caption_type(self, seed: RetrievedChunk) -> str:
-        meta = seed.metadata or {}
-        has_table = bool(meta.get("contains_table_caption") or meta.get("contains_table_text"))
-        has_figure = bool(meta.get("contains_figure_caption"))
-        if has_table and has_figure:
-            return "mixed"
-        if has_figure:
-            return "figure"
-        if has_table:
-            return "table"
-        return "none"
+        return seed_caption_type(seed)
 
     def _caption_candidate_matches_type(self, candidate: RetrievedChunk, query_type: str) -> bool:
-        meta = candidate.metadata or {}
-        has_table = bool(meta.get("contains_table_caption") or meta.get("contains_table_text"))
-        has_figure = bool(meta.get("contains_figure_caption"))
-        if query_type == "figure":
-            return has_figure
-        if query_type == "table":
-            return has_table
-        if query_type == "mixed":
-            return has_table or has_figure
-        seed_type = self._seed_caption_type(candidate)
-        return seed_type in {"table", "figure", "mixed"}
+        return caption_candidate_matches_type(candidate, query_type)
 
     def _page_candidate_matches_type(self, candidate: RetrievedChunk, query_type: str) -> bool:
-        return self._caption_candidate_matches_type(candidate, query_type)
+        return page_candidate_matches_type(candidate, query_type)
 
     def _has_caption_like_signal(self, candidate: RetrievedChunk) -> bool:
-        meta = candidate.metadata or {}
-        return bool(
-            meta.get("contains_table_caption")
-            or meta.get("contains_figure_caption")
-            or meta.get("contains_table_text")
-            or meta.get("contains_image")
-        )
+        return has_caption_like_signal(candidate)
 
     def _is_table_hint_or_parameter_query(self, question: str) -> bool:
-        q = question.lower()
-        return any(
-            token in q
-            for token in [
-                "primer",
-                "sequence",
-                "strain",
-                "parameter",
-                "restriction enzyme",
-                "purification",
-                "specific activity",
-                "activity",
-                "screening step",
-            ]
-        ) or any(token in question for token in ["参数", "引物", "菌株", "酶切", "纯化"])
+        return is_table_hint_or_parameter_query(question)
 
     def _preferred_evidence_type(self, question: str, seed: RetrievedChunk) -> str:
-        q = question.lower()
-        if any(token in q for token in ["method", "protocol", "strain", "enzyme", "pathway", "方法"]):
-            return "method"
-        if any(token in q for token in ["result", "yield", "titer", "production", "结果", "产量"]):
-            return "result"
-        if any(token in q for token in ["fold", "%", "g/l", "mm", "mmol", "g l", "numeric"]):
-            return "numeric"
-        if any(token in q for token in ["table", "表"]):
-            return "table"
-        if any(token in q for token in ["figure", "fig.", "图"]):
-            return "figure"
-        meta_types = seed.metadata.get("evidence_types") if isinstance(seed.metadata, dict) else []
-        if isinstance(meta_types, list):
-            lowered = [str(v).lower() for v in meta_types]
-            for candidate in ("method", "result", "table", "figure", "numeric"):
-                if candidate in lowered:
-                    return candidate
-        return ""
+        return preferred_evidence_type(question, seed)
 
 def _chunk_index(chunk: RetrievedChunk) -> int:
-    metadata = chunk.metadata or {}
-    value = metadata.get("chunk_index", 0) if isinstance(metadata, dict) else 0
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
+    return chunk_index(chunk)

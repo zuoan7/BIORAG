@@ -1,8 +1,9 @@
 """BioLexical BM25 query expansion for scientific/biomedical cross-language matching.
 
-This is a prototype (Phase 14C). It extracts Latin/English biomedical terms from
-Chinese queries and expands them via a small synonym map for BM25 sparse retrieval.
-It does NOT replace the original query, only appends English/bio terms.
+This is a prototype (Phase 14C), not a runtime main-chain module. It extracts
+Latin/English biomedical terms from Chinese queries and expands them via a small
+synonym map for BM25 sparse retrieval. It does NOT replace the original query,
+only appends English/bio terms.
 """
 from __future__ import annotations
 

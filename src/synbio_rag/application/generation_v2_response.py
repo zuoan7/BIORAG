@@ -6,7 +6,7 @@ from typing import Any
 from ..domain.config import Settings
 from ..domain.schemas import QueryFilters, QueryIntent, RAGResponse, RetrievedChunk
 from .original_cn_fallback import sanitize_original_cn_fallback_debug
-from .table_preview_pipeline import sanitize_table_preview_debug
+from .table_preview import sanitize_table_preview_debug
 
 
 def build_generation_v2_response(

@@ -217,6 +217,29 @@ def apply_table_preview(
     return merged, debug
 
 
+def run_table_preview(
+    *,
+    question: str,
+    retrieved: list[RetrievedChunk],
+    config,
+    provider: TablePreviewCandidateProvider | None = None,
+) -> tuple[list[RetrievedChunk], dict]:
+    return apply_table_preview(
+        question=question,
+        retrieved=retrieved,
+        config=config,
+        provider=provider,
+    )
+
+
+def sanitize_table_preview_debug(debug: dict) -> dict:
+    return {
+        key: value
+        for key, value in debug.items()
+        if key != "merged_candidates"
+    }
+
+
 def adapt_table_preview_unit(unit: dict[str, Any], *, score: float = 0.0) -> RetrievedChunk:
     metadata = unit.get("metadata") if isinstance(unit.get("metadata"), dict) else {}
     provenance = unit.get("provenance") if isinstance(unit.get("provenance"), dict) else {}

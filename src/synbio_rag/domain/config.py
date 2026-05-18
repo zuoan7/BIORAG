@@ -314,552 +314,12 @@ class Settings:
             return os.getenv(key, env_file.get(key, default))
 
         settings.env = get_value("APP_ENV", settings.env)
-        settings.retrieval.milvus_uri = get_value(
-            "SYNBIO_MILVUS_URI", get_value("MILVUS_URI", settings.retrieval.milvus_uri)
-        )
-        settings.retrieval.collection_name = get_value(
-            "MILVUS_COLLECTION",
-            settings.retrieval.collection_name,
-        )
-        settings.retrieval.score_floor = float(
-            get_value("RETRIEVAL_SCORE_FLOOR", str(settings.retrieval.score_floor))
-        )
-        settings.retrieval.rerank_mode = get_value(
-            "BIORAG_RERANK_MODE",
-            get_value("RETRIEVAL_RERANK_MODE", settings.retrieval.rerank_mode),
-        ).strip().lower()
-        settings.retrieval.hybrid_enabled = _parse_bool(
-            get_value("RETRIEVAL_HYBRID_ENABLED", str(settings.retrieval.hybrid_enabled))
-        )
-        settings.retrieval.bm25_enabled = _parse_bool(
-            get_value("RETRIEVAL_BM25_ENABLED", str(settings.retrieval.bm25_enabled))
-        )
-        settings.retrieval.dense_rrf_weight = float(
-            get_value("RETRIEVAL_DENSE_RRF_WEIGHT", str(settings.retrieval.dense_rrf_weight))
-        )
-        settings.retrieval.bm25_rrf_weight = float(
-            get_value("RETRIEVAL_BM25_RRF_WEIGHT", str(settings.retrieval.bm25_rrf_weight))
-        )
-        settings.retrieval.cjk_query_bm25_weight = float(
-            get_value("RETRIEVAL_CJK_QUERY_BM25_WEIGHT", str(settings.retrieval.cjk_query_bm25_weight))
-        )
-        settings.retrieval.comparison_query_weight = float(
-            get_value(
-                "RETRIEVAL_COMPARISON_QUERY_WEIGHT",
-                str(settings.retrieval.comparison_query_weight),
-            )
-        )
-        settings.retrieval.comparison_subquery_weight = float(
-            get_value(
-                "RETRIEVAL_COMPARISON_SUBQUERY_WEIGHT",
-                str(settings.retrieval.comparison_subquery_weight),
-            )
-        )
-        settings.retrieval.comparison_max_chunks_per_doc = int(
-            get_value(
-                "RETRIEVAL_COMPARISON_MAX_CHUNKS_PER_DOC",
-                str(settings.retrieval.comparison_max_chunks_per_doc),
-            )
-        )
-        settings.retrieval.comparison_rerank_max_chunks_per_doc = int(
-            get_value(
-                "RETRIEVAL_COMPARISON_RERANK_MAX_CHUNKS_PER_DOC",
-                str(settings.retrieval.comparison_rerank_max_chunks_per_doc),
-            )
-        )
-        settings.retrieval.title_keyword_boost = float(
-            get_value(
-                "RETRIEVAL_TITLE_KEYWORD_BOOST",
-                str(settings.retrieval.title_keyword_boost),
-            )
-        )
-        settings.retrieval.table_text_boost = float(
-            get_value("RETRIEVAL_TABLE_TEXT_BOOST", str(settings.retrieval.table_text_boost))
-        )
-        settings.retrieval.table_caption_boost = float(
-            get_value("RETRIEVAL_TABLE_CAPTION_BOOST", str(settings.retrieval.table_caption_boost))
-        )
-        settings.retrieval.figure_caption_boost = float(
-            get_value("RETRIEVAL_FIGURE_CAPTION_BOOST", str(settings.retrieval.figure_caption_boost))
-        )
-        settings.retrieval.rerank_subquery_aggregate_alpha = float(
-            get_value(
-                "RETRIEVAL_RERANK_SUBQUERY_AGGREGATE_ALPHA",
-                str(settings.retrieval.rerank_subquery_aggregate_alpha),
-            )
-        )
-        settings.retrieval.rerank_strategy_bonus = float(
-            get_value(
-                "RETRIEVAL_RERANK_STRATEGY_BONUS",
-                str(settings.retrieval.rerank_strategy_bonus),
-            )
-        )
-        settings.retrieval.guarded_hybrid_weight = float(
-            get_value("RETRIEVAL_GUARDED_HYBRID_WEIGHT", str(settings.retrieval.guarded_hybrid_weight))
-        )
-        settings.retrieval.guarded_reranker_weight = float(
-            get_value("RETRIEVAL_GUARDED_RERANKER_WEIGHT", str(settings.retrieval.guarded_reranker_weight))
-        )
-        settings.retrieval.guarded_keyword_weight = float(
-            get_value("RETRIEVAL_GUARDED_KEYWORD_WEIGHT", str(settings.retrieval.guarded_keyword_weight))
-        )
-        settings.retrieval.guarded_marker_weight = float(
-            get_value("RETRIEVAL_GUARDED_MARKER_WEIGHT", str(settings.retrieval.guarded_marker_weight))
-        )
-        settings.retrieval.guarded_doc_weight = float(
-            get_value("RETRIEVAL_GUARDED_DOC_WEIGHT", str(settings.retrieval.guarded_doc_weight))
-        )
-        settings.retrieval.guarded_incomplete_penalty = float(
-            get_value(
-                "RETRIEVAL_GUARDED_INCOMPLETE_PENALTY",
-                str(settings.retrieval.guarded_incomplete_penalty),
-            )
-        )
-        settings.retrieval.guarded_rank1_min_completeness_gain = float(
-            get_value(
-                "RETRIEVAL_GUARDED_RANK1_MIN_COMPLETENESS_GAIN",
-                str(settings.retrieval.guarded_rank1_min_completeness_gain),
-            )
-        )
-        settings.retrieval.guarded_rank1_max_score_gap = float(
-            get_value(
-                "RETRIEVAL_GUARDED_RANK1_MAX_SCORE_GAP",
-                str(settings.retrieval.guarded_rank1_max_score_gap),
-            )
-        )
-        settings.retrieval.search_limit = int(
-            get_value("RETRIEVAL_SEARCH_LIMIT", str(settings.retrieval.search_limit))
-        )
-        settings.retrieval.dense_limit = int(
-            get_value("RETRIEVAL_DENSE_LIMIT", str(settings.retrieval.dense_limit))
-        )
-        settings.retrieval.bm25_limit = int(
-            get_value("RETRIEVAL_BM25_LIMIT", str(settings.retrieval.bm25_limit))
-        )
-        settings.retrieval.rerank_top_k = int(
-            get_value("RETRIEVAL_RERANK_TOP_K", str(settings.retrieval.rerank_top_k))
-        )
-        settings.retrieval.final_top_k = int(
-            get_value("RETRIEVAL_FINAL_TOP_K", str(settings.retrieval.final_top_k))
-        )
-        settings.retrieval.evidence_numeric_bonus = float(
-            get_value("RETRIEVAL_EVIDENCE_NUMERIC_BONUS", str(settings.retrieval.evidence_numeric_bonus))
-        )
-        settings.retrieval.evidence_result_bonus = float(
-            get_value("RETRIEVAL_EVIDENCE_RESULT_BONUS", str(settings.retrieval.evidence_result_bonus))
-        )
-        settings.retrieval.evidence_definition_bonus = float(
-            get_value("RETRIEVAL_EVIDENCE_DEFINITION_BONUS", str(settings.retrieval.evidence_definition_bonus))
-        )
-        settings.retrieval.section_results_bonus = float(
-            get_value("RETRIEVAL_SECTION_RESULTS_BONUS", str(settings.retrieval.section_results_bonus))
-        )
-        settings.retrieval.section_discussion_bonus = float(
-            get_value("RETRIEVAL_SECTION_DISCUSSION_BONUS", str(settings.retrieval.section_discussion_bonus))
-        )
-        settings.retrieval.section_abstract_bonus = float(
-            get_value("RETRIEVAL_SECTION_ABSTRACT_BONUS", str(settings.retrieval.section_abstract_bonus))
-        )
-        settings.retrieval.section_introduction_penalty = float(
-            get_value("RETRIEVAL_SECTION_INTRODUCTION_PENALTY", str(settings.retrieval.section_introduction_penalty))
-        )
-        settings.retrieval.same_doc_body_coverage_enabled = _parse_bool(
-            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_ENABLED", str(settings.retrieval.same_doc_body_coverage_enabled))
-        )
-        val = get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_INTENTS", "")
-        if val:
-            settings.retrieval.same_doc_body_coverage_intents = [x.strip() for x in val.split(",")]
-        settings.retrieval.same_doc_body_coverage_margin = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MARGIN", str(settings.retrieval.same_doc_body_coverage_margin))
-        )
-        settings.retrieval.same_doc_body_coverage_max_total = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MAX_TOTAL", str(settings.retrieval.same_doc_body_coverage_max_total))
-        )
-        settings.retrieval.same_doc_section_group_coverage_level2_enabled = _parse_bool(
-            get_value("RETRIEVAL_SECTION_GROUP_COVERAGE_LEVEL2_ENABLED", str(settings.retrieval.same_doc_section_group_coverage_level2_enabled))
-        )
-        settings.retrieval.same_doc_body_expand_enabled = _parse_bool(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_ENABLED", str(settings.retrieval.same_doc_body_expand_enabled))
-        )
-        settings.retrieval.same_doc_body_expand_top_docs = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_TOP_DOCS", str(settings.retrieval.same_doc_body_expand_top_docs))
-        )
-        settings.retrieval.same_doc_body_expand_per_doc = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_PER_DOC", str(settings.retrieval.same_doc_body_expand_per_doc))
-        )
-        settings.retrieval.same_doc_body_expand_max_total = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MAX_TOTAL", str(settings.retrieval.same_doc_body_expand_max_total))
-        )
-        settings.retrieval.same_doc_body_expand_min_doc_rank = int(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MIN_DOC_RANK", str(settings.retrieval.same_doc_body_expand_min_doc_rank))
-        )
-        settings.retrieval.same_doc_body_expand_require_missing_body = _parse_bool(
-            get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_REQUIRE_MISSING_BODY", str(settings.retrieval.same_doc_body_expand_require_missing_body))
-        )
-        settings.retrieval.source_floor_enabled = _parse_bool(
-            get_value("RETRIEVAL_SOURCE_FLOOR_ENABLED", str(settings.retrieval.source_floor_enabled))
-        )
-        settings.retrieval.source_floor_dense_top_n = int(
-            get_value("RETRIEVAL_SOURCE_FLOOR_DENSE_TOP_N", str(settings.retrieval.source_floor_dense_top_n))
-        )
-        settings.retrieval.source_floor_bm25_top_n = int(
-            get_value("RETRIEVAL_SOURCE_FLOOR_BM25_TOP_N", str(settings.retrieval.source_floor_bm25_top_n))
-        )
-        settings.retrieval.source_floor_max_candidates_total = int(
-            get_value("RETRIEVAL_SOURCE_FLOOR_MAX_CANDIDATES_TOTAL", str(settings.retrieval.source_floor_max_candidates_total))
-        )
-        # Phase 20L: original CN fallback floor
-        settings.retrieval.original_cn_fallback_enabled = _parse_bool(
-            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED", str(settings.retrieval.original_cn_fallback_enabled))
-        )
-        settings.retrieval.original_cn_fallback_dense_top_n = int(
-            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_DENSE_TOP_N", str(settings.retrieval.original_cn_fallback_dense_top_n))
-        )
-        settings.retrieval.original_cn_fallback_bm25_top_n = int(
-            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_BM25_TOP_N", str(settings.retrieval.original_cn_fallback_bm25_top_n))
-        )
-        settings.retrieval.original_cn_fallback_max_total = int(
-            get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL", str(settings.retrieval.original_cn_fallback_max_total))
-        )
-        settings.retrieval.table_preview_enabled = _parse_bool(
-            get_value("TABLE_PREVIEW_ENABLED", str(settings.retrieval.table_preview_enabled))
-        )
-        settings.retrieval.table_preview_units_path = get_value(
-            "TABLE_PREVIEW_UNITS_PATH",
-            settings.retrieval.table_preview_units_path,
-        )
-        settings.retrieval.table_preview_max_candidates = int(
-            get_value(
-                "TABLE_PREVIEW_MAX_CANDIDATES",
-                str(settings.retrieval.table_preview_max_candidates),
-            )
-        )
-        settings.retrieval.table_preview_merge_enabled = _parse_bool(
-            get_value(
-                "TABLE_PREVIEW_MERGE_ENABLED",
-                str(settings.retrieval.table_preview_merge_enabled),
-            )
-        )
-        settings.retrieval.table_preview_merge_strategy = get_value(
-            "TABLE_PREVIEW_MERGE_STRATEGY",
-            settings.retrieval.table_preview_merge_strategy,
-        ).strip().lower()
-        settings.retrieval.table_preview_merge_max_candidates = int(
-            get_value(
-                "TABLE_PREVIEW_MERGE_MAX_CANDIDATES",
-                str(settings.retrieval.table_preview_merge_max_candidates),
-            )
-        )
-        settings.retrieval.table_preview_min_score = float(
-            get_value("TABLE_PREVIEW_MIN_SCORE", str(settings.retrieval.table_preview_min_score))
-        )
-        settings.retrieval.table_preview_allow_formal_citation = _parse_bool(
-            get_value(
-                "TABLE_PREVIEW_ALLOW_FORMAL_CITATION",
-                str(settings.retrieval.table_preview_allow_formal_citation),
-            )
-        )
-        settings.retrieval.alias_expansion_enabled = _parse_bool(
-            get_value("RETRIEVAL_ALIAS_EXPANSION_ENABLED", str(settings.retrieval.alias_expansion_enabled))
-        )
-        settings.retrieval.alias_expansion_scope = get_value(
-            "RETRIEVAL_ALIAS_EXPANSION_SCOPE", settings.retrieval.alias_expansion_scope
-        )
-        val = get_value("RETRIEVAL_ALIAS_EXPANSION_RISK_LEVELS", "")
-        if val:
-            settings.retrieval.alias_expansion_risk_levels = [x.strip() for x in val.split(",")]
-        settings.retrieval.alias_expansion_max_entities_per_query = int(
-            get_value("RETRIEVAL_ALIAS_MAX_ENTITIES_PER_QUERY", str(settings.retrieval.alias_expansion_max_entities_per_query))
-        )
-        settings.retrieval.alias_expansion_max_total_terms = int(
-            get_value("RETRIEVAL_ALIAS_MAX_TOTAL_TERMS", str(settings.retrieval.alias_expansion_max_total_terms))
-        )
-        settings.retrieval.rerank_score_floor_ratio = float(
-            get_value("RETRIEVAL_RERANK_SCORE_FLOOR_RATIO", str(settings.retrieval.rerank_score_floor_ratio))
-        )
-        settings.retrieval.neighbor_expansion_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_NEIGHBOR_EXPANSION_ENABLED",
-                str(settings.retrieval.neighbor_expansion_enabled),
-            )
-        )
-        settings.retrieval.neighbor_window_size = int(
-            get_value("RETRIEVAL_NEIGHBOR_WINDOW_SIZE", str(settings.retrieval.neighbor_window_size))
-        )
-        settings.retrieval.neighbor_expansion_max_chunks = int(
-            get_value(
-                "RETRIEVAL_NEIGHBOR_EXPANSION_MAX_CHUNKS",
-                str(settings.retrieval.neighbor_expansion_max_chunks),
-            )
-        )
-        settings.retrieval.parent_expansion_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_ENABLED",
-                str(settings.retrieval.parent_expansion_enabled),
-            )
-        )
-        settings.retrieval.parent_index_path = get_value(
-            "RETRIEVAL_PARENT_INDEX_PATH",
-            settings.retrieval.parent_index_path,
-        )
-        settings.retrieval.parent_expansion_max_total = int(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_MAX_TOTAL",
-                str(settings.retrieval.parent_expansion_max_total),
-            )
-        )
-        settings.retrieval.parent_expansion_per_seed_limit = int(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT",
-                str(settings.retrieval.parent_expansion_per_seed_limit),
-            )
-        )
-        settings.retrieval.parent_expansion_window_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_WINDOW_ENABLED",
-                str(settings.retrieval.parent_expansion_window_enabled),
-            )
-        )
-        settings.retrieval.parent_expansion_caption_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_CAPTION_ENABLED",
-                str(settings.retrieval.parent_expansion_caption_enabled),
-            )
-        )
-        settings.retrieval.parent_expansion_page_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_PAGE_ENABLED",
-                str(settings.retrieval.parent_expansion_page_enabled),
-            )
-        )
-        settings.retrieval.parent_expansion_section_path_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_SECTION_PATH_ENABLED",
-                str(settings.retrieval.parent_expansion_section_path_enabled),
-            )
-        )
-        settings.retrieval.parent_expansion_evidence_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_EVIDENCE_ENABLED",
-                str(settings.retrieval.parent_expansion_evidence_enabled),
-            )
-        )
-        settings.retrieval.parent_expansion_summary_sections_enabled = _parse_bool(
-            get_value(
-                "RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS_ENABLED",
-                str(settings.retrieval.parent_expansion_summary_sections_enabled),
-            )
-        )
-        parent_summary_sections = get_value("RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS", "")
-        if parent_summary_sections.strip():
-            settings.retrieval.parent_expansion_summary_sections = [
-                item.strip()
-                for item in parent_summary_sections.split(",")
-                if item.strip()
-            ]
-        # Phase 12A: 结构化索引契约
-        settings.retrieval.index_schema_version = get_value(
-            "RETRIEVAL_INDEX_SCHEMA_VERSION", settings.retrieval.index_schema_version
-        )
-        settings.retrieval.index_type = get_value(
-            "RETRIEVAL_INDEX_TYPE", settings.retrieval.index_type
-        )
-        settings.retrieval.nprobe = int(
-            get_value("RETRIEVAL_NPROBE", str(settings.retrieval.nprobe))
-        )
-        settings.retrieval.hnsw_ef = int(
-            get_value("RETRIEVAL_HNSW_EF", str(settings.retrieval.hnsw_ef))
-        )
-        settings.kb.embedding_model_path = get_value(
-            "BGE_M3_MODEL_PATH",
-            settings.kb.embedding_model_path,
-        )
-        settings.kb.embedding_max_length = int(
-            get_value("BGE_EMBED_MAX_LENGTH", str(settings.kb.embedding_max_length))
-        )
-        settings.table_enhancement.enabled = _parse_bool(
-            get_value("TABLE_ENHANCEMENT_ENABLED", str(settings.table_enhancement.enabled))
-        )
-        settings.table_enhancement.mode = get_value(
-            "TABLE_ENHANCEMENT_MODE",
-            settings.table_enhancement.mode,
-        ).strip()
-        settings.table_enhancement.window_after_caption = int(
-            get_value(
-                "TABLE_ENHANCEMENT_WINDOW_AFTER_CAPTION",
-                str(settings.table_enhancement.window_after_caption),
-            )
-        )
-        settings.table_enhancement.window_before_caption = int(
-            get_value(
-                "TABLE_ENHANCEMENT_WINDOW_BEFORE_CAPTION",
-                str(settings.table_enhancement.window_before_caption),
-            )
-        )
-        settings.table_enhancement.max_associated_blocks_per_caption = int(
-            get_value(
-                "TABLE_ENHANCEMENT_MAX_ASSOCIATED_BLOCKS_PER_CAPTION",
-                str(settings.table_enhancement.max_associated_blocks_per_caption),
-            )
-        )
-        settings.table_enhancement.min_confidence = get_value(
-            "TABLE_ENHANCEMENT_MIN_CONFIDENCE",
-            settings.table_enhancement.min_confidence,
-        ).strip().lower()
-        settings.table_enhancement.write_audit = _parse_bool(
-            get_value("TABLE_ENHANCEMENT_WRITE_AUDIT", str(settings.table_enhancement.write_audit))
-        )
-        settings.table_enhancement.fail_on_schema_drift = _parse_bool(
-            get_value(
-                "TABLE_ENHANCEMENT_FAIL_ON_SCHEMA_DRIFT",
-                str(settings.table_enhancement.fail_on_schema_drift),
-            )
-        )
-        settings.table_enhancement.output_suffix = get_value(
-            "TABLE_ENHANCEMENT_OUTPUT_SUFFIX",
-            settings.table_enhancement.output_suffix,
-        ).strip()
-        settings.table_enhancement.audit_root = get_value(
-            "TABLE_ENHANCEMENT_AUDIT_ROOT",
-            settings.table_enhancement.audit_root,
-        ).strip()
-        settings.table_enhancement.dry_run = _parse_bool(
-            get_value("TABLE_ENHANCEMENT_DRY_RUN", str(settings.table_enhancement.dry_run))
-        )
-        settings.llm.api_base = get_value("QWEN_CHAT_API_BASE", "")
-        settings.llm.api_key = get_value("QWEN_CHAT_API_KEY", "")
-        settings.reranker.model_path = get_value(
-            "BGE_RERANKER_MODEL_PATH",
-            settings.reranker.model_path,
-        )
-        settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
-        settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
-        # Profile: sets defaults for experimental toggles. Explicit env vars override afterwards.
-        profile_raw = get_value("GENERATION_V2_PROFILE", settings.generation.v2_profile).strip().lower()
-        if profile_raw not in _GENERATION_V2_PROFILES:
-            warnings.warn(
-                f"Unknown GENERATION_V2_PROFILE={profile_raw!r}; falling back to 'stable'.",
-                stacklevel=2,
-            )
-            profile_raw = "stable"
-        settings.generation.v2_profile = profile_raw
-        _apply_profile(settings.generation, profile_raw)
-        # Explicit env vars can override non-dangerous flags set by profile.
-        _env_key = "GENERATION_V2_USE_QWEN_SYNTHESIS"
-        if _env_key in os.environ or _env_key in env_file:
-            settings.generation.v2_use_qwen_synthesis = _parse_bool(get_value(_env_key, "false"))
-        _env_key = "GENERATION_V2_ENABLE_COMPARISON_COVERAGE"
-        if _env_key in os.environ or _env_key in env_file:
-            settings.generation.v2_enable_comparison_coverage = _parse_bool(get_value(_env_key, "false"))
-        _env_key = "GENERATION_V2_ENABLE_NEIGHBOR_AUDIT"
-        if _env_key in os.environ or _env_key in env_file:
-            settings.generation.v2_enable_neighbor_audit = _parse_bool(get_value(_env_key, "false"))
-        settings.generation.v2_qwen_synthesis_timeout_seconds = int(
-            get_value(
-                "GENERATION_V2_QWEN_SYNTHESIS_TIMEOUT_SECONDS",
-                str(settings.generation.v2_qwen_synthesis_timeout_seconds),
-            )
-        )
-        settings.generation.v2_qwen_synthesis_max_chars_per_evidence = int(
-            get_value(
-                "GENERATION_V2_QWEN_SYNTHESIS_MAX_CHARS_PER_EVIDENCE",
-                str(settings.generation.v2_qwen_synthesis_max_chars_per_evidence),
-            )
-        )
-        settings.generation.v2_qwen_synthesis_max_output_chars = int(
-            get_value(
-                "GENERATION_V2_QWEN_SYNTHESIS_MAX_OUTPUT_CHARS",
-                str(settings.generation.v2_qwen_synthesis_max_output_chars),
-            )
-        )
-        settings.generation.v2_use_history = _parse_bool(
-            get_value(
-                "GENERATION_V2_USE_HISTORY",
-                str(settings.generation.v2_use_history),
-            )
-        )
-        settings.generation.v2_max_support_factoid = int(
-            get_value(
-                "GENERATION_V2_MAX_SUPPORT_FACTOID",
-                str(settings.generation.v2_max_support_factoid),
-            )
-        )
-        settings.generation.v2_max_support_summary = int(
-            get_value(
-                "GENERATION_V2_MAX_SUPPORT_SUMMARY",
-                str(settings.generation.v2_max_support_summary),
-            )
-        )
-        settings.generation.v2_max_support_comparison = int(
-            get_value(
-                "GENERATION_V2_MAX_SUPPORT_COMPARISON",
-                str(settings.generation.v2_max_support_comparison),
-            )
-        )
-        settings.generation.v2_max_extractive_evidence_lines = int(
-            get_value(
-                "GENERATION_V2_MAX_EXTRACTIVE_EVIDENCE_LINES",
-                str(settings.generation.v2_max_extractive_evidence_lines),
-            )
-        )
-        settings.generation.v2_min_support_score = float(
-            get_value(
-                "GENERATION_V2_MIN_SUPPORT_SCORE",
-                str(settings.generation.v2_min_support_score),
-            )
-        )
-        settings.generation.v2_require_citation = _parse_bool(
-            get_value(
-                "GENERATION_V2_REQUIRE_CITATION",
-                str(settings.generation.v2_require_citation),
-            )
-        )
-        settings.generation.v2_neighbor_window = int(
-            get_value("GENERATION_V2_NEIGHBOR_WINDOW", str(settings.generation.v2_neighbor_window))
-        )
-        settings.generation.v2_max_neighbors_per_seed = int(
-            get_value("GENERATION_V2_MAX_NEIGHBORS_PER_SEED", str(settings.generation.v2_max_neighbors_per_seed))
-        )
-        settings.generation.v2_neighbor_promotion_dry_run = _parse_bool(
-            get_value("GENERATION_V2_NEIGHBOR_PROMOTION_DRY_RUN", str(settings.generation.v2_neighbor_promotion_dry_run))
-        )
-        settings.generation.v2_neighbor_score_decay_distance1 = float(
-            get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE1", str(settings.generation.v2_neighbor_score_decay_distance1))
-        )
-        settings.generation.v2_neighbor_score_decay_distance2 = float(
-            get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE2", str(settings.generation.v2_neighbor_score_decay_distance2))
-        )
-        settings.generation.v2_neighbor_min_promotion_score = float(
-            get_value("GENERATION_V2_NEIGHBOR_MIN_PROMOTION_SCORE", str(settings.generation.v2_neighbor_min_promotion_score))
-        )
-        # Read forbidden flags so the hard guard can emit a warning if someone set them.
-        settings.generation.v2_enable_neighbor_promotion = _parse_bool(
-            get_value("GENERATION_V2_ENABLE_NEIGHBOR_PROMOTION", "false")
-        )
-        settings.generation.v2_include_neighbor_context_in_qwen = _parse_bool(
-            get_value("GENERATION_V2_INCLUDE_NEIGHBOR_CONTEXT_IN_QWEN", "false")
-        )
-        # Hard guard: forbidden flags must always remain False regardless of env.
-        _enforce_forbidden_flags(settings.generation)
-        # Phase 19: query rewrite feature flag
-        settings.query_rewrite.mode = get_value("QUERY_REWRITE_MODE", settings.query_rewrite.mode).strip().lower()
-        settings.query_rewrite.model = get_value("QUERY_REWRITE_MODEL", settings.query_rewrite.model)
-        settings.query_rewrite.temperature = float(get_value("QUERY_REWRITE_TEMPERATURE", str(settings.query_rewrite.temperature)))
-        settings.query_rewrite.cache_enabled = _parse_bool(get_value("QUERY_REWRITE_CACHE_ENABLED", str(settings.query_rewrite.cache_enabled)))
-        settings.query_rewrite.cache_ttl_seconds = int(get_value("QUERY_REWRITE_CACHE_TTL_SECONDS", str(settings.query_rewrite.cache_ttl_seconds)))
-        settings.query_rewrite.cache_key_version = get_value("QUERY_REWRITE_CACHE_KEY_VERSION", settings.query_rewrite.cache_key_version)
-        settings.query_rewrite.timeout_ms = int(get_value("QUERY_REWRITE_TIMEOUT_MS", str(settings.query_rewrite.timeout_ms)))
-        settings.query_rewrite.fallback_on_error = _parse_bool(get_value("QUERY_REWRITE_FALLBACK_ON_ERROR", str(settings.query_rewrite.fallback_on_error)))
-        settings.query_rewrite.guard_implicit_reference = _parse_bool(get_value("QUERY_REWRITE_GUARD_IMPLICIT_REFERENCE", str(settings.query_rewrite.guard_implicit_reference)))
-        settings.query_rewrite.guard_negative_intent = _parse_bool(get_value("QUERY_REWRITE_GUARD_NEGATIVE_INTENT", str(settings.query_rewrite.guard_negative_intent)))
-        settings.query_rewrite.trace_enabled = _parse_bool(get_value("QUERY_REWRITE_TRACE_ENABLED", str(settings.query_rewrite.trace_enabled)))
-        settings.query_rewrite.require_llm_for_eval = _parse_bool(get_value("QUERY_REWRITE_REQUIRE_LLM_FOR_EVAL", str(settings.query_rewrite.require_llm_for_eval)))
-        fallback_rate_raw = get_value("QUERY_REWRITE_FAIL_FAST_ON_FALLBACK_RATE", "")
-        if fallback_rate_raw.strip():
-            settings.query_rewrite.fail_fast_on_fallback_rate = float(fallback_rate_raw)
-        settings.query_rewrite.eval_rewrite_cache_path = get_value("EVAL_REWRITE_CACHE_PATH", settings.query_rewrite.eval_rewrite_cache_path)
-        settings.query_rewrite.eval_rewrite_require_cache = _parse_bool(get_value("EVAL_REWRITE_REQUIRE_CACHE", str(settings.query_rewrite.eval_rewrite_require_cache)))
-        settings.query_rewrite.eval_rewrite_fail_fast_on_missing = _parse_bool(get_value("EVAL_REWRITE_FAIL_FAST_ON_MISSING", str(settings.query_rewrite.eval_rewrite_fail_fast_on_missing)))
+        _load_retrieval_env(settings, get_value)
+        _load_model_env(settings, get_value)
+        _load_table_enhancement_env(settings, get_value)
+        _load_audit_env(settings, get_value)
+        _load_generation_env(settings, get_value, env_file)
+        _load_query_rewrite_env(settings, get_value)
         settings.resolve_paths()
         settings.ensure_directories()
         return settings
@@ -897,6 +357,564 @@ class Settings:
             Path(path_str).mkdir(parents=True, exist_ok=True)
         if _is_local_path(self.retrieval.milvus_uri):
             Path(self.retrieval.milvus_uri).parent.mkdir(parents=True, exist_ok=True)
+
+
+def _load_retrieval_env(settings: Settings, get_value) -> None:
+    settings.retrieval.milvus_uri = get_value(
+        "SYNBIO_MILVUS_URI", get_value("MILVUS_URI", settings.retrieval.milvus_uri)
+    )
+    settings.retrieval.collection_name = get_value(
+        "MILVUS_COLLECTION",
+        settings.retrieval.collection_name,
+    )
+    settings.retrieval.score_floor = float(
+        get_value("RETRIEVAL_SCORE_FLOOR", str(settings.retrieval.score_floor))
+    )
+    settings.retrieval.rerank_mode = get_value(
+        "BIORAG_RERANK_MODE",
+        get_value("RETRIEVAL_RERANK_MODE", settings.retrieval.rerank_mode),
+    ).strip().lower()
+    settings.retrieval.hybrid_enabled = _parse_bool(
+        get_value("RETRIEVAL_HYBRID_ENABLED", str(settings.retrieval.hybrid_enabled))
+    )
+    settings.retrieval.bm25_enabled = _parse_bool(
+        get_value("RETRIEVAL_BM25_ENABLED", str(settings.retrieval.bm25_enabled))
+    )
+    settings.retrieval.dense_rrf_weight = float(
+        get_value("RETRIEVAL_DENSE_RRF_WEIGHT", str(settings.retrieval.dense_rrf_weight))
+    )
+    settings.retrieval.bm25_rrf_weight = float(
+        get_value("RETRIEVAL_BM25_RRF_WEIGHT", str(settings.retrieval.bm25_rrf_weight))
+    )
+    settings.retrieval.cjk_query_bm25_weight = float(
+        get_value("RETRIEVAL_CJK_QUERY_BM25_WEIGHT", str(settings.retrieval.cjk_query_bm25_weight))
+    )
+    settings.retrieval.comparison_query_weight = float(
+        get_value(
+            "RETRIEVAL_COMPARISON_QUERY_WEIGHT",
+            str(settings.retrieval.comparison_query_weight),
+        )
+    )
+    settings.retrieval.comparison_subquery_weight = float(
+        get_value(
+            "RETRIEVAL_COMPARISON_SUBQUERY_WEIGHT",
+            str(settings.retrieval.comparison_subquery_weight),
+        )
+    )
+    settings.retrieval.comparison_max_chunks_per_doc = int(
+        get_value(
+            "RETRIEVAL_COMPARISON_MAX_CHUNKS_PER_DOC",
+            str(settings.retrieval.comparison_max_chunks_per_doc),
+        )
+    )
+    settings.retrieval.comparison_rerank_max_chunks_per_doc = int(
+        get_value(
+            "RETRIEVAL_COMPARISON_RERANK_MAX_CHUNKS_PER_DOC",
+            str(settings.retrieval.comparison_rerank_max_chunks_per_doc),
+        )
+    )
+    settings.retrieval.title_keyword_boost = float(
+        get_value(
+            "RETRIEVAL_TITLE_KEYWORD_BOOST",
+            str(settings.retrieval.title_keyword_boost),
+        )
+    )
+    settings.retrieval.table_text_boost = float(
+        get_value("RETRIEVAL_TABLE_TEXT_BOOST", str(settings.retrieval.table_text_boost))
+    )
+    settings.retrieval.table_caption_boost = float(
+        get_value("RETRIEVAL_TABLE_CAPTION_BOOST", str(settings.retrieval.table_caption_boost))
+    )
+    settings.retrieval.figure_caption_boost = float(
+        get_value("RETRIEVAL_FIGURE_CAPTION_BOOST", str(settings.retrieval.figure_caption_boost))
+    )
+    settings.retrieval.rerank_subquery_aggregate_alpha = float(
+        get_value(
+            "RETRIEVAL_RERANK_SUBQUERY_AGGREGATE_ALPHA",
+            str(settings.retrieval.rerank_subquery_aggregate_alpha),
+        )
+    )
+    settings.retrieval.rerank_strategy_bonus = float(
+        get_value(
+            "RETRIEVAL_RERANK_STRATEGY_BONUS",
+            str(settings.retrieval.rerank_strategy_bonus),
+        )
+    )
+    settings.retrieval.guarded_hybrid_weight = float(
+        get_value("RETRIEVAL_GUARDED_HYBRID_WEIGHT", str(settings.retrieval.guarded_hybrid_weight))
+    )
+    settings.retrieval.guarded_reranker_weight = float(
+        get_value("RETRIEVAL_GUARDED_RERANKER_WEIGHT", str(settings.retrieval.guarded_reranker_weight))
+    )
+    settings.retrieval.guarded_keyword_weight = float(
+        get_value("RETRIEVAL_GUARDED_KEYWORD_WEIGHT", str(settings.retrieval.guarded_keyword_weight))
+    )
+    settings.retrieval.guarded_marker_weight = float(
+        get_value("RETRIEVAL_GUARDED_MARKER_WEIGHT", str(settings.retrieval.guarded_marker_weight))
+    )
+    settings.retrieval.guarded_doc_weight = float(
+        get_value("RETRIEVAL_GUARDED_DOC_WEIGHT", str(settings.retrieval.guarded_doc_weight))
+    )
+    settings.retrieval.guarded_incomplete_penalty = float(
+        get_value(
+            "RETRIEVAL_GUARDED_INCOMPLETE_PENALTY",
+            str(settings.retrieval.guarded_incomplete_penalty),
+        )
+    )
+    settings.retrieval.guarded_rank1_min_completeness_gain = float(
+        get_value(
+            "RETRIEVAL_GUARDED_RANK1_MIN_COMPLETENESS_GAIN",
+            str(settings.retrieval.guarded_rank1_min_completeness_gain),
+        )
+    )
+    settings.retrieval.guarded_rank1_max_score_gap = float(
+        get_value(
+            "RETRIEVAL_GUARDED_RANK1_MAX_SCORE_GAP",
+            str(settings.retrieval.guarded_rank1_max_score_gap),
+        )
+    )
+    settings.retrieval.search_limit = int(
+        get_value("RETRIEVAL_SEARCH_LIMIT", str(settings.retrieval.search_limit))
+    )
+    settings.retrieval.dense_limit = int(
+        get_value("RETRIEVAL_DENSE_LIMIT", str(settings.retrieval.dense_limit))
+    )
+    settings.retrieval.bm25_limit = int(
+        get_value("RETRIEVAL_BM25_LIMIT", str(settings.retrieval.bm25_limit))
+    )
+    settings.retrieval.rerank_top_k = int(
+        get_value("RETRIEVAL_RERANK_TOP_K", str(settings.retrieval.rerank_top_k))
+    )
+    settings.retrieval.final_top_k = int(
+        get_value("RETRIEVAL_FINAL_TOP_K", str(settings.retrieval.final_top_k))
+    )
+    settings.retrieval.evidence_numeric_bonus = float(
+        get_value("RETRIEVAL_EVIDENCE_NUMERIC_BONUS", str(settings.retrieval.evidence_numeric_bonus))
+    )
+    settings.retrieval.evidence_result_bonus = float(
+        get_value("RETRIEVAL_EVIDENCE_RESULT_BONUS", str(settings.retrieval.evidence_result_bonus))
+    )
+    settings.retrieval.evidence_definition_bonus = float(
+        get_value("RETRIEVAL_EVIDENCE_DEFINITION_BONUS", str(settings.retrieval.evidence_definition_bonus))
+    )
+    settings.retrieval.section_results_bonus = float(
+        get_value("RETRIEVAL_SECTION_RESULTS_BONUS", str(settings.retrieval.section_results_bonus))
+    )
+    settings.retrieval.section_discussion_bonus = float(
+        get_value("RETRIEVAL_SECTION_DISCUSSION_BONUS", str(settings.retrieval.section_discussion_bonus))
+    )
+    settings.retrieval.section_abstract_bonus = float(
+        get_value("RETRIEVAL_SECTION_ABSTRACT_BONUS", str(settings.retrieval.section_abstract_bonus))
+    )
+    settings.retrieval.section_introduction_penalty = float(
+        get_value("RETRIEVAL_SECTION_INTRODUCTION_PENALTY", str(settings.retrieval.section_introduction_penalty))
+    )
+    settings.retrieval.same_doc_body_coverage_enabled = _parse_bool(
+        get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_ENABLED", str(settings.retrieval.same_doc_body_coverage_enabled))
+    )
+    val = get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_INTENTS", "")
+    if val:
+        settings.retrieval.same_doc_body_coverage_intents = [x.strip() for x in val.split(",")]
+    settings.retrieval.same_doc_body_coverage_margin = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MARGIN", str(settings.retrieval.same_doc_body_coverage_margin))
+    )
+    settings.retrieval.same_doc_body_coverage_max_total = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_COVERAGE_MAX_TOTAL", str(settings.retrieval.same_doc_body_coverage_max_total))
+    )
+    settings.retrieval.same_doc_section_group_coverage_level2_enabled = _parse_bool(
+        get_value("RETRIEVAL_SECTION_GROUP_COVERAGE_LEVEL2_ENABLED", str(settings.retrieval.same_doc_section_group_coverage_level2_enabled))
+    )
+    settings.retrieval.same_doc_body_expand_enabled = _parse_bool(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_ENABLED", str(settings.retrieval.same_doc_body_expand_enabled))
+    )
+    settings.retrieval.same_doc_body_expand_top_docs = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_TOP_DOCS", str(settings.retrieval.same_doc_body_expand_top_docs))
+    )
+    settings.retrieval.same_doc_body_expand_per_doc = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_PER_DOC", str(settings.retrieval.same_doc_body_expand_per_doc))
+    )
+    settings.retrieval.same_doc_body_expand_max_total = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MAX_TOTAL", str(settings.retrieval.same_doc_body_expand_max_total))
+    )
+    settings.retrieval.same_doc_body_expand_min_doc_rank = int(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_MIN_DOC_RANK", str(settings.retrieval.same_doc_body_expand_min_doc_rank))
+    )
+    settings.retrieval.same_doc_body_expand_require_missing_body = _parse_bool(
+        get_value("RETRIEVAL_SAME_DOC_BODY_EXPAND_REQUIRE_MISSING_BODY", str(settings.retrieval.same_doc_body_expand_require_missing_body))
+    )
+    settings.retrieval.source_floor_enabled = _parse_bool(
+        get_value("RETRIEVAL_SOURCE_FLOOR_ENABLED", str(settings.retrieval.source_floor_enabled))
+    )
+    settings.retrieval.source_floor_dense_top_n = int(
+        get_value("RETRIEVAL_SOURCE_FLOOR_DENSE_TOP_N", str(settings.retrieval.source_floor_dense_top_n))
+    )
+    settings.retrieval.source_floor_bm25_top_n = int(
+        get_value("RETRIEVAL_SOURCE_FLOOR_BM25_TOP_N", str(settings.retrieval.source_floor_bm25_top_n))
+    )
+    settings.retrieval.source_floor_max_candidates_total = int(
+        get_value("RETRIEVAL_SOURCE_FLOOR_MAX_CANDIDATES_TOTAL", str(settings.retrieval.source_floor_max_candidates_total))
+    )
+    settings.retrieval.original_cn_fallback_enabled = _parse_bool(
+        get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED", str(settings.retrieval.original_cn_fallback_enabled))
+    )
+    settings.retrieval.original_cn_fallback_dense_top_n = int(
+        get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_DENSE_TOP_N", str(settings.retrieval.original_cn_fallback_dense_top_n))
+    )
+    settings.retrieval.original_cn_fallback_bm25_top_n = int(
+        get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_BM25_TOP_N", str(settings.retrieval.original_cn_fallback_bm25_top_n))
+    )
+    settings.retrieval.original_cn_fallback_max_total = int(
+        get_value("RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL", str(settings.retrieval.original_cn_fallback_max_total))
+    )
+    settings.retrieval.table_preview_enabled = _parse_bool(
+        get_value("TABLE_PREVIEW_ENABLED", str(settings.retrieval.table_preview_enabled))
+    )
+    settings.retrieval.table_preview_units_path = get_value(
+        "TABLE_PREVIEW_UNITS_PATH",
+        settings.retrieval.table_preview_units_path,
+    )
+    settings.retrieval.table_preview_max_candidates = int(
+        get_value(
+            "TABLE_PREVIEW_MAX_CANDIDATES",
+            str(settings.retrieval.table_preview_max_candidates),
+        )
+    )
+    settings.retrieval.table_preview_merge_enabled = _parse_bool(
+        get_value(
+            "TABLE_PREVIEW_MERGE_ENABLED",
+            str(settings.retrieval.table_preview_merge_enabled),
+        )
+    )
+    settings.retrieval.table_preview_merge_strategy = get_value(
+        "TABLE_PREVIEW_MERGE_STRATEGY",
+        settings.retrieval.table_preview_merge_strategy,
+    ).strip().lower()
+    settings.retrieval.table_preview_merge_max_candidates = int(
+        get_value(
+            "TABLE_PREVIEW_MERGE_MAX_CANDIDATES",
+            str(settings.retrieval.table_preview_merge_max_candidates),
+        )
+    )
+    settings.retrieval.table_preview_min_score = float(
+        get_value("TABLE_PREVIEW_MIN_SCORE", str(settings.retrieval.table_preview_min_score))
+    )
+    settings.retrieval.table_preview_allow_formal_citation = _parse_bool(
+        get_value(
+            "TABLE_PREVIEW_ALLOW_FORMAL_CITATION",
+            str(settings.retrieval.table_preview_allow_formal_citation),
+        )
+    )
+    settings.retrieval.alias_expansion_enabled = _parse_bool(
+        get_value("RETRIEVAL_ALIAS_EXPANSION_ENABLED", str(settings.retrieval.alias_expansion_enabled))
+    )
+    settings.retrieval.alias_expansion_scope = get_value(
+        "RETRIEVAL_ALIAS_EXPANSION_SCOPE", settings.retrieval.alias_expansion_scope
+    )
+    val = get_value("RETRIEVAL_ALIAS_EXPANSION_RISK_LEVELS", "")
+    if val:
+        settings.retrieval.alias_expansion_risk_levels = [x.strip() for x in val.split(",")]
+    settings.retrieval.alias_expansion_max_entities_per_query = int(
+        get_value("RETRIEVAL_ALIAS_MAX_ENTITIES_PER_QUERY", str(settings.retrieval.alias_expansion_max_entities_per_query))
+    )
+    settings.retrieval.alias_expansion_max_total_terms = int(
+        get_value("RETRIEVAL_ALIAS_MAX_TOTAL_TERMS", str(settings.retrieval.alias_expansion_max_total_terms))
+    )
+    settings.retrieval.rerank_score_floor_ratio = float(
+        get_value("RETRIEVAL_RERANK_SCORE_FLOOR_RATIO", str(settings.retrieval.rerank_score_floor_ratio))
+    )
+    settings.retrieval.neighbor_expansion_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_NEIGHBOR_EXPANSION_ENABLED",
+            str(settings.retrieval.neighbor_expansion_enabled),
+        )
+    )
+    settings.retrieval.neighbor_window_size = int(
+        get_value("RETRIEVAL_NEIGHBOR_WINDOW_SIZE", str(settings.retrieval.neighbor_window_size))
+    )
+    settings.retrieval.neighbor_expansion_max_chunks = int(
+        get_value(
+            "RETRIEVAL_NEIGHBOR_EXPANSION_MAX_CHUNKS",
+            str(settings.retrieval.neighbor_expansion_max_chunks),
+        )
+    )
+    settings.retrieval.parent_expansion_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_ENABLED",
+            str(settings.retrieval.parent_expansion_enabled),
+        )
+    )
+    settings.retrieval.parent_index_path = get_value(
+        "RETRIEVAL_PARENT_INDEX_PATH",
+        settings.retrieval.parent_index_path,
+    )
+    settings.retrieval.parent_expansion_max_total = int(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_MAX_TOTAL",
+            str(settings.retrieval.parent_expansion_max_total),
+        )
+    )
+    settings.retrieval.parent_expansion_per_seed_limit = int(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT",
+            str(settings.retrieval.parent_expansion_per_seed_limit),
+        )
+    )
+    settings.retrieval.parent_expansion_window_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_WINDOW_ENABLED",
+            str(settings.retrieval.parent_expansion_window_enabled),
+        )
+    )
+    settings.retrieval.parent_expansion_caption_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_CAPTION_ENABLED",
+            str(settings.retrieval.parent_expansion_caption_enabled),
+        )
+    )
+    settings.retrieval.parent_expansion_page_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_PAGE_ENABLED",
+            str(settings.retrieval.parent_expansion_page_enabled),
+        )
+    )
+    settings.retrieval.parent_expansion_section_path_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_SECTION_PATH_ENABLED",
+            str(settings.retrieval.parent_expansion_section_path_enabled),
+        )
+    )
+    settings.retrieval.parent_expansion_evidence_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_EVIDENCE_ENABLED",
+            str(settings.retrieval.parent_expansion_evidence_enabled),
+        )
+    )
+    settings.retrieval.parent_expansion_summary_sections_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS_ENABLED",
+            str(settings.retrieval.parent_expansion_summary_sections_enabled),
+        )
+    )
+    parent_summary_sections = get_value("RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS", "")
+    if parent_summary_sections.strip():
+        settings.retrieval.parent_expansion_summary_sections = [
+            item.strip()
+            for item in parent_summary_sections.split(",")
+            if item.strip()
+        ]
+    settings.retrieval.index_schema_version = get_value(
+        "RETRIEVAL_INDEX_SCHEMA_VERSION", settings.retrieval.index_schema_version
+    )
+    settings.retrieval.index_type = get_value(
+        "RETRIEVAL_INDEX_TYPE", settings.retrieval.index_type
+    )
+    settings.retrieval.nprobe = int(
+        get_value("RETRIEVAL_NPROBE", str(settings.retrieval.nprobe))
+    )
+    settings.retrieval.hnsw_ef = int(
+        get_value("RETRIEVAL_HNSW_EF", str(settings.retrieval.hnsw_ef))
+    )
+
+
+def _load_generation_env(settings: Settings, get_value, env_file) -> None:
+    profile_raw = get_value("GENERATION_V2_PROFILE", settings.generation.v2_profile).strip().lower()
+    if profile_raw not in _GENERATION_V2_PROFILES:
+        warnings.warn(
+            f"Unknown GENERATION_V2_PROFILE={profile_raw!r}; falling back to 'stable'.",
+            stacklevel=2,
+        )
+        profile_raw = "stable"
+    settings.generation.v2_profile = profile_raw
+    _apply_profile(settings.generation, profile_raw)
+
+    _env_key = "GENERATION_V2_USE_QWEN_SYNTHESIS"
+    if _env_key in os.environ or _env_key in env_file:
+        settings.generation.v2_use_qwen_synthesis = _parse_bool(get_value(_env_key, "false"))
+    _env_key = "GENERATION_V2_ENABLE_COMPARISON_COVERAGE"
+    if _env_key in os.environ or _env_key in env_file:
+        settings.generation.v2_enable_comparison_coverage = _parse_bool(get_value(_env_key, "false"))
+    _env_key = "GENERATION_V2_ENABLE_NEIGHBOR_AUDIT"
+    if _env_key in os.environ or _env_key in env_file:
+        settings.generation.v2_enable_neighbor_audit = _parse_bool(get_value(_env_key, "false"))
+    settings.generation.v2_qwen_synthesis_timeout_seconds = int(
+        get_value(
+            "GENERATION_V2_QWEN_SYNTHESIS_TIMEOUT_SECONDS",
+            str(settings.generation.v2_qwen_synthesis_timeout_seconds),
+        )
+    )
+    settings.generation.v2_qwen_synthesis_max_chars_per_evidence = int(
+        get_value(
+            "GENERATION_V2_QWEN_SYNTHESIS_MAX_CHARS_PER_EVIDENCE",
+            str(settings.generation.v2_qwen_synthesis_max_chars_per_evidence),
+        )
+    )
+    settings.generation.v2_qwen_synthesis_max_output_chars = int(
+        get_value(
+            "GENERATION_V2_QWEN_SYNTHESIS_MAX_OUTPUT_CHARS",
+            str(settings.generation.v2_qwen_synthesis_max_output_chars),
+        )
+    )
+    settings.generation.v2_use_history = _parse_bool(
+        get_value(
+            "GENERATION_V2_USE_HISTORY",
+            str(settings.generation.v2_use_history),
+        )
+    )
+    settings.generation.v2_max_support_factoid = int(
+        get_value(
+            "GENERATION_V2_MAX_SUPPORT_FACTOID",
+            str(settings.generation.v2_max_support_factoid),
+        )
+    )
+    settings.generation.v2_max_support_summary = int(
+        get_value(
+            "GENERATION_V2_MAX_SUPPORT_SUMMARY",
+            str(settings.generation.v2_max_support_summary),
+        )
+    )
+    settings.generation.v2_max_support_comparison = int(
+        get_value(
+            "GENERATION_V2_MAX_SUPPORT_COMPARISON",
+            str(settings.generation.v2_max_support_comparison),
+        )
+    )
+    settings.generation.v2_max_extractive_evidence_lines = int(
+        get_value(
+            "GENERATION_V2_MAX_EXTRACTIVE_EVIDENCE_LINES",
+            str(settings.generation.v2_max_extractive_evidence_lines),
+        )
+    )
+    settings.generation.v2_min_support_score = float(
+        get_value(
+            "GENERATION_V2_MIN_SUPPORT_SCORE",
+            str(settings.generation.v2_min_support_score),
+        )
+    )
+    settings.generation.v2_require_citation = _parse_bool(
+        get_value(
+            "GENERATION_V2_REQUIRE_CITATION",
+            str(settings.generation.v2_require_citation),
+        )
+    )
+    settings.generation.v2_neighbor_window = int(
+        get_value("GENERATION_V2_NEIGHBOR_WINDOW", str(settings.generation.v2_neighbor_window))
+    )
+    settings.generation.v2_max_neighbors_per_seed = int(
+        get_value("GENERATION_V2_MAX_NEIGHBORS_PER_SEED", str(settings.generation.v2_max_neighbors_per_seed))
+    )
+    settings.generation.v2_neighbor_promotion_dry_run = _parse_bool(
+        get_value("GENERATION_V2_NEIGHBOR_PROMOTION_DRY_RUN", str(settings.generation.v2_neighbor_promotion_dry_run))
+    )
+    settings.generation.v2_neighbor_score_decay_distance1 = float(
+        get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE1", str(settings.generation.v2_neighbor_score_decay_distance1))
+    )
+    settings.generation.v2_neighbor_score_decay_distance2 = float(
+        get_value("GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE2", str(settings.generation.v2_neighbor_score_decay_distance2))
+    )
+    settings.generation.v2_neighbor_min_promotion_score = float(
+        get_value("GENERATION_V2_NEIGHBOR_MIN_PROMOTION_SCORE", str(settings.generation.v2_neighbor_min_promotion_score))
+    )
+    settings.generation.v2_enable_neighbor_promotion = _parse_bool(
+        get_value("GENERATION_V2_ENABLE_NEIGHBOR_PROMOTION", "false")
+    )
+    settings.generation.v2_include_neighbor_context_in_qwen = _parse_bool(
+        get_value("GENERATION_V2_INCLUDE_NEIGHBOR_CONTEXT_IN_QWEN", "false")
+    )
+    _enforce_forbidden_flags(settings.generation)
+
+
+def _load_query_rewrite_env(settings: Settings, get_value) -> None:
+    settings.query_rewrite.mode = get_value("QUERY_REWRITE_MODE", settings.query_rewrite.mode).strip().lower()
+    settings.query_rewrite.model = get_value("QUERY_REWRITE_MODEL", settings.query_rewrite.model)
+    settings.query_rewrite.temperature = float(get_value("QUERY_REWRITE_TEMPERATURE", str(settings.query_rewrite.temperature)))
+    settings.query_rewrite.cache_enabled = _parse_bool(get_value("QUERY_REWRITE_CACHE_ENABLED", str(settings.query_rewrite.cache_enabled)))
+    settings.query_rewrite.cache_ttl_seconds = int(get_value("QUERY_REWRITE_CACHE_TTL_SECONDS", str(settings.query_rewrite.cache_ttl_seconds)))
+    settings.query_rewrite.cache_key_version = get_value("QUERY_REWRITE_CACHE_KEY_VERSION", settings.query_rewrite.cache_key_version)
+    settings.query_rewrite.timeout_ms = int(get_value("QUERY_REWRITE_TIMEOUT_MS", str(settings.query_rewrite.timeout_ms)))
+    settings.query_rewrite.fallback_on_error = _parse_bool(get_value("QUERY_REWRITE_FALLBACK_ON_ERROR", str(settings.query_rewrite.fallback_on_error)))
+    settings.query_rewrite.guard_implicit_reference = _parse_bool(get_value("QUERY_REWRITE_GUARD_IMPLICIT_REFERENCE", str(settings.query_rewrite.guard_implicit_reference)))
+    settings.query_rewrite.guard_negative_intent = _parse_bool(get_value("QUERY_REWRITE_GUARD_NEGATIVE_INTENT", str(settings.query_rewrite.guard_negative_intent)))
+    settings.query_rewrite.trace_enabled = _parse_bool(get_value("QUERY_REWRITE_TRACE_ENABLED", str(settings.query_rewrite.trace_enabled)))
+    settings.query_rewrite.require_llm_for_eval = _parse_bool(get_value("QUERY_REWRITE_REQUIRE_LLM_FOR_EVAL", str(settings.query_rewrite.require_llm_for_eval)))
+    fallback_rate_raw = get_value("QUERY_REWRITE_FAIL_FAST_ON_FALLBACK_RATE", "")
+    if fallback_rate_raw.strip():
+        settings.query_rewrite.fail_fast_on_fallback_rate = float(fallback_rate_raw)
+    settings.query_rewrite.eval_rewrite_cache_path = get_value("EVAL_REWRITE_CACHE_PATH", settings.query_rewrite.eval_rewrite_cache_path)
+    settings.query_rewrite.eval_rewrite_require_cache = _parse_bool(get_value("EVAL_REWRITE_REQUIRE_CACHE", str(settings.query_rewrite.eval_rewrite_require_cache)))
+    settings.query_rewrite.eval_rewrite_fail_fast_on_missing = _parse_bool(get_value("EVAL_REWRITE_FAIL_FAST_ON_MISSING", str(settings.query_rewrite.eval_rewrite_fail_fast_on_missing)))
+
+
+def _load_table_enhancement_env(settings: Settings, get_value) -> None:
+    settings.table_enhancement.enabled = _parse_bool(
+        get_value("TABLE_ENHANCEMENT_ENABLED", str(settings.table_enhancement.enabled))
+    )
+    settings.table_enhancement.mode = get_value(
+        "TABLE_ENHANCEMENT_MODE",
+        settings.table_enhancement.mode,
+    ).strip()
+    settings.table_enhancement.window_after_caption = int(
+        get_value(
+            "TABLE_ENHANCEMENT_WINDOW_AFTER_CAPTION",
+            str(settings.table_enhancement.window_after_caption),
+        )
+    )
+    settings.table_enhancement.window_before_caption = int(
+        get_value(
+            "TABLE_ENHANCEMENT_WINDOW_BEFORE_CAPTION",
+            str(settings.table_enhancement.window_before_caption),
+        )
+    )
+    settings.table_enhancement.max_associated_blocks_per_caption = int(
+        get_value(
+            "TABLE_ENHANCEMENT_MAX_ASSOCIATED_BLOCKS_PER_CAPTION",
+            str(settings.table_enhancement.max_associated_blocks_per_caption),
+        )
+    )
+    settings.table_enhancement.min_confidence = get_value(
+        "TABLE_ENHANCEMENT_MIN_CONFIDENCE",
+        settings.table_enhancement.min_confidence,
+    ).strip().lower()
+    settings.table_enhancement.write_audit = _parse_bool(
+        get_value("TABLE_ENHANCEMENT_WRITE_AUDIT", str(settings.table_enhancement.write_audit))
+    )
+    settings.table_enhancement.fail_on_schema_drift = _parse_bool(
+        get_value(
+            "TABLE_ENHANCEMENT_FAIL_ON_SCHEMA_DRIFT",
+            str(settings.table_enhancement.fail_on_schema_drift),
+        )
+    )
+    settings.table_enhancement.output_suffix = get_value(
+        "TABLE_ENHANCEMENT_OUTPUT_SUFFIX",
+        settings.table_enhancement.output_suffix,
+    ).strip()
+    settings.table_enhancement.audit_root = get_value(
+        "TABLE_ENHANCEMENT_AUDIT_ROOT",
+        settings.table_enhancement.audit_root,
+    ).strip()
+    settings.table_enhancement.dry_run = _parse_bool(
+        get_value("TABLE_ENHANCEMENT_DRY_RUN", str(settings.table_enhancement.dry_run))
+    )
+
+
+def _load_model_env(settings: Settings, get_value) -> None:
+    settings.kb.embedding_model_path = get_value(
+        "BGE_M3_MODEL_PATH",
+        settings.kb.embedding_model_path,
+    )
+    settings.kb.embedding_max_length = int(
+        get_value("BGE_EMBED_MAX_LENGTH", str(settings.kb.embedding_max_length))
+    )
+    settings.llm.api_base = get_value("QWEN_CHAT_API_BASE", "")
+    settings.llm.api_key = get_value("QWEN_CHAT_API_KEY", "")
+    settings.reranker.model_path = get_value(
+        "BGE_RERANKER_MODEL_PATH",
+        settings.reranker.model_path,
+    )
+
+
+def _load_audit_env(settings: Settings, get_value) -> None:
+    settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
+    settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
 
 
 def _is_local_path(value: str) -> bool:

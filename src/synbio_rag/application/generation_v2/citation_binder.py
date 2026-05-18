@@ -138,22 +138,8 @@ class CitationBinder:
             return f"[{ordered_eids.index(evidence_id) + 1}]"
 
         final_answer = _EVIDENCE_REF_PATTERN.sub(replace, answer)
-        # Phase 21A-9O: used-support citation completion
-        # If selected_support items are citation-eligible but dropped due to
-        # missing citation marker in answer text, add them as citations anyway.
-        # The support selector already validated these items as relevant.
         completed_count = 0
-        for candidate in candidates:
-            if (candidate.is_from_selected_support
-                and candidate.citation_eligible
-                and candidate.evidence_id not in ordered_eids
-                and candidate.evidence_id not in invalid_ids
-                and not candidate.drop_reason):
-                ordered_eids.append(candidate.evidence_id)
-                candidate.reasons.append("citation_completion_selected_support")
-                completed_count += 1
 
-        # Rebuild citations with completed items
         citations = [
             self._to_citation(candidate_by_eid[evidence_id])
             for evidence_id in ordered_eids
