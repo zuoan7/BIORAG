@@ -3,17 +3,22 @@
 Cleanup PR2 quarantined historical phase artifacts from `scripts/` into
 `archive/scripts/phase_artifacts/`. Cleanup PR3 deleted that quarantined set
 after the PR2 verification showed no collect decrease and focused checks passed.
+Cleanup PR4 proof-checked the retained `unknown` scripts and quarantined the
+subset that stayed inside the cleanup guardrails.
 
 ## Summary
 
 | Item | Count | Notes |
 | --- | ---: | --- |
 | Original Python scripts under `scripts/` | 281 | Counted before quarantine. |
-| Scripts remaining under `scripts/` | 167 | 114 explicit keep/protected scripts plus 53 retained `unknown` scripts. |
+| Scripts remaining under `scripts/` | 120 | 54 keep, 61 protected-by-tests, and 5 retained `unknown` scripts. |
 | PR2 quarantined scripts | 114 | 113 from `scripts/evaluation`, 1 from `scripts/diagnostics`. |
 | PR3 `deleted_after_quarantine` scripts | 114 | Deleted only from `archive/scripts/phase_artifacts/`. |
 | Archived Python scripts currently under `archive/scripts/phase_artifacts/` | 0 | No `.py` files remain in the working tree under the archive path. |
-| Retained `unknown` scripts | 53 | Still in `scripts/`; not processed in PR3. |
+| PR4 quarantined unknown scripts | 47 | Moved to `archive/scripts/unknown_candidates/`; not deleted. |
+| Archived Python scripts currently under `archive/scripts/unknown_candidates/` | 47 | Awaiting a later delete-after-quarantine PR. |
+| PR4 reclassified test-protected scripts | 1 | `scripts/diagnostics/chunk_retrieval_smoke_v5.py` is dynamically loaded by tests. |
+| Retained `unknown` scripts | 5 | Still in `scripts/ingestion`; Phase7 guardrails treat ingestion git drift as pipeline drift. |
 | Legacy tests moved | 0 | Archive candidates had no direct test import/path references. |
 
 ## What Moved In PR2 And Was Deleted In PR3
@@ -41,6 +46,25 @@ After PR3, `archive/scripts/phase_artifacts/` has zero working-tree Python scrip
 No non-PR2-quarantine Python script was found under that archive path during the
 pre-delete cross-check.
 
+## What Moved In PR4
+
+PR4 moved 47 previously unknown scripts to `archive/scripts/unknown_candidates/`,
+preserving their original subdirectory below that archive root:
+
+- 2 from `scripts/audit`;
+- 4 from `scripts/data_prep`;
+- 18 from `scripts/diagnostics`;
+- 23 from `scripts/evaluation`.
+
+PR4 did not delete these files. It also did not move the 5 `scripts/ingestion`
+unknown scripts because the Phase7 baseline and rollback guardrails check
+`git status --short -- scripts/ingestion` and fail on drift.
+
+One file was restored during validation and reclassified as test-protected:
+`scripts/diagnostics/chunk_retrieval_smoke_v5.py`. `pytest --collect-only -q`
+exposed that `tests/test_chunk_retrieval_smoke_v5.py` dynamically loads it by
+file path.
+
 ## Tests Legacy Handling
 
 No tests were moved to `tests/legacy/`.
@@ -59,11 +83,14 @@ Manual-run note: not applicable for tests; no legacy tests were moved.
 | Before quarantine | 1042 |
 | After quarantine | 1042 |
 | After delete-after-quarantine | 1042 |
+| After PR4 unknown quarantine | 1042 |
 | Delta | 0 |
 
 There was no collect decrease. No tests were moved out of the active suite, and
-no import failure was introduced by the quarantine or delete-after-quarantine
-step.
+no import failure was introduced by the final PR4 quarantine set. An intermediate
+attempt to move `scripts/diagnostics/chunk_retrieval_smoke_v5.py` caused a
+collect error; it was restored and marked test-protected before final
+verification.
 
 ## Verification
 
@@ -80,6 +107,7 @@ Results:
 
 - PR2 `compileall` including `archive`: passed.
 - PR3 `python -m compileall app src scripts tests`: passed.
+- PR4 `python -m compileall app src scripts tests`: passed.
 - `pytest --collect-only -q`: passed, 1042 tests collected.
 - `pytest tests/test_generation_v2.py -q`: passed, 16 tests.
 - Phase7/table preview focused set: passed, 96 tests.
@@ -110,9 +138,21 @@ Phase7 table evidence/citation remains preview/offline. This cleanup did not:
 - change `src/synbio_rag/application/table_preview.py`;
 - change production `CitationBinder` behavior.
 
+PR4 also left `scripts/ingestion` unchanged in the final diff so the Phase7
+baseline and rollback guardrails continue to report no ingestion pipeline drift.
+
 ## Failed Or Restored Files
 
-No archived file had to be restored.
+No PR2/PR3 archived file had to be restored.
+
+During PR4 validation, one intermediate unknown quarantine was restored before
+finalizing the move set:
+
+- `scripts/diagnostics/chunk_retrieval_smoke_v5.py`
+
+Reason: `pytest --collect-only -q` failed because
+`tests/test_chunk_retrieval_smoke_v5.py` dynamically loads that file by path.
+It is now classified as `protected_by_tests` and remains under `scripts/`.
 
 One post-move closure check found that two remaining historical generation eval
 scripts still imported an archived generation-stage helper:
@@ -127,6 +167,8 @@ import or path-reference archived original scripts.
 
 ## Next Cleanup Round
 
-The 53 retained `unknown` scripts should get their own proof pass before any
-archive or deletion decision. PR3 deliberately did not expand the cleanup scope
-or process unknown scripts.
+The next delete PR can delete only the 47 files quarantined in
+`archive/scripts/unknown_candidates/` after reviewing the PR4 verification. The
+5 retained `scripts/ingestion` unknown scripts need a separate decision because
+moving them trips Phase7 ingestion drift guardrails even though the reference
+scan found no direct tests, app/src refs, or user-doc refs.

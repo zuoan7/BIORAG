@@ -1,6 +1,8 @@
 # Scripts Keep Allowlist
 
-Cleanup PR2 uses this allowlist before moving phase artifacts out of `scripts/`.
+Cleanup PR2 used this allowlist before moving phase artifacts out of `scripts/`.
+Cleanup PR4 adds one dynamically test-loaded diagnostic script that collect
+proved must remain in `scripts/`.
 
 ## Assumptions
 
@@ -17,7 +19,7 @@ Cleanup PR2 uses this allowlist before moving phase artifacts out of `scripts/`.
 | `current_ingestion_entry` | 8 | Current ingestion/build entry or direct ingestion-chain dependency. |
 | `current_eval_entry` | 17 | Current documented or retained evaluation entry; verification does not execute RAGAS/Qwen/retrieval eval. |
 | `current_phase7_final_pipeline_entry` | 79 | Phase7 table preview/final-chain or extraction support; retained to keep preview boundary intact. |
-| `protected_by_tests` | 60 | Directly imported by tests or referenced by test source paths. |
+| `protected_by_tests` | 61 | Directly imported by tests, dynamically loaded by tests, or referenced by test source paths. |
 | `referenced_by_docs` | 9 | Referenced by current README/startup/cleanup docs as a user or policy entry. |
 | `referenced_by_app_src` | 4 | Referenced by app/src runtime or current builder code. |
 | `current_accepted_baseline_entry` | 2 | Part of the current accepted Phase20 baseline documentation path. |
@@ -27,6 +29,7 @@ Cleanup PR2 uses this allowlist before moving phase artifacts out of `scripts/`.
 
 | Script | Allowlist reason |
 | --- | --- |
+| `scripts/diagnostics/chunk_retrieval_smoke_v5.py` | protected_by_tests |
 | `scripts/diagnostics/validate_parsed_raw_v4.py` | protected_by_tests |
 | `scripts/evaluation/biorag_eval/__init__.py` | current_eval_entry |
 | `scripts/evaluation/biorag_eval/aggregate_scores.py` | current_eval_entry, protected_by_tests |
@@ -144,4 +147,7 @@ Cleanup PR2 uses this allowlist before moving phase artifacts out of `scripts/`.
 
 ## Retained But Not Allowlisted
 
-Files marked `unknown` in `scripts_archive_candidates.md` remain in `scripts/` because this PR did not have enough proof to archive them. They are not current-entry allowlist items and should be rechecked in a later cleanup round.
+Five files remain marked `unknown` in `scripts_archive_candidates.md` after PR4.
+They stay in `scripts/ingestion` because Phase7 baseline and rollback guardrails
+treat `scripts/ingestion` git drift as ingestion pipeline drift. They are not
+current-entry allowlist items and should be handled in a separate decision.

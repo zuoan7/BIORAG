@@ -3,6 +3,10 @@
 This matrix records the PR2 scan of Python scripts that originally lived under `scripts/`.
 Cleanup PR3 used the 114 PR2 `archive_candidate` rows as the delete scope and
 deleted those already-quarantined scripts from `archive/scripts/phase_artifacts/`.
+Cleanup PR4 proof-checked the 53 retained `unknown` rows: 47 were quarantined,
+1 was reclassified as test-protected, and 5 ingestion scripts were retained
+because Phase7 guardrails treat `scripts/ingestion` git drift as ingestion
+pipeline drift.
 
 ## Scan Method
 
@@ -22,13 +26,13 @@ For rows marked `archive_candidate`, the AST/reference scan found no test import
 
 ## Status Counts
 
-| Status | Count | PR3 disposition |
+| Status | Count | Current disposition |
 | --- | ---: | --- |
 | `keep` | 54 | Retained under `scripts/`. |
-| `protected_by_tests` | 60 | Retained under `scripts/`. |
-| `archive_candidate` | 114 | Deleted after PR2 quarantine. |
+| `protected_by_tests` | 61 | Retained under `scripts/`; PR4 added `scripts/diagnostics/chunk_retrieval_smoke_v5.py` after collect exposed dynamic test loading. |
+| `archive_candidate` | 161 | PR2 114 deleted after quarantine; PR4 47 quarantined under `archive/scripts/unknown_candidates/`. |
 | `delete_candidate` | 0 | None. |
-| `unknown` | 53 | Retained under `scripts/`; not processed in PR3. |
+| `unknown` | 5 | Retained under `scripts/ingestion` because Phase7/ingestion guardrails block moving them in PR4. |
 
 ## PR3 Delete Scope
 
@@ -58,36 +62,70 @@ No production code, Phase7 preview wiring, generation v2 algorithm, old
 generation path, retrieval, BM25, dense, hybrid, rerank, accepted baseline
 artifact, or `/v1/ask` behavior was changed.
 
+## PR4 Unknown Proof Scope
+
+PR4 processed the 53 rows that were still `unknown` after PR3.
+
+Proof checks:
+
+- AST import scan over `tests/`, `app/`, `src/`, and `scripts/`.
+- Exact path/module text scan over `tests`, `README.md`, `docs`, `app`, `src`,
+  `configs`, `pyproject.toml`, `Makefile`, and `.github`.
+- Generated cleanup inventory docs were recorded but not used as archive
+  blockers.
+- Post-move closure check confirmed zero remaining import refs and zero exact
+  path/module text refs from retained code/docs to PR4 archived unknown scripts.
+
+PR4 disposition:
+
+- Quarantined 47 scripts to `archive/scripts/unknown_candidates/`, preserving
+  their original subdirectory below that archive root.
+- Reclassified `scripts/diagnostics/chunk_retrieval_smoke_v5.py` as
+  `protected_by_tests`; `pytest --collect-only -q` exposed that
+  `tests/test_chunk_retrieval_smoke_v5.py` dynamically loads the file by path.
+- Retained 5 `scripts/ingestion` files as `unknown`; Phase7 baseline and
+  rollback guardrails failed when `scripts/ingestion` had git drift, so PR4 did
+  not move them.
+
+PR4 verification after the retained-file corrections:
+
+- `python -m compileall app src scripts tests`: passed.
+- `pytest --collect-only -q`: passed, 1042 tests collected.
+- `pytest tests/test_generation_v2.py -q`: passed, 16 tests.
+- Phase7/table preview focused set: passed, 96 tests.
+
+No RAGAS, Qwen, embedding, rerank, or retrieval evaluation was run.
+
 ## Candidate Matrix
 
 | Original script | Status | Tests import/path ref | README/docs user ref | app/src ref | Current accepted baseline | Archive path | Check |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `scripts/audit/audit_parsed_clean_quality.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/audit/audit_pdf_extraction_safe.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/data_prep/lookup_pdf_map.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/data_prep/rebuild_pdf_map_clean.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/data_prep/rename_pdfs_and_build_map.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/data_prep/restore_pdf_names_from_map.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/audit_parsed_raw_v4.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/audit_two_column_order_v5.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/audit_two_column_recall_v4.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/check_chunk_structure_contract.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/check_holdout50_quality.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/check_parent_index_contract.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/chunk_retrieval_smoke_v5.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/compare_512_vs_8192.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/debug_parent_expansion.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/diagnose_pdf_reading_order.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/generate_full_ingestion_spotcheck_v5.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/run_parent_expansion_small_smoke.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/audit/audit_parsed_clean_quality.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/audit/audit_parsed_clean_quality.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/audit/audit_pdf_extraction_safe.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/audit/audit_pdf_extraction_safe.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/data_prep/lookup_pdf_map.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/data_prep/lookup_pdf_map.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/data_prep/rebuild_pdf_map_clean.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/data_prep/rebuild_pdf_map_clean.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/data_prep/rename_pdfs_and_build_map.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/data_prep/rename_pdfs_and_build_map.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/data_prep/restore_pdf_names_from_map.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/data_prep/restore_pdf_names_from_map.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/audit_parsed_raw_v4.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/audit_parsed_raw_v4.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/audit_two_column_order_v5.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/audit_two_column_order_v5.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/audit_two_column_recall_v4.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/audit_two_column_recall_v4.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/check_chunk_structure_contract.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/check_chunk_structure_contract.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/check_holdout50_quality.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/check_holdout50_quality.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/check_parent_index_contract.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/check_parent_index_contract.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/chunk_retrieval_smoke_v5.py` | `protected_by_tests` | yes | no | no | no | `` | PR4 collect proof: dynamically loaded by `tests/test_chunk_retrieval_smoke_v5.py` |
+| `scripts/diagnostics/compare_512_vs_8192.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/compare_512_vs_8192.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/debug_parent_expansion.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/debug_parent_expansion.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/diagnose_pdf_reading_order.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/diagnose_pdf_reading_order.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/generate_full_ingestion_spotcheck_v5.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/generate_full_ingestion_spotcheck_v5.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/run_parent_expansion_small_smoke.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/run_parent_expansion_small_smoke.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/diagnostics/run_phase12e_diagnostic_smoke.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/diagnostics/run_phase12e_diagnostic_smoke.py` | bulk-rg + AST scan |
-| `scripts/diagnostics/search_small_milvus.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/summarize_full_ingestion_regression_v5.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/test_references_final_cleanup.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/test_references_state_fix.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/validate_chunks_v4.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/validate_evidence_pack_v5.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/diagnostics/validate_parsed_clean_v4.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/diagnostics/search_small_milvus.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/search_small_milvus.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/summarize_full_ingestion_regression_v5.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/summarize_full_ingestion_regression_v5.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/test_references_final_cleanup.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/test_references_final_cleanup.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/test_references_state_fix.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/test_references_state_fix.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/validate_chunks_v4.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/validate_chunks_v4.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/validate_evidence_pack_v5.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/validate_evidence_pack_v5.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/diagnostics/validate_parsed_clean_v4.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/diagnostics/validate_parsed_clean_v4.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/diagnostics/validate_parsed_raw_v4.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/audit_phase5_table_content_loss.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/audit_phase5_table_content_loss.py` | bulk-rg + AST scan |
 | `scripts/evaluation/audit_phase5c1_table_preservation.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/audit_phase5c1_table_preservation.py` | bulk-rg + AST scan |
@@ -97,7 +135,7 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/audit_phase5f4_asset_promotion.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/audit_phase5f4_asset_promotion.py` | bulk-rg + AST scan |
 | `scripts/evaluation/audit_phase5f4_index_assets.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/audit_phase5f4_index_assets.py` | bulk-rg + AST scan |
 | `scripts/evaluation/audit_phase5f_eval_quality.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/audit_phase5f_eval_quality.py` | bulk-rg + AST scan |
-| `scripts/evaluation/audit_table_figure_retrieval_text.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/audit_table_figure_retrieval_text.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/audit_table_figure_retrieval_text.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/biorag_eval/__init__.py` | `keep` | no | no | no | no | `` |  |
 | `scripts/evaluation/biorag_eval/aggregate_scores.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/biorag_eval/collect_records.py` | `keep` | no | no | no | no | `` |  |
@@ -105,18 +143,18 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/biorag_eval/qwen_judge.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/biorag_eval/rule_metrics.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/biorag_eval/schemas.py` | `protected_by_tests` | yes | no | no | no | `` |  |
-| `scripts/evaluation/build_diagnostics_ledger.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/build_diagnostics_ledger.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/build_diagnostics_ledger.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/build_phase4e3_approved_eval_set.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/build_phase4e3_approved_eval_set.py` | bulk-rg + AST scan |
 | `scripts/evaluation/build_phase5f_clean_eval_sets.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/build_phase5f_clean_eval_sets.py` | bulk-rg + AST scan |
-| `scripts/evaluation/build_ragas_dataset.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/build_round8_diagnostic_sets.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/build_table_retrieval_preview_queries.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/build_ragas_dataset.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/build_ragas_dataset.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/build_round8_diagnostic_sets.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/build_round8_diagnostic_sets.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/build_table_retrieval_preview_queries.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/build_table_retrieval_preview_queries.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/cleanup_phase5f_eval_sets_semantic.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/cleanup_phase5f_eval_sets_semantic.py` | bulk-rg + AST scan |
-| `scripts/evaluation/diagnose_p0_failure_layers.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/diagnose_p0_failure_layers.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/diagnose_p0_failure_layers.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/dryrun_phase5c4_full_table_enhancement.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/dryrun_phase5c4_full_table_enhancement.py` | bulk-rg + AST scan |
-| `scripts/evaluation/enhance_p0_diagnostics.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/enhance_p0_diagnostics.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/enhance_p0_diagnostics.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/enhance_phase5f_eval_semantic_quality_v2.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/enhance_phase5f_eval_semantic_quality_v2.py` | bulk-rg + AST scan |
-| `scripts/evaluation/evaluate_chunk_evidence_audit.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/evaluate_chunk_evidence_audit.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/evaluate_chunk_evidence_audit.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/evaluate_e2e_small.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/evaluate_existing_hybrid_retrieval.py` | `keep` | no | no | no | no | `` |  |
 | `scripts/evaluation/evaluate_guarded_reranker.py` | `keep` | no | no | no | no | `` |  |
@@ -127,11 +165,11 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/evaluate_phase5c5_full_retrieval_ab.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/evaluate_phase5c5_full_retrieval_ab.py` | bulk-rg + AST scan |
 | `scripts/evaluation/evaluate_ragas.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/evaluate_retrieval.py` | `keep` | no | yes | no | no | `` |  |
-| `scripts/evaluation/evaluate_retrieval_only.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/generate_baseline_regression_report.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/generate_p0_reconciliation_diff.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/generate_review_candidates.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/merge_ragas_with_eval_metrics.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/evaluate_retrieval_only.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/evaluate_retrieval_only.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/generate_baseline_regression_report.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/generate_baseline_regression_report.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/generate_p0_reconciliation_diff.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/generate_p0_reconciliation_diff.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/generate_review_candidates.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/generate_review_candidates.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/merge_ragas_with_eval_metrics.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/merge_ragas_with_eval_metrics.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/phase4_audit.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/phase4_audit.py` | bulk-rg + AST scan |
 | `scripts/evaluation/phase5_analyze.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/phase5_analyze.py` | bulk-rg + AST scan |
 | `scripts/evaluation/phase6_analyze.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/phase6_analyze.py` | bulk-rg + AST scan |
@@ -194,11 +232,11 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/review_phase4e3_normal_misses.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/review_phase4e3_normal_misses.py` | bulk-rg + AST scan |
 | `scripts/evaluation/review_phase5f4_failures.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/review_phase5f4_failures.py` | bulk-rg + AST scan |
 | `scripts/evaluation/review_phase5f_normal_eval_quality.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/review_phase5f_normal_eval_quality.py` | bulk-rg + AST scan |
-| `scripts/evaluation/run_biorag_eval_calibration_v2.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/run_biorag_eval_calibration_v2.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_biorag_eval_calibration_v2.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/run_biorag_eval_full200.py` | `keep` | no | no | no | no | `` |  |
-| `scripts/evaluation/run_biorag_eval_pilot.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/run_biorag_eval_v31_dedup.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/run_biorag_eval_v3_fix.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/run_biorag_eval_pilot.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_biorag_eval_pilot.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/run_biorag_eval_v31_dedup.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_biorag_eval_v31_dedup.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/run_biorag_eval_v3_fix.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_biorag_eval_v3_fix.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/run_generation_smoke100.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/run_generation_smoke100.py` | bulk-rg + AST scan |
 | `scripts/evaluation/run_generation_stage1_5_compare.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/run_generation_stage1_5_compare.py` | bulk-rg + AST scan |
 | `scripts/evaluation/run_generation_stage2b_qwen_synthesis.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/run_generation_stage2b_qwen_synthesis.py` | bulk-rg + AST scan |
@@ -275,16 +313,16 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/run_phase21a_r1b_ragas_slimmed.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/run_phase21a_r2_ragas200_v1.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/run_phase21a_r2_ragas200_v1.py` | bulk-rg + AST scan |
 | `scripts/evaluation/run_phase5f4_clean_main_baseline.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/run_phase5f4_clean_main_baseline.py` | bulk-rg + AST scan |
-| `scripts/evaluation/run_ragas200_fixed.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/run_ragas200_fixed.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_ragas200_fixed.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/run_ragas_regression.py` | `keep` | no | yes | no | no | `` |  |
-| `scripts/evaluation/run_ragas_smoke100.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/evaluation/run_smoke100_regression.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/run_ragas_smoke100.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_ragas_smoke100.py` | PR4 proof: bulk-rg + AST scan |
+| `scripts/evaluation/run_smoke100_regression.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/run_smoke100_regression.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/run_table_retrieval_wiring_preview.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/run_validation_suite.py` | `keep` | no | yes | no | no | `` |  |
 | `scripts/evaluation/select_phase5c3_representative_docs.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/select_phase5c3_representative_docs.py` | bulk-rg + AST scan |
 | `scripts/evaluation/signoff_phase5d_false_fragment_captions.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/signoff_phase5d_false_fragment_captions.py` | bulk-rg + AST scan |
 | `scripts/evaluation/signoff_phase5e_section_repair_candidates.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/signoff_phase5e_section_repair_candidates.py` | bulk-rg + AST scan |
-| `scripts/evaluation/signoff_table_figure_remaining_risks.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/signoff_table_figure_remaining_risks.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/signoff_table_figure_remaining_risks.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/summarize_phase5c3_index_build.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/summarize_phase5c3_index_build.py` | bulk-rg + AST scan |
 | `scripts/evaluation/supplement_phase5f_normal_controls.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/supplement_phase5f_normal_controls.py` | bulk-rg + AST scan |
 | `scripts/evaluation/v7_phase6b_flat_vs_table_object_representation.py` | `keep` | no | no | no | no | `` |  |
@@ -294,11 +332,11 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/evaluation/v7_phase6c_offline_table_object_coverage_check_rerun.py` | `keep` | no | no | no | no | `` |  |
 | `scripts/evaluation/v7_phase6f_flat_vs_table_object_representation.py` | `keep` | no | no | no | no | `` |  |
 | `scripts/evaluation/v7_phase6f_offline_table_object_coverage_check.py` | `keep` | no | no | no | no | `` |  |
-| `scripts/evaluation/validate_enterprise_dataset.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/validate_enterprise_dataset.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/validate_enterprise_dataset.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/evaluation/validate_expanded_table_seed_consistency.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/validate_hybrid_extractor_against_gold_seed.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/evaluation/validate_phase5d_caption_cleanup.py` | `archive_candidate` | no | no | no | no | `archive/scripts/phase_artifacts/evaluation/validate_phase5d_caption_cleanup.py` | bulk-rg + AST scan |
-| `scripts/evaluation/validate_table_retrieval_wiring_preview.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/evaluation/validate_table_retrieval_wiring_preview.py` | `archive_candidate` | no | no | no | no | `archive/scripts/unknown_candidates/evaluation/validate_table_retrieval_wiring_preview.py` | PR4 proof: bulk-rg + AST scan |
 | `scripts/extraction/align_chunk_pdfplumber_tables.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/extraction/analyze_human_review_label_errors.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/extraction/apply_bulk_binding_review_and_build_expanded_seed.py` | `protected_by_tests` | yes | no | no | no | `` |  |
@@ -328,18 +366,18 @@ artifact, or `/v1/ask` behavior was changed.
 | `scripts/extraction/validate_table_index_units_v1.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/extraction/validate_table_objects_v1.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/ingestion/audit_cleaning_rules.py` | `keep` | no | no | no | no | `` |  |
-| `scripts/ingestion/audit_context_rule_samples.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/ingestion/audit_table_figure_evidence.py` | `unknown` | no | no | no | no | `` |  |
-| `scripts/ingestion/build_evidence_pack_v5.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/ingestion/audit_context_rule_samples.py` | `unknown` | no | no | no | no | `` | PR4 retained: Phase7 guard treats `scripts/ingestion` git drift as ingestion pipeline drift |
+| `scripts/ingestion/audit_table_figure_evidence.py` | `unknown` | no | no | no | no | `` | PR4 retained: Phase7 guard treats `scripts/ingestion` git drift as ingestion pipeline drift |
+| `scripts/ingestion/build_evidence_pack_v5.py` | `unknown` | no | no | no | no | `` | PR4 retained: Phase7 guard treats `scripts/ingestion` git drift as ingestion pipeline drift |
 | `scripts/ingestion/build_parent_index.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/ingestion/build_round1_kb.py` | `keep` | no | yes | no | no | `` |  |
 | `scripts/ingestion/clean_parsed_structure.py` | `protected_by_tests` | yes | no | yes | no | `` |  |
 | `scripts/ingestion/cleanup_false_fragment_captions.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/ingestion/document_cleaning_v5.py` | `protected_by_tests` | yes | no | no | no | `` |  |
-| `scripts/ingestion/enhance_table_like_paragraphs_pilot.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/ingestion/enhance_table_like_paragraphs_pilot.py` | `unknown` | no | no | no | no | `` | PR4 retained: Phase7 guard treats `scripts/ingestion` git drift as ingestion pipeline drift |
 | `scripts/ingestion/import_to_milvus.py` | `protected_by_tests` | yes | yes | yes | no | `` |  |
 | `scripts/ingestion/pdf_to_structured.py` | `protected_by_tests` | yes | yes | yes | no | `` |  |
 | `scripts/ingestion/phase4_shadow_table_figure_parse.py` | `protected_by_tests` | yes | no | no | no | `` |  |
 | `scripts/ingestion/preprocess_and_chunk.py` | `protected_by_tests` | yes | yes | yes | no | `` |  |
-| `scripts/ingestion/rebuild_docs_by_id.py` | `unknown` | no | no | no | no | `` |  |
+| `scripts/ingestion/rebuild_docs_by_id.py` | `unknown` | no | no | no | no | `` | PR4 retained: Phase7 guard treats `scripts/ingestion` git drift as ingestion pipeline drift |
 | `scripts/ops/interactive_rag_cli.py` | `keep` | no | yes | no | no | `` |  |
