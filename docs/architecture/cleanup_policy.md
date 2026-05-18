@@ -24,7 +24,7 @@ Round 1 forbidden work:
 - Do not change retrieval, BM25, dense, hybrid, rerank, or generation_v2
   algorithms.
 - Do not move `app/main.py`.
-- Do not delete the old generation path.
+- Do not delete source behavior without an explicit cleanup decision.
 - Do not delete Phase7 experimental scripts or artifacts.
 - Do not promote Phase7 table evidence/citation to production.
 - Do not run RAGAS, Qwen, embedding, rerank, or retrieval evaluation as part of
@@ -72,10 +72,9 @@ Cleanup must preserve these constraints:
 
 ## Old Generation Policy
 
-The old generation path is a legacy candidate, not a deletion target in the
-first cleanup round. It may remain constructible through an explicit
-`GENERATION_VERSION=old` or equivalent config setting, but `v2` is the current
-default.
+Old generation support has an explicit cleanup decision: the runtime is v2-only.
+Do not reintroduce `GENERATION_VERSION=old`, `GenerationConfig.version`, or the
+deleted old generation modules without a new decision record.
 
 ## App Entry Policy
 
@@ -88,6 +87,5 @@ dedicated import/API normalization PR.
 - PR2: legacy classification and very small archival moves for files proven
   unreferenced.
 - PR3: API wrapper and import normalization.
-- PR4: old generation keep/delete decision.
+- PR8: old generation removal completed; runtime remains v2-only.
 - PR5: large `scripts/evaluation` archival plan.
-

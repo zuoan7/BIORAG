@@ -139,7 +139,6 @@ def _flag_off_record() -> dict[str, Any]:
         question="Which table reports Table 1?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=False, merge_enabled=False),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     ok = (
@@ -157,7 +156,6 @@ def _shadow_record() -> dict[str, Any]:
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=False),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     ok = (
@@ -176,7 +174,6 @@ def _merge_record() -> dict[str, Any]:
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=True),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     ok = (
@@ -209,7 +206,6 @@ def _priority_record(scenario: str, question: str, expected_unit_type: str) -> d
         question=question,
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=True, max_merge=1),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     preview = _preview_chunks(output)
@@ -224,7 +220,6 @@ def _non_table_block_record() -> dict[str, Any]:
         question="Summarize doc_test abstract and study motivation.",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=True),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     ok = (
@@ -243,7 +238,6 @@ def _metadata_and_citation_records() -> tuple[dict[str, Any], dict[str, Any]]:
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=True),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
     preview = _preview_chunks(output)

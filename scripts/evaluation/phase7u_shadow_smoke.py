@@ -293,7 +293,6 @@ def run_shadow_smoke(
         "config": {
             "TABLE_PREVIEW_ENABLED": True,
             "TABLE_PREVIEW_MERGE_ENABLED": False,
-            "GENERATION_VERSION": "v2",
             "GENERATION_V2_USE_QWEN_SYNTHESIS": False,
         },
         "query_count": len(records),
@@ -372,7 +371,6 @@ def run_merge_smoke(
         "config": {
             "TABLE_PREVIEW_ENABLED": True,
             "TABLE_PREVIEW_MERGE_ENABLED": True,
-            "GENERATION_VERSION": "v2",
             "GENERATION_V2_USE_QWEN_SYNTHESIS": False,
         },
         "query_count": len(records),
@@ -449,7 +447,6 @@ def run_rollback_smoke(
         "config": {
             "TABLE_PREVIEW_ENABLED": False,
             "TABLE_PREVIEW_MERGE_ENABLED": False,
-            "GENERATION_VERSION": "v2",
             "GENERATION_V2_USE_QWEN_SYNTHESIS": False,
         },
         "query_count": len(records),

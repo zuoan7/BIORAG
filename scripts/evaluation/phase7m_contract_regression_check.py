@@ -506,7 +506,6 @@ def run_generation_v2_contract_smoke() -> dict[str, Any]:
     question = "Which table evidence should preserve preview table metadata and limitations?"
     config = GenerationConfig(
         v2_use_qwen_synthesis=False,
-        v2_use_external_tools=False,
         v2_min_support_score=0.0,
         v2_max_support_factoid=3,
         v2_protect_support_seeds_enabled=True,
@@ -608,7 +607,7 @@ def run_citation_guard_smoke() -> dict[str, Any]:
         notes="Phase7M citation guard; no answer generation.",
     )
     question = "Which citation proves the PDF crop path is a paper reference?"
-    config = GenerationConfig(v2_use_qwen_synthesis=False, v2_use_external_tools=False)
+    config = GenerationConfig(v2_use_qwen_synthesis=False)
     candidates = EvidenceLedgerBuilder().build(question, analysis, chunks)
     support_pack = SupportPackSelector().select(question, analysis, candidates, config)
     citation_candidates = CitationBinder().build_citation_candidates(

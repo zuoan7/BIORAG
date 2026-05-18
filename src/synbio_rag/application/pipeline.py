@@ -9,18 +9,14 @@ from ..domain.config import Settings
 from ..domain.router import QueryRouter
 from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGResponse
 from ..infrastructure.embedding.bge import BGEM3Embedder
-from ..infrastructure.external_tools.literature_search import ExternalToolManager
 from ..infrastructure.index.parent_store import ParentStore
 from ..infrastructure.vectorstores.bm25 import BM25Retriever
 from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
-from .context_builder import ContextBuilder
 from .evidence_selection_stage import select_generation_v2_evidence
 from .generation_v2 import GenerationV2Service
 from .generation_v2.neighbor_audit import NeighborAuditEngine
 from .generation_v2_response import build_generation_v2_response
-from .generation_service import QwenChatGenerator
-from .legacy_generation_flow import run_legacy_generation_flow
 from .neighbor_expansion import ChunkNeighborExpander
 from .original_cn_fallback import (
     contains_cjk as _contains_cjk,
@@ -72,27 +68,18 @@ class SynBioRAGPipeline:
             use_fp16=settings.reranker.use_fp16,
             retrieval_config=settings.retrieval,
         )
-        self.context_builder = ContextBuilder()
-        self.neighbor_expander = ChunkNeighborExpander(
+        neighbor_index_source = ChunkNeighborExpander(
             kb_config=settings.kb,
             retrieval_config=settings.retrieval,
         )
-        self.generator = QwenChatGenerator(
-            api_base=settings.llm.api_base,
-            api_key=settings.llm.api_key,
-            model_name=settings.llm.model_name,
-            temperature=settings.llm.temperature,
-            round8_config=settings.round8,
-        )
-        # Build neighbor audit engine from the same corpus index as neighbor_expander.
-        # _ensure_loaded is lazy; we call it once here so the index is ready.
-        self.neighbor_expander._ensure_loaded()
+        # Build neighbor audit engine from the corpus index used by generation v2.
+        neighbor_index_source._ensure_loaded()
         _audit_engine: NeighborAuditEngine | None = None
-        if self.neighbor_expander._by_id:
+        if neighbor_index_source._by_id:
             _audit_engine = NeighborAuditEngine(
-                chunk_index=dict(self.neighbor_expander._by_id),
-                position_index=dict(self.neighbor_expander._positions),
-                doc_chunks=dict(self.neighbor_expander._doc_chunks),
+                chunk_index=dict(neighbor_index_source._by_id),
+                position_index=dict(neighbor_index_source._positions),
+                doc_chunks=dict(neighbor_index_source._doc_chunks),
             )
         self.generator_v2 = GenerationV2Service(settings.llm, neighbor_audit_engine=_audit_engine)
         parent_store: ParentStore | None = None
@@ -113,7 +100,6 @@ class SynBioRAGPipeline:
             else None
         )
         self.confidence_scorer = ConfidenceScorer(settings.confidence)
-        self.external_tools = ExternalToolManager(settings.tools)
         # Phase 19: query rewrite service (default off)
         self._rewrite_svc = build_query_rewrite_service(settings)
 
@@ -151,7 +137,6 @@ class SynBioRAGPipeline:
             question=question,
             retrieved=retrieved,
             config=self.settings.retrieval,
-            generation_version=self.settings.generation.version,
             provider=getattr(self, "table_preview_provider", None),
         )
         reranked = self.reranker.rerank(
@@ -171,9 +156,7 @@ class SynBioRAGPipeline:
 
         # Phase 7C: summary section supplement — boost Abstract/Conclusion from top docs
         summary_supplement_debug = _build_empty_supplement_debug()
-        if (self.settings.generation.version == "v2"
-                and analysis.intent.value == "summary"
-                and seed_chunks):
+        if analysis.intent.value == "summary" and seed_chunks:
             # Get Milvus client — works for both MilvusRetriever and HybridRetriever
             milvus_retriever = getattr(self.retriever, "dense_retriever", self.retriever)
             milvus_client = getattr(milvus_retriever, "client", None)
@@ -187,83 +170,59 @@ class SynBioRAGPipeline:
                 max_total=5,
             )
 
-        if self.settings.generation.version == "v2":
-            parent_expander = getattr(self, "parent_expander", ParentContextExpander(parent_store=None, config=self.settings.retrieval))
-            evidence_selection = select_generation_v2_evidence(
-                question=question,
-                seed_chunks=seed_chunks,
-                reranked=reranked,
-                analysis=analysis,
-                settings=self.settings,
-                parent_expander=parent_expander,
-            )
-            final_chunks = evidence_selection.final_chunks
-            parent_expansion_debug = evidence_selection.parent_expansion_debug
-            evidence_lifecycle_debug = evidence_selection.evidence_lifecycle_debug
-
-            seed_confidence = self.confidence_scorer.score(seed_chunks)
-            confidence = self.confidence_scorer.score(final_chunks)
-            generation_config = self.settings.generation
-            table_preview_answer_without_formal_citation = bool(
-                table_preview_debug.get("merged_count", 0)
-            )
-            if table_preview_answer_without_formal_citation:
-                generation_config = replace(generation_config, v2_require_citation=False)
-            gen_result = self.generator_v2.run(
-                question=question,
-                analysis=analysis,
-                seed_chunks=final_chunks,
-                config=generation_config,
-                history=history if self.settings.generation.v2_use_history else None,
-            )
-            return build_generation_v2_response(
-                gen_result=gen_result,
-                analysis=analysis,
-                session_id=session_id,
-                filters=filters,
-                settings=self.settings,
-                retrieved=retrieved,
-                reranked=reranked,
-                seed_chunks=seed_chunks,
-                final_chunks=final_chunks,
-                seed_confidence=seed_confidence,
-                confidence=confidence,
-                start_time=start,
-                retrieval_debug=retrieval_debug,
-                retriever_debug=getattr(self.retriever, "last_debug", {}),
-                reranker_debug=getattr(self.reranker, "last_debug", {}),
-                cn_fallback_debug=cn_fallback_debug,
-                table_preview_debug=table_preview_debug,
-                parent_expansion_debug=parent_expansion_debug,
-                summary_supplement_debug=summary_supplement_debug,
-                evidence_lifecycle_debug=evidence_lifecycle_debug,
-                rewrite_trace=rewrite_trace,
-                table_preview_answer_without_formal_citation=(
-                    table_preview_answer_without_formal_citation
-                ),
-            )
-        return run_legacy_generation_flow(
+        parent_expander = getattr(self, "parent_expander", ParentContextExpander(parent_store=None, config=self.settings.retrieval))
+        evidence_selection = select_generation_v2_evidence(
             question=question,
-            session_id=session_id,
-            history=history,
-            filters=filters,
+            seed_chunks=seed_chunks,
+            reranked=reranked,
             analysis=analysis,
+            settings=self.settings,
+            parent_expander=parent_expander,
+        )
+        final_chunks = evidence_selection.final_chunks
+        parent_expansion_debug = evidence_selection.parent_expansion_debug
+        evidence_lifecycle_debug = evidence_selection.evidence_lifecycle_debug
+
+        seed_confidence = self.confidence_scorer.score(seed_chunks)
+        confidence = self.confidence_scorer.score(final_chunks)
+        generation_config = self.settings.generation
+        table_preview_answer_without_formal_citation = bool(
+            table_preview_debug.get("merged_count", 0)
+        )
+        if table_preview_answer_without_formal_citation:
+            generation_config = replace(generation_config, v2_require_citation=False)
+        gen_result = self.generator_v2.run(
+            question=question,
+            analysis=analysis,
+            seed_chunks=final_chunks,
+            config=generation_config,
+            history=history if self.settings.generation.v2_use_history else None,
+        )
+        return build_generation_v2_response(
+            gen_result=gen_result,
+            analysis=analysis,
+            session_id=session_id,
+            filters=filters,
             settings=self.settings,
             retrieved=retrieved,
             reranked=reranked,
             seed_chunks=seed_chunks,
+            final_chunks=final_chunks,
+            seed_confidence=seed_confidence,
+            confidence=confidence,
             start_time=start,
             retrieval_debug=retrieval_debug,
             retriever_debug=getattr(self.retriever, "last_debug", {}),
             reranker_debug=getattr(self.reranker, "last_debug", {}),
             cn_fallback_debug=cn_fallback_debug,
             table_preview_debug=table_preview_debug,
+            parent_expansion_debug=parent_expansion_debug,
+            summary_supplement_debug=summary_supplement_debug,
+            evidence_lifecycle_debug=evidence_lifecycle_debug,
             rewrite_trace=rewrite_trace,
-            neighbor_expander=self.neighbor_expander,
-            context_builder=self.context_builder,
-            generator=self.generator,
-            confidence_scorer=self.confidence_scorer,
-            external_tools=self.external_tools,
+            table_preview_answer_without_formal_citation=(
+                table_preview_answer_without_formal_citation
+            ),
         )
 
     def _search_with_filter_fallback(

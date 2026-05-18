@@ -173,15 +173,6 @@ class AuditConfig:
     include_context_in_logs: bool = False
 
 
-@dataclass
-class ToolConfig:
-    enable_pubmed: bool = True
-    enable_crossref: bool = True
-    pubmed_base: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-    crossref_base: str = "https://api.crossref.org/works"
-    max_results: int = 3
-
-
 _GENERATION_V2_PROFILES: dict[str, dict[str, bool]] = {
     "stable": {
         "v2_use_qwen_synthesis": False,
@@ -214,14 +205,12 @@ _GENERATION_V2_FORBIDDEN_FLAGS: frozenset[str] = frozenset({
 
 @dataclass
 class GenerationConfig:
-    version: str = "v2"
     v2_profile: str = "stable"
     v2_use_qwen_synthesis: bool = False
     v2_enable_comparison_coverage: bool = False
     v2_qwen_synthesis_timeout_seconds: int = 30
     v2_qwen_synthesis_max_chars_per_evidence: int = 1200
     v2_qwen_synthesis_max_output_chars: int = 3000
-    v2_use_external_tools: bool = False
     v2_use_history: bool = False
     v2_max_support_factoid: int = 3
     v2_protect_support_seeds_enabled: bool = True
@@ -240,34 +229,6 @@ class GenerationConfig:
     v2_neighbor_score_decay_distance1: float = 0.45
     v2_neighbor_score_decay_distance2: float = 0.25
     v2_neighbor_min_promotion_score: float = 0.05
-
-
-@dataclass
-class Round8EvidencePolicy:
-    score_strength_factoid: float = 0.34
-    score_strength_summary: float = 0.32
-    score_strength_comparison: float = 0.30
-    partial_boundary_factoid: float = 0.46
-    partial_boundary_summary: float = 0.44
-    partial_boundary_comparison: float = 0.44
-    evidence_unit_threshold_factoid: float = 0.34
-    evidence_unit_threshold_summary: float = 0.30
-    evidence_unit_threshold_comparison: float = 0.28
-    evidence_signal_weak_threshold: float = 0.32
-    comparison_branch_coverage_threshold: float = 0.40
-
-
-@dataclass
-class Round8PolicyConfig:
-    enable_round8_policy: bool = False
-    disable_comparison_single_doc_hard_refusal: bool = False
-    enable_claim_fallback: bool = False
-    enable_partial_answer: bool = False
-    enable_route_specific_thresholds: bool = False
-    enable_comparison_prompt_v2: bool = False
-    enable_citation_expansion: bool = False
-    enable_ragas_retry: bool = False
-    evidence_policy: Round8EvidencePolicy = field(default_factory=Round8EvidencePolicy)
 
 
 @dataclass
@@ -331,9 +292,7 @@ class Settings:
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     confidence: ConfidenceConfig = field(default_factory=ConfidenceConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
-    tools: ToolConfig = field(default_factory=ToolConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
-    round8: Round8PolicyConfig = field(default_factory=Round8PolicyConfig)
     query_rewrite: QueryRewriteConfig = field(default_factory=QueryRewriteConfig)
     table_enhancement: TableEnhancementConfig = field(default_factory=TableEnhancementConfig)
     llm: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-plus"))
@@ -771,7 +730,6 @@ class Settings:
         settings.reranker.service_url = get_value("RERANKER_SERVICE_URL", "")
         settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
         settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
-        settings.generation.version = get_value("GENERATION_VERSION", settings.generation.version).strip().lower()
         # Profile: sets defaults for experimental toggles. Explicit env vars override afterwards.
         profile_raw = get_value("GENERATION_V2_PROFILE", settings.generation.v2_profile).strip().lower()
         if profile_raw not in _GENERATION_V2_PROFILES:
@@ -808,12 +766,6 @@ class Settings:
             get_value(
                 "GENERATION_V2_QWEN_SYNTHESIS_MAX_OUTPUT_CHARS",
                 str(settings.generation.v2_qwen_synthesis_max_output_chars),
-            )
-        )
-        settings.generation.v2_use_external_tools = _parse_bool(
-            get_value(
-                "GENERATION_V2_USE_EXTERNAL_TOOLS",
-                str(settings.generation.v2_use_external_tools),
             )
         )
         settings.generation.v2_use_history = _parse_bool(
@@ -885,42 +837,6 @@ class Settings:
         )
         # Hard guard: forbidden flags must always remain False regardless of env.
         _enforce_forbidden_flags(settings.generation)
-        settings.round8.enable_round8_policy = _parse_bool(
-            get_value("ROUND8_ENABLE_ROUND8_POLICY", str(settings.round8.enable_round8_policy))
-        )
-        settings.round8.disable_comparison_single_doc_hard_refusal = _parse_bool(
-            get_value(
-                "ROUND8_DISABLE_COMPARISON_SINGLE_DOC_HARD_REFUSAL",
-                str(settings.round8.disable_comparison_single_doc_hard_refusal),
-            )
-        )
-        settings.round8.enable_claim_fallback = _parse_bool(
-            get_value("ROUND8_ENABLE_CLAIM_FALLBACK", str(settings.round8.enable_claim_fallback))
-        )
-        settings.round8.enable_partial_answer = _parse_bool(
-            get_value("ROUND8_ENABLE_PARTIAL_ANSWER", str(settings.round8.enable_partial_answer))
-        )
-        settings.round8.enable_route_specific_thresholds = _parse_bool(
-            get_value(
-                "ROUND8_ENABLE_ROUTE_SPECIFIC_THRESHOLDS",
-                str(settings.round8.enable_route_specific_thresholds),
-            )
-        )
-        settings.round8.enable_comparison_prompt_v2 = _parse_bool(
-            get_value(
-                "ROUND8_ENABLE_COMPARISON_PROMPT_V2",
-                str(settings.round8.enable_comparison_prompt_v2),
-            )
-        )
-        settings.round8.enable_citation_expansion = _parse_bool(
-            get_value(
-                "ROUND8_ENABLE_CITATION_EXPANSION",
-                str(settings.round8.enable_citation_expansion),
-            )
-        )
-        settings.round8.enable_ragas_retry = _parse_bool(
-            get_value("ROUND8_ENABLE_RAGAS_RETRY", str(settings.round8.enable_ragas_retry))
-        )
         # Phase 19: query rewrite feature flag
         settings.query_rewrite.mode = get_value("QUERY_REWRITE_MODE", settings.query_rewrite.mode).strip().lower()
         settings.query_rewrite.model = get_value("QUERY_REWRITE_MODEL", settings.query_rewrite.model)

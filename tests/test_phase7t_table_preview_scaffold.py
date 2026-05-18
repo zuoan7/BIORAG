@@ -177,19 +177,6 @@ def test_non_table_query_guard_keeps_preview_out_of_rerank_input():
     assert debug["table_candidates_in_rerank_input"] is False
 
 
-def test_pipeline_helper_requires_generation_v2_for_table_preview():
-    output, debug = _run_table_preview(
-        question="Table 1 growth parameters",
-        retrieved=[_normal_chunk()],
-        config=RetrievalConfig(table_preview_enabled=True),
-        generation_version="old",
-    )
-
-    assert len(output) == 1
-    assert debug["enabled"] is False
-    assert debug["reason"] == "generation_v2_required"
-
-
 def test_preview_table_support_is_not_formal_citation():
     unit = _first_unit()
     chunk = adapt_table_preview_unit(unit, score=0.9)

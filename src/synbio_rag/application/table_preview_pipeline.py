@@ -9,21 +9,8 @@ def run_table_preview(
     question: str,
     retrieved: list[RetrievedChunk],
     config,
-    generation_version: str,
     provider: TablePreviewCandidateProvider | None = None,
 ) -> tuple[list[RetrievedChunk], dict]:
-    if generation_version != "v2":
-        return list(retrieved), {
-            "enabled": False,
-            "reason": "generation_v2_required",
-            "input_count": len(retrieved),
-            "output_count": len(retrieved),
-            "candidate_count": 0,
-            "merged_count": 0,
-            "table_branch_executed": False,
-            "table_candidates_in_rerank_input": False,
-            "formal_citation_allowed": False,
-        }
     return apply_table_preview(
         question=question,
         retrieved=retrieved,

@@ -141,7 +141,6 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
 | `RETRIEVAL_SEARCH_LIMIT` | `40` | 混合检索召回数 |
 | `RETRIEVAL_RERANK_TOP_K` | `10` | Rerank 后保留数 |
 | `RETRIEVAL_FINAL_TOP_K` | `8` | 最终 seed chunk 数 |
-| `GENERATION_VERSION` | `v2` | 生成 pipeline 版本 |
 
 完整参数列表见 `src/synbio_rag/domain/config.py`。
 

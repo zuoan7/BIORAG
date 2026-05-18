@@ -33,7 +33,7 @@ def step1_final_code_state():
         "current_best_eval_config": {
             "QUERY_REWRITE_MODE": "enabled",
             "RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED": "true",
-            "generation.version": "v2",
+            "generation": "v2-only",
             "source_floor_enabled": True,
             "parent_expansion_enabled": True,
         },
@@ -243,7 +243,7 @@ def step6_current_best_config():
 - Support capacity unchanged (`v2_max_support_factoid=3`, `v2_max_support_summary=5`)
 
 ## Generation
-- `generation.version=v2`
+- `generation=v2-only`
 - `v2_max_extractive_evidence_lines=6`
 - `Qwen synthesis=false`
 - `comparison coverage=false`

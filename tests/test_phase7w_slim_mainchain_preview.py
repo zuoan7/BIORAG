@@ -88,7 +88,6 @@ def test_flag_off_does_not_load_preview_units_through_pipeline_seam():
         question="Which table reports Table 1?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=False, merge_enabled=False),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
 
@@ -105,7 +104,6 @@ def test_shadow_mode_does_not_enter_rerank_input():
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=False),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
 
@@ -123,7 +121,6 @@ def test_merge_mode_table_like_query_adds_preview_candidates():
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=_config(enabled=True, merge_enabled=True),
-        generation_version="v2",
         provider=provider,  # type: ignore[arg-type]
     )
 

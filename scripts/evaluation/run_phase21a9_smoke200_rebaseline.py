@@ -188,7 +188,7 @@ def run_config(settings: Settings) -> dict[str, Any]:
         "added50_count": 50,
         "query_rewrite_mode": settings.query_rewrite.mode,
         "original_cn_fallback_enabled": settings.retrieval.original_cn_fallback_enabled,
-        "generation_version": settings.generation.version,
+        "generation_version": "v2",
         "source_floor_enabled": settings.retrieval.source_floor_enabled,
         "parent_expansion_enabled": settings.retrieval.parent_expansion_enabled,
         "rerank_top_k": settings.retrieval.rerank_top_k,
@@ -439,7 +439,6 @@ def main() -> None:
 
     os.environ["QUERY_REWRITE_MODE"] = "enabled"
     os.environ["RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED"] = "true"
-    os.environ["GENERATION_VERSION"] = "v2"
     os.environ["RETRIEVAL_SOURCE_FLOOR_ENABLED"] = "true"
     os.environ["RETRIEVAL_PARENT_EXPANSION_ENABLED"] = "true"
     os.environ["RETRIEVAL_ALIAS_EXPANSION_ENABLED"] = "false"

@@ -111,7 +111,6 @@ class TestFromEnvProfileIntegration:
 
     def _build_minimal_env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         base = {
-            "GENERATION_VERSION": "v2",
             "GENERATION_V2_PROFILE": "stable",
         }
         if extra:
@@ -119,8 +118,9 @@ class TestFromEnvProfileIntegration:
         return base
 
     def _from_env_with(self, env: dict[str, str]) -> GenerationConfig:
-        from src.synbio_rag.domain.config import Settings
-        with patch.dict(os.environ, env, clear=False):
+        from src.synbio_rag.domain import config as config_mod
+        with patch.dict(os.environ, env, clear=True), patch.object(config_mod, "dotenv_values", return_value={}):
+            Settings = config_mod.Settings
             s = Settings.from_env()
         return s.generation
 
@@ -188,7 +188,6 @@ class TestFromEnvProfileIntegration:
         assert any("Unknown" in str(warning.message) for warning in w)
 
     def test_default_profile_is_stable_when_env_not_set(self):
-        env = {"GENERATION_VERSION": "v2"}
-        gen = self._from_env_with(env)
+        gen = self._from_env_with({})
         assert gen.v2_profile == "stable"
         assert gen.v2_use_qwen_synthesis is False

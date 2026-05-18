@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,11 @@ from scripts.evaluation.evaluate_existing_hybrid_retrieval import (
     truncate_text,
 )
 from src.synbio_rag.application.pipeline import SynBioRAGPipeline
+from src.synbio_rag.application.evidence_selection_stage import select_generation_v2_evidence
+from src.synbio_rag.application.generation_v2_response import build_generation_v2_response
+from src.synbio_rag.application.parent_expansion import ParentContextExpander
+from src.synbio_rag.application.summary_supplement import build_empty_supplement_debug, supplement_summary_sections
+from src.synbio_rag.application.table_preview_pipeline import run_table_preview
 from src.synbio_rag.domain.config import Settings
 from src.synbio_rag.domain.schemas import Citation, QueryAnalysis, QueryFilters, RAGResponse, RetrievedChunk
 
@@ -169,12 +174,19 @@ def run_formal_pipeline(
     rerank_mode: str,
     filters: QueryFilters | None,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     start_settings_mode = pipeline.settings.retrieval.rerank_mode
     analysis: QueryAnalysis = pipeline.router.analyze(question)
     retrieved, retrieval_debug = pipeline._search_with_filter_fallback(
         question=question,
         analysis=analysis,
         filters=filters,
+    )
+    retrieved, table_preview_debug = run_table_preview(
+        question=question,
+        retrieved=retrieved,
+        config=pipeline.settings.retrieval,
+        provider=getattr(pipeline, "table_preview_provider", None),
     )
     reranked = pipeline.reranker.rerank(
         question,
@@ -184,43 +196,79 @@ def run_formal_pipeline(
         mode=rerank_mode,
     )
     seed_chunks = reranked[: pipeline.settings.retrieval.final_top_k]
-    final_chunks = pipeline.neighbor_expander.expand(seed_chunks)
-    context = pipeline.context_builder.build(question, final_chunks, history=None, intent=analysis.intent)
-    evidence_quality = pipeline.generator.assess_evidence(question, final_chunks, analysis=analysis)
-    answer = pipeline.generator.generate(
-        question,
-        context,
-        final_chunks,
+    for rank_idx, chunk in enumerate(seed_chunks, start=1):
+        if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
+            chunk.metadata["rerank_rank"] = rank_idx
+        else:
+            chunk.metadata = {"rerank_rank": rank_idx}
+
+    summary_supplement_debug = build_empty_supplement_debug()
+    if analysis.intent.value == "summary" and seed_chunks:
+        milvus_retriever = getattr(pipeline.retriever, "dense_retriever", pipeline.retriever)
+        milvus_client = getattr(milvus_retriever, "client", None)
+        seed_chunks, summary_supplement_debug = supplement_summary_sections(
+            question=question,
+            seed_chunks=seed_chunks,
+            milvus_client=milvus_client,
+            collection_name=pipeline.settings.retrieval.collection_name,
+            max_docs=3,
+            max_per_doc=2,
+            max_total=5,
+        )
+
+    parent_expander = getattr(
+        pipeline,
+        "parent_expander",
+        ParentContextExpander(parent_store=None, config=pipeline.settings.retrieval),
+    )
+    evidence_selection = select_generation_v2_evidence(
+        question=question,
+        seed_chunks=seed_chunks,
+        reranked=reranked,
         analysis=analysis,
+        settings=pipeline.settings,
+        parent_expander=parent_expander,
+    )
+    final_chunks = evidence_selection.final_chunks
+    seed_confidence = pipeline.confidence_scorer.score(seed_chunks)
+    confidence = pipeline.confidence_scorer.score(final_chunks)
+    generation_config = pipeline.settings.generation
+    table_preview_answer_without_formal_citation = bool(table_preview_debug.get("merged_count", 0))
+    if table_preview_answer_without_formal_citation:
+        generation_config = replace(generation_config, v2_require_citation=False)
+    gen_result = pipeline.generator_v2.run(
+        question=question,
+        analysis=analysis,
+        seed_chunks=final_chunks,
+        config=generation_config,
         history=None,
-        assessment=evidence_quality,
     )
-    citations = pipeline.generator.build_citations(final_chunks, evidence_quality)
-    answer = pipeline.generator.validate_generated_answer(answer, citations, evidence_quality)
-    response = RAGResponse(
-        answer=answer,
-        confidence=pipeline.confidence_scorer.score(final_chunks),
-        route=analysis.intent,
-        citations=citations,
-        used_external_tool=False,
-        tool_name=None,
-        tool_result=None,
-        debug={
-            "retrieved_count": len(retrieved),
-            "reranked_count": len(reranked),
-            "seed_context_count": len(seed_chunks),
-            "final_context_count": len(final_chunks),
-            "hybrid_enabled": pipeline.settings.retrieval.hybrid_enabled,
-            "bm25_enabled": pipeline.settings.retrieval.bm25_enabled,
-            "effective_rerank_mode": rerank_mode,
-            "settings_rerank_mode": start_settings_mode,
-            "retrieval_hits": getattr(pipeline.retriever, "last_debug", {}),
-            "rerank_hits": getattr(pipeline.reranker, "last_debug", {}),
-            "neighbor_expansion": getattr(pipeline.neighbor_expander, "last_debug", {}),
-            "filter_strategy": retrieval_debug,
-            "evidence_quality": evidence_quality.__dict__,
-        },
+    response = build_generation_v2_response(
+        gen_result=gen_result,
+        analysis=analysis,
+        session_id=None,
+        filters=filters,
+        settings=pipeline.settings,
+        retrieved=retrieved,
+        reranked=reranked,
+        seed_chunks=seed_chunks,
+        final_chunks=final_chunks,
+        seed_confidence=seed_confidence,
+        confidence=confidence,
+        start_time=start,
+        retrieval_debug=retrieval_debug,
+        retriever_debug=getattr(pipeline.retriever, "last_debug", {}),
+        reranker_debug=getattr(pipeline.reranker, "last_debug", {}),
+        cn_fallback_debug={"merged_candidates": [], "triggered": False, "reason": "not_run_in_eval_helper"},
+        table_preview_debug=table_preview_debug,
+        parent_expansion_debug=evidence_selection.parent_expansion_debug,
+        summary_supplement_debug=summary_supplement_debug,
+        evidence_lifecycle_debug=evidence_selection.evidence_lifecycle_debug,
+        rewrite_trace=type("_RewriteTrace", (), {"to_dict": lambda self: {}})(),
+        table_preview_answer_without_formal_citation=table_preview_answer_without_formal_citation,
     )
+    response.debug["effective_rerank_mode"] = rerank_mode
+    response.debug["settings_rerank_mode"] = start_settings_mode
     return {
         "analysis": analysis,
         "retrieved": retrieved,
@@ -333,8 +381,9 @@ def grade_mode(
     answer = response.answer or ""
     answer_supported, answer_contains_expected, answer_grade = answer_meets_query_expectation(spec, answer)
     hallucination = detect_hallucination(spec, answer, citations)
-    support_pack = response.debug.get("evidence_quality", {}).get("support_pack", [])
-    prompt_support_context = response.debug.get("evidence_quality", {}).get("prompt_support_context", "")
+    generation_debug = response.debug.get("generation_v2", {})
+    support_pack = generation_debug.get("support_pack", [])
+    prompt_support_context = " ".join(str(item.get("chunk_id") or "") for item in support_pack)
     target_chunk_ids = [row["chunk_id"] for row in reranked_rows if row.get("target_match")]
     support_chunk_ids = [str(item.get("chunk_id") or "") for item in support_pack]
     support_pack_drop = bool(target_chunk_ids) and not any(chunk_id in support_chunk_ids for chunk_id in target_chunk_ids)
@@ -398,8 +447,9 @@ def build_mode_result(
     reranked = result["reranked"]
     dense_rank_map = to_rank_map(result["retrieved"])
     reranked_rows = annotate_results(reranked[:top_k], spec, chunk_map, dense_rank_map, {})
-    support_pack = result["response"].debug.get("evidence_quality", {}).get("support_pack", [])
-    prompt_support_context = result["response"].debug.get("evidence_quality", {}).get("prompt_support_context", "")
+    generation_debug = result["response"].debug.get("generation_v2", {})
+    support_pack = generation_debug.get("support_pack", [])
+    prompt_support_context = " ".join(str(item.get("chunk_id") or "") for item in support_pack)
     target_chunk_ids = [row["chunk_id"] for row in reranked_rows if row.get("target_match")]
     support_chunk_ids = [str(item.get("chunk_id") or "") for item in support_pack]
     support_pack_drop = bool(target_chunk_ids) and not any(chunk_id in support_chunk_ids for chunk_id in target_chunk_ids)

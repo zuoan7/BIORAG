@@ -521,7 +521,7 @@ def test_pipeline_default_off_behavior_unchanged():
     pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
     pipeline.settings = Settings(
         retrieval=RetrievalConfig(final_top_k=2, parent_expansion_enabled=False),
-        generation=GenerationConfig(version="v2"),
+        generation=GenerationConfig(),
     )
     pipeline._rewrite_svc = _rewrite_disabled()
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
@@ -529,9 +529,7 @@ def test_pipeline_default_off_behavior_unchanged():
     pipeline._search_with_filter_fallback = lambda **kwargs: (retrieved, {"selected": "original", "attempts": []})
     pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={})
     pipeline.retriever = SimpleNamespace(last_debug={})
-    pipeline.neighbor_expander = SimpleNamespace(last_debug={})
     pipeline.confidence_scorer = SimpleNamespace(score=lambda chunks: 0.5, needs_external_tool=lambda confidence: False)
-    pipeline.external_tools = SimpleNamespace()
     pipeline.generator_v2 = SimpleNamespace(run=lambda **kwargs: SimpleNamespace(answer="ok", citations=[], debug={}))
 
     response = pipeline.answer("what?")
@@ -545,7 +543,7 @@ def test_pipeline_enabled_shows_parent_expansion_debug(tmp_path: Path):
     pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
     pipeline.settings = Settings(
         retrieval=config,
-        generation=GenerationConfig(version="v2"),
+        generation=GenerationConfig(),
     )
     pipeline._rewrite_svc = _rewrite_disabled()
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
@@ -553,10 +551,8 @@ def test_pipeline_enabled_shows_parent_expansion_debug(tmp_path: Path):
     pipeline._search_with_filter_fallback = lambda **kwargs: (retrieved, {"selected": "original", "attempts": []})
     pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={})
     pipeline.retriever = SimpleNamespace(last_debug={})
-    pipeline.neighbor_expander = SimpleNamespace(last_debug={})
     pipeline.parent_expander = ParentContextExpander(store, config)
     pipeline.confidence_scorer = SimpleNamespace(score=lambda chunks: float(len(chunks)), needs_external_tool=lambda confidence: False)
-    pipeline.external_tools = SimpleNamespace()
     pipeline.generator_v2 = SimpleNamespace(run=lambda **kwargs: SimpleNamespace(answer="ok", citations=[], debug={}))
 
     response = pipeline.answer("what?")

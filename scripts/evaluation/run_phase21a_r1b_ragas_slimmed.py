@@ -35,7 +35,6 @@ os.environ.update({
     'EVAL_REWRITE_REQUIRE_CACHE': 'true',
     'EVAL_REWRITE_FAIL_FAST_ON_MISSING': 'true',
     'RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED': 'true',
-    'GENERATION_VERSION': 'v2',
     'GENERATION_V2_USE_QWEN_SYNTHESIS': 'false',
 })
 

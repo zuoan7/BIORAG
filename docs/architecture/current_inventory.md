@@ -15,8 +15,9 @@ this document.
 - `src/synbio_rag/application/rag_service.py`: application service wrapper for
   sessions, audit logging, and pipeline invocation.
 - `src/synbio_rag/application/pipeline.py`: current main RAG orchestration path.
-- `src/synbio_rag/application/generation_v2/`: current default generation chain.
-  `GenerationConfig.version` defaults to `v2`.
+- `src/synbio_rag/application/generation_v2/`: current generation chain. The
+  runtime is v2-only; `GenerationConfig.version` and `GENERATION_VERSION` are no
+  longer supported.
 - `src/synbio_rag/application/rerank_service.py`: rerank adapter and fallback
   rerank logic.
 - `src/synbio_rag/application/parent_expansion.py`: current v2 context expansion
@@ -83,15 +84,13 @@ Phase7 constraints:
 These items may be considered for later archival or explicit support decisions.
 They are not deleted in this round.
 
-- `src/synbio_rag/application/generation_service.py`: old generation path still
-  available when `GenerationConfig.version` is explicitly set to `old`.
-- `src/synbio_rag/application/context_builder.py`: old generation context builder.
-- `src/synbio_rag/application/neighbor_expansion.py`: old generation neighbor
-  expansion, still used for neighbor audit setup and the explicit old path.
+- Old generation support has been removed. `generation_service.py`,
+  `context_builder.py`, and `legacy_generation_flow.py` are no longer part of
+  the source tree.
+- `src/synbio_rag/application/neighbor_expansion.py`: retained as the generation
+  v2 neighbor-audit index source; it is no longer a generation branch.
 - `src/synbio_rag/application/query_expansion.py`: prototype query expansion; no
   current main pipeline import was found in this inventory pass.
-- `src/synbio_rag/domain/config.py` Round8 flags: old generation policy flags;
-  keep until old generation support is decided.
 - `scripts/evaluation/run_phase*`, `scripts/evaluation/phase*`,
   `scripts/evaluation/audit_phase*`, and many `scripts/extraction/phase*`
   workflows: one-off phase scripts and report builders.
@@ -124,4 +123,3 @@ also contain tracked test fixtures or current baseline references.
   - `tests/fixtures/`: explicit test fixtures.
   - Any file imported or read by tests should be treated as protected until a
     targeted grep/ripgrep check proves otherwise.
-

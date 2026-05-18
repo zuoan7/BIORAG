@@ -40,13 +40,10 @@ def _patch_pipeline_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline_mod, "BM25Retriever", Dummy)
     monkeypatch.setattr(pipeline_mod, "HybridRetriever", Dummy)
     monkeypatch.setattr(pipeline_mod, "QwenReranker", Dummy)
-    monkeypatch.setattr(pipeline_mod, "ContextBuilder", Dummy)
     monkeypatch.setattr(pipeline_mod, "ChunkNeighborExpander", NeighborExpander)
-    monkeypatch.setattr(pipeline_mod, "QwenChatGenerator", Dummy)
     monkeypatch.setattr(pipeline_mod, "GenerationV2Service", Dummy)
     monkeypatch.setattr(pipeline_mod, "ParentContextExpander", Dummy)
     monkeypatch.setattr(pipeline_mod, "ConfidenceScorer", Dummy)
-    monkeypatch.setattr(pipeline_mod, "ExternalToolManager", Dummy)
 
 
 def _settings_with_rewrite(mode: str = "enabled") -> Settings:

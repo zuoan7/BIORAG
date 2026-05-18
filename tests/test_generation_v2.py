@@ -298,11 +298,11 @@ def test_final_validator_refuses_non_refuse_answer_without_citation() -> None:
     assert debug["zero_citation_guardrail_triggered"] is True
 
 
-def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
+def test_pipeline_uses_generation_v2_flow() -> None:
     pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
     pipeline.settings = Settings(
         retrieval=RetrievalConfig(final_top_k=2),
-        generation=GenerationConfig(version="v2"),
+        generation=GenerationConfig(),
     )
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
     retrieved = [_chunk("c1", "seed text", rerank=0.9)]
@@ -316,30 +316,7 @@ def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
     pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={"rerank": True})
     pipeline.retriever = SimpleNamespace(last_debug={"retrieval": True})
 
-    class _ForbiddenNeighbor:
-        last_debug = {}
-
-        def expand(self, chunks):
-            raise AssertionError("neighbor expansion should not run in v2")
-
-    class _ForbiddenGenerator:
-        def assess_evidence(self, *args, **kwargs):
-            raise AssertionError("old generator assess_evidence should not run in v2")
-
-        def generate(self, *args, **kwargs):
-            raise AssertionError("old generator generate should not run in v2")
-
-        def build_citations(self, *args, **kwargs):
-            raise AssertionError("old generator build_citations should not run in v2")
-
-        def validate_generated_answer(self, *args, **kwargs):
-            raise AssertionError("old generator validate_generated_answer should not run in v2")
-
-    pipeline.neighbor_expander = _ForbiddenNeighbor()
-    pipeline.generator = _ForbiddenGenerator()
-    pipeline.context_builder = SimpleNamespace(build=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("context builder should not run in v2")))
     pipeline.confidence_scorer = SimpleNamespace(score=lambda chunks: 0.77, needs_external_tool=lambda confidence: False)
-    pipeline.external_tools = SimpleNamespace(run_if_needed=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("external tools should not run in v2")))
     pipeline.generator_v2 = SimpleNamespace(
         run=lambda **kwargs: SimpleNamespace(
             answer="根据当前知识库证据：[1]",
@@ -354,66 +331,6 @@ def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
     assert response.debug["generation_v2"]["generation_version"] == "v2"
 
 
-def test_generation_version_defaults_to_v2() -> None:
+def test_generation_config_is_v2_only() -> None:
     settings = Settings()
-    assert settings.generation.version == "v2"
-
-
-def test_generation_version_env_can_select_old(monkeypatch) -> None:
-    monkeypatch.setenv("GENERATION_VERSION", "old")
-
-    settings = Settings.from_env()
-
-    assert settings.generation.version == "old"
-
-
-def test_pipeline_old_version_uses_legacy_generation_path_when_configured() -> None:
-    pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
-    pipeline.settings = Settings(
-        retrieval=RetrievalConfig(final_top_k=1),
-        generation=GenerationConfig(version="old"),
-    )
-    pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
-    retrieved = [_chunk("c1", "legacy seed text", rerank=0.9)]
-    pipeline._search_with_filter_fallback = lambda **kwargs: (
-        retrieved,
-        {"selected": "original", "attempts": []},
-    )
-    pipeline._rewrite_svc = SimpleNamespace(
-        rewrite=lambda question, is_negative=False: (
-            question,
-            SimpleNamespace(to_dict=lambda: {}, query_rewrite_mode="off"),
-        )
-    )
-    pipeline.retriever = SimpleNamespace(last_debug={"retrieval": True})
-    pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={})
-    pipeline.neighbor_expander = SimpleNamespace(
-        expand=lambda chunks: chunks,
-        last_debug={"enabled": True, "output_count": 1},
-    )
-    pipeline.context_builder = SimpleNamespace(build=lambda *args, **kwargs: "legacy context")
-    evidence_quality = SimpleNamespace(status="supported")
-    pipeline.generator = SimpleNamespace(
-        assess_evidence=lambda *args, **kwargs: evidence_quality,
-        generate=lambda *args, **kwargs: "legacy answer",
-        build_citations=lambda *args, **kwargs: [],
-        validate_generated_answer=lambda answer, citations, evidence: answer,
-    )
-    pipeline.confidence_scorer = SimpleNamespace(
-        score=lambda chunks: 0.77,
-        needs_external_tool=lambda confidence: False,
-    )
-    pipeline.external_tools = SimpleNamespace(
-        run_if_needed=lambda *args, **kwargs: SimpleNamespace(
-            invoked=False,
-            tool_name=None,
-            result=None,
-            references=[],
-        )
-    )
-
-    response = pipeline.answer("问题是什么？")
-
-    assert response.answer == "legacy answer"
-    assert "generation_v2" not in response.debug
-    assert response.debug["context_chars"] == len("legacy context")
+    assert not hasattr(settings.generation, "version")
