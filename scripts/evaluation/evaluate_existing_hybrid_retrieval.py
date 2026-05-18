@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.synbio_rag.application.rerank_service import QwenReranker
+from src.synbio_rag.application.rerank_service import LocalBGERerankerService
 from src.synbio_rag.domain.config import Settings
 from src.synbio_rag.domain.router import QueryRouter
 from src.synbio_rag.domain.schemas import QueryAnalysis, QueryFilters, RetrievedChunk
@@ -268,12 +268,8 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         dense_retriever=dense,
         bm25_retriever=bm25,
     )
-    reranker = QwenReranker(
-        api_base=settings.reranker.api_base,
-        api_key=settings.reranker.api_key,
-        model_name=settings.reranker.model_name,
+    reranker = LocalBGERerankerService(
         model_path=settings.reranker.model_path,
-        service_url=settings.reranker.service_url,
         batch_size=settings.reranker.batch_size,
         use_fp16=settings.reranker.use_fp16,
         retrieval_config=settings.retrieval,
@@ -454,7 +450,7 @@ def mode_run(
     dense: MilvusRetriever = runtime["dense"]
     bm25: BM25Retriever = runtime["bm25"]
     hybrid: HybridRetriever = runtime["hybrid"]
-    reranker: QwenReranker = runtime["reranker"]
+    reranker: LocalBGERerankerService = runtime["reranker"]
 
     analysis: QueryAnalysis = router.analyze(spec.query)
     filters = QueryFilters(doc_ids=[spec.expected_doc_id]) if doc_routed and spec.expected_doc_id else None
@@ -624,7 +620,7 @@ def build_report(
             "- Modified files: `src/synbio_rag/application/rerank_service.py`, `src/synbio_rag/domain/config.py`, `scripts/evaluation/evaluate_existing_hybrid_retrieval.py`, `scripts/evaluation/evaluate_guarded_reranker.py`, `tests/test_guarded_reranker.py`.",
             f"- Formal hybrid code entry: `src/synbio_rag/application/pipeline.py` -> `SynBioRAGPipeline.retriever`; retrieval implementation in `src/synbio_rag/infrastructure/vectorstores/hybrid.py`.",
             f"- Formal dense code entry: `src/synbio_rag/infrastructure/vectorstores/milvus.py` -> `MilvusRetriever.search`.",
-            f"- Reranker entry: `src/synbio_rag/application/rerank_service.py` -> `QwenReranker.rerank`.",
+            f"- Reranker entry: `src/synbio_rag/application/rerank_service.py` -> `LocalBGERerankerService.rerank`.",
             f"- Rank1 guard entry: `src/synbio_rag/application/rerank_service.py` -> `_apply_rank1_evidence_guard` under mode `guarded_rank1`.",
             f"- Rerank mode config: `BIORAG_RERANK_MODE` / `RETRIEVAL_RERANK_MODE`, current eval default=`{settings.retrieval.rerank_mode}`.",
             f"- Added rank1 guard config: `RETRIEVAL_GUARDED_RANK1_MIN_COMPLETENESS_GAIN={settings.retrieval.guarded_rank1_min_completeness_gain}`, `RETRIEVAL_GUARDED_RANK1_MAX_SCORE_GAP={settings.retrieval.guarded_rank1_max_score_gap}`.",

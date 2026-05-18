@@ -596,13 +596,10 @@ def run_rerank_smoke(
 
     config = preview_config(enabled=True, merge_enabled=True)
     try:
-        from src.synbio_rag.application.rerank_service import QwenReranker
+        from src.synbio_rag.application.rerank_service import LocalBGERerankerService
 
-        reranker = QwenReranker(
-            api_base="",
-            api_key="",
+        reranker = LocalBGERerankerService(
             model_path=str(model_path),
-            service_url="",
             batch_size=4,
             use_fp16=False,
             retrieval_config=config,

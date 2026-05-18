@@ -26,6 +26,13 @@ class ModelEndpointConfig:
 
 
 @dataclass
+class RerankerConfig:
+    model_path: str = "./models/BAAI/bge-reranker-v2-m3"
+    batch_size: int = 8
+    use_fp16: bool = True
+
+
+@dataclass
 class RetrievalConfig:
     milvus_uri: str = "./runtime/vectorstores/milvus/papers.db"
     collection_name: str = "synbio_papers"
@@ -296,7 +303,7 @@ class Settings:
     query_rewrite: QueryRewriteConfig = field(default_factory=QueryRewriteConfig)
     table_enhancement: TableEnhancementConfig = field(default_factory=TableEnhancementConfig)
     llm: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-plus"))
-    reranker: ModelEndpointConfig = field(default_factory=lambda: ModelEndpointConfig(model_name="qwen-rerank"))
+    reranker: RerankerConfig = field(default_factory=RerankerConfig)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -721,13 +728,10 @@ class Settings:
         )
         settings.llm.api_base = get_value("QWEN_CHAT_API_BASE", "")
         settings.llm.api_key = get_value("QWEN_CHAT_API_KEY", "")
-        settings.reranker.api_base = get_value("QWEN_RERANK_API_BASE", "")
-        settings.reranker.api_key = get_value("QWEN_RERANK_API_KEY", "")
         settings.reranker.model_path = get_value(
             "BGE_RERANKER_MODEL_PATH",
-            "./models/BAAI/bge-reranker-v2-m3",
+            settings.reranker.model_path,
         )
-        settings.reranker.service_url = get_value("RERANKER_SERVICE_URL", "")
         settings.audit.audit_log_path = get_value("AUDIT_LOG_PATH", settings.audit.audit_log_path)
         settings.audit.session_store_path = get_value("SESSION_STORE_PATH", settings.audit.session_store_path)
         # Profile: sets defaults for experimental toggles. Explicit env vars override afterwards.

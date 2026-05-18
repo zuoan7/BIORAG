@@ -27,7 +27,7 @@ from .query_rewrite_adapter import (
     _build_query_rewrite_llm_client,
     build_query_rewrite_service,
 )
-from .rerank_service import QwenReranker
+from .rerank_service import LocalBGERerankerService
 from .summary_supplement import (
     build_empty_supplement_debug as _build_empty_supplement_debug,
     supplement_summary_sections as _supplement_summary_sections,
@@ -58,12 +58,8 @@ class SynBioRAGPipeline:
             dense_retriever=self.dense_retriever,
             bm25_retriever=self.bm25_retriever,
         )
-        self.reranker = QwenReranker(
-            api_base=settings.reranker.api_base,
-            api_key=settings.reranker.api_key,
-            model_name=settings.reranker.model_name,
+        self.reranker = LocalBGERerankerService(
             model_path=settings.reranker.model_path,
-            service_url=settings.reranker.service_url,
             batch_size=settings.reranker.batch_size,
             use_fp16=settings.reranker.use_fp16,
             retrieval_config=settings.retrieval,

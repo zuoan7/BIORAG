@@ -49,25 +49,11 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
   }'
 ```
 
-## 3. 独立 reranker 服务启动
+## 3. Reranker 本地模型
 
-如果希望把 rerank 从主服务中拆出去，先启动 reranker：
-
-```bash
-uvicorn app.reranker_main:app --host 0.0.0.0 --port 9001
-```
-
-然后在 `.env` 中配置：
-
-```bash
-RERANKER_SERVICE_URL=http://127.0.0.1:9001
-```
-
-健康检查：
-
-```bash
-curl http://127.0.0.1:9001/healthz
-```
+Reranker 由主服务进程直接加载本地 BGE-Reranker 模型。确认 `.env` 中的
+`BGE_RERANKER_MODEL_PATH` 指向本地模型目录即可，不需要启动独立 HTTP
+reranker 服务。
 
 ## 4. 知识库构建命令
 

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
 import re
-from typing import Any
 
 from ..domain.config import RetrievalConfig
 from ..domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
-from ..infrastructure.clients.openai_compatible import OpenAICompatibleClient, extract_json_block
-from ..infrastructure.reranker import RerankerServiceClient
 from ..infrastructure.vectorstores.hybrid import _extract_comparison_subqueries, _expand_query_aliases
 
 
@@ -123,43 +119,23 @@ _STOPWORDS = {
 }
 
 
-class QwenReranker:
-    """
-    演示版支持两种模式:
-    - 配置了 API: 使用 OpenAI-compatible chat 接口做 JSON 打分
-    - 未配置 API: 使用启发式重排
-    """
-
+class LocalBGERerankerService:
     def __init__(
         self,
-        api_base: str = "",
-        api_key: str = "",
-        model_name: str = "qwen-rerank",
-        model_path: str = "",
-        service_url: str = "",
+        model_path: str = "./models/BAAI/bge-reranker-v2-m3",
         batch_size: int = 8,
         use_fp16: bool = True,
         retrieval_config: RetrievalConfig | None = None,
     ):
-        self.api_base = api_base
-        self.api_key = api_key
-        self.model_name = model_name
-        self.retrieval_config = retrieval_config or RetrievalConfig()
-        self.client = OpenAICompatibleClient(api_base, api_key, timeout_seconds=30)
-        self.service_client = RerankerServiceClient(service_url) if service_url else None
-        self.local_reranker: Any | None = None
-        self.last_debug: dict[str, object] = {}
-        if model_path and Path(model_path).exists():
-            try:
-                from ..infrastructure.reranker.local_bge import LocalBGEReranker
+        from ..infrastructure.reranker.local_bge import LocalBGEReranker
 
-                self.local_reranker = LocalBGEReranker(
-                    model_path=model_path,
-                    use_fp16=use_fp16,
-                    batch_size=batch_size,
-                )
-            except Exception:
-                self.local_reranker = None
+        self.retrieval_config = retrieval_config or RetrievalConfig()
+        self.last_debug: dict[str, object] = {}
+        self.local_reranker = LocalBGEReranker(
+            model_path=model_path,
+            use_fp16=use_fp16,
+            batch_size=batch_size,
+        )
 
     def rerank(
         self,
@@ -179,52 +155,10 @@ class QwenReranker:
         queries = _build_rerank_queries(question, analysis)
         self.last_debug["query_variants"] = queries
         self.last_debug["mode"] = mode
-        if self.service_client and chunks:
-            try:
-                return self._rerank_with_service(queries, chunks, top_k, analysis, mode)
-            except Exception:
-                pass
-        if self.local_reranker and chunks:
-            try:
-                return self._rerank_with_local_model(queries, chunks, top_k, analysis, mode)
-            except Exception:
-                pass
-        if self.client.is_enabled() and chunks:
-            try:
-                return self._rerank_with_llm(queries, chunks, top_k, analysis, mode)
-            except Exception:
-                pass
-        q_terms = set(" ".join(queries).lower().split())
-        rescored: list[RetrievedChunk] = []
-        for chunk in chunks:
-            overlap = len(q_terms.intersection(_rerank_text(chunk).lower().split()))
-            base_score = max(chunk.vector_score, chunk.fusion_score, chunk.bm25_score * 0.1)
-            chunk.rerank_score = base_score * 0.7 + min(overlap, 10) * 0.03
-            chunk.rerank_score += _strategy_bonus(question, chunk, self.retrieval_config)
-            chunk.rerank_score += _evidence_aware_bonus(chunk, self.retrieval_config)
-            rescored.append(chunk)
-        final = _finalize_rerank(
-            question=question,
-            chunks=rescored,
-            top_k=top_k,
-            analysis=analysis,
-            config=self.retrieval_config,
-            mode=mode,
-        )
-        self.last_debug["final_hits"] = _serialize_hits(final[:5])
-        return final
-
-    def _rerank_with_service(
-        self,
-        queries: list[str],
-        chunks: list[RetrievedChunk],
-        top_k: int,
-        analysis: QueryAnalysis | None,
-        mode: str,
-    ) -> list[RetrievedChunk]:
-        texts = [_rerank_text(chunk) for chunk in chunks]
-        scores_by_query = [self.service_client.score(query, texts) for query in queries]
-        return self._aggregate_scores(queries, chunks, scores_by_query, top_k, analysis, mode)
+        if not chunks:
+            self.last_debug["final_hits"] = []
+            return []
+        return self._rerank_with_local_model(queries, chunks, top_k, analysis, mode)
 
     def _rerank_with_local_model(
         self,
@@ -243,42 +177,6 @@ class QwenReranker:
             scores_by_query.append([float(score) for score in raw_scores[cursor : cursor + len(chunks)]])
             cursor += len(chunks)
         return self._aggregate_scores(queries, chunks, scores_by_query, top_k, analysis, mode)
-
-    def _rerank_with_llm(
-        self,
-        queries: list[str],
-        chunks: list[RetrievedChunk],
-        top_k: int,
-        analysis: QueryAnalysis | None,
-        mode: str,
-    ) -> list[RetrievedChunk]:
-        scores_by_query = [self._score_with_llm(query, chunks) for query in queries]
-        return self._aggregate_scores(queries, chunks, scores_by_query, top_k, analysis, mode)
-
-    def _score_with_llm(self, question: str, chunks: list[RetrievedChunk]) -> list[float]:
-        chunk_blocks = []
-        for idx, chunk in enumerate(chunks, start=1):
-            chunk_blocks.append(f"id={idx}; text={_rerank_text(chunk)[:1400]}")
-        content = self.client.chat_completion(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": "你是严谨的检索重排序模型。输出 JSON。"},
-                {
-                    "role": "user",
-                    "content": (
-                        "请根据用户问题评估每个片段的相关性，"
-                        '返回 JSON，格式为 {"items":[{"id":1,"score":0.91}] }。'
-                        f"\n用户问题: {question}\n候选片段:\n" + "\n".join(chunk_blocks)
-                    ),
-                },
-            ],
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        parsed = extract_json_block(content)
-        items = parsed.get("items", [])
-        by_id = {int(item["id"]): float(item["score"]) for item in items}
-        return [by_id.get(idx, chunks[idx - 1].vector_score) for idx in range(1, len(chunks) + 1)]
 
     def _aggregate_scores(
         self,

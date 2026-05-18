@@ -107,11 +107,8 @@ python scripts/ingestion/build_round1_kb.py
 uvicorn app.main:app --host 0.0.0.0 --port 9000
 ```
 
-如需独立 reranker 服务：
-
-```bash
-uvicorn app.reranker_main:app --host 0.0.0.0 --port 9001
-```
+Reranker 在主服务进程内直接加载本地 BGE-Reranker 模型，不需要单独启动
+HTTP reranker 服务。
 
 ### 5. 请求示例
 

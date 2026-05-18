@@ -40,7 +40,7 @@ Externally visible response fields remain:
 | `MilvusRetriever` | `infrastructure/vectorstores/milvus.py` | Dense retrieval. |
 | `BM25Retriever` | `infrastructure/vectorstores/bm25.py` | Lexical retrieval. |
 | `HybridRetriever` | `infrastructure/vectorstores/hybrid.py` | Dense/BM25 fusion. |
-| `QwenReranker` | `application/rerank_service.py` | Rerank adapter and fallback. |
+| `LocalBGERerankerService` | `application/rerank_service.py` | Main-process local BGE reranker and guarded rerank logic. |
 | `GenerationV2Service` | `application/generation_v2/service.py` | Only answer generation path. |
 | `ParentContextExpander` | `application/parent_expansion.py` | v2 parent/window/caption/page expansion. |
 | `TablePreviewCandidateProvider` | `application/table_preview.py` | Phase7 preview-only table candidates. |

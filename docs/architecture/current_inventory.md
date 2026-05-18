@@ -8,8 +8,6 @@ this document.
 
 - `app/main.py`: current FastAPI service entry. It exposes `/healthz`,
   `/v1/sessions/{session_id}`, and `/v1/ask`.
-- `app/reranker_main.py`: optional standalone reranker service entry for
-  `/v1/rerank`.
 - `/v1/ask`: request model is in `app/main.py`; execution flows through
   `RAGApplicationService.ask()` and `SynBioRAGPipeline.answer()`.
 - `src/synbio_rag/application/rag_service.py`: application service wrapper for
@@ -18,8 +16,8 @@ this document.
 - `src/synbio_rag/application/generation_v2/`: current generation chain. The
   runtime is v2-only; `GenerationConfig.version` and `GENERATION_VERSION` are no
   longer supported.
-- `src/synbio_rag/application/rerank_service.py`: rerank adapter and fallback
-  rerank logic.
+- `src/synbio_rag/application/rerank_service.py`: main-process local BGE
+  reranker orchestration and guarded rerank logic.
 - `src/synbio_rag/application/parent_expansion.py`: current v2 context expansion
   path after rerank seeds.
 - `src/synbio_rag/rewrite/query_rewrite_service.py`: feature-flagged query

@@ -39,7 +39,7 @@ def _patch_pipeline_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline_mod, "MilvusRetriever", DenseRetriever)
     monkeypatch.setattr(pipeline_mod, "BM25Retriever", Dummy)
     monkeypatch.setattr(pipeline_mod, "HybridRetriever", Dummy)
-    monkeypatch.setattr(pipeline_mod, "QwenReranker", Dummy)
+    monkeypatch.setattr(pipeline_mod, "LocalBGERerankerService", Dummy)
     monkeypatch.setattr(pipeline_mod, "ChunkNeighborExpander", NeighborExpander)
     monkeypatch.setattr(pipeline_mod, "GenerationV2Service", Dummy)
     monkeypatch.setattr(pipeline_mod, "ParentContextExpander", Dummy)
