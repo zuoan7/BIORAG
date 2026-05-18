@@ -1,6 +1,8 @@
 # Scripts Archive Candidates
 
 This matrix records the PR2 scan of Python scripts that originally lived under `scripts/`.
+Cleanup PR3 used the 114 PR2 `archive_candidate` rows as the delete scope and
+deleted those already-quarantined scripts from `archive/scripts/phase_artifacts/`.
 
 ## Scan Method
 
@@ -20,13 +22,41 @@ For rows marked `archive_candidate`, the AST/reference scan found no test import
 
 ## Status Counts
 
-| Status | Count |
-| --- | ---: |
-| `keep` | 54 |
-| `protected_by_tests` | 60 |
-| `archive_candidate` | 114 |
-| `delete_candidate` | 0 |
-| `unknown` | 53 |
+| Status | Count | PR3 disposition |
+| --- | ---: | --- |
+| `keep` | 54 | Retained under `scripts/`. |
+| `protected_by_tests` | 60 | Retained under `scripts/`. |
+| `archive_candidate` | 114 | Deleted after PR2 quarantine. |
+| `delete_candidate` | 0 | None. |
+| `unknown` | 53 | Retained under `scripts/`; not processed in PR3. |
+
+## PR3 Delete Scope
+
+PR3 deleted only the 114 Python scripts that PR2 had already quarantined under
+`archive/scripts/phase_artifacts/`.
+
+Pre-delete cross-check:
+
+- Candidate matrix archive paths: 114.
+- Python scripts under `archive/scripts/phase_artifacts/`: 114.
+- Extra Python scripts in archive path outside the PR2 candidate matrix: 0.
+- Missing archived Python scripts from the PR2 candidate matrix: 0.
+
+Post-delete state:
+
+- `deleted_after_quarantine`: 114.
+- Python scripts currently under `archive/scripts/phase_artifacts/`: 0.
+- Python scripts currently under `scripts/`: 167.
+- `unknown` scripts: 53, still retained under `scripts/`.
+
+Deletion basis: PR2 quarantine had no collect decrease (`1042 -> 1042`),
+`compileall` passed, `tests/test_generation_v2.py` passed, and the Phase7/table
+preview focused set passed. PR3 reran the same focused verification after
+deletion.
+
+No production code, Phase7 preview wiring, generation v2 algorithm, old
+generation path, retrieval, BM25, dense, hybrid, rerank, accepted baseline
+artifact, or `/v1/ask` behavior was changed.
 
 ## Candidate Matrix
 

@@ -1,7 +1,8 @@
 # Scripts Cleanup Report
 
 Cleanup PR2 quarantined historical phase artifacts from `scripts/` into
-`archive/scripts/phase_artifacts/`.
+`archive/scripts/phase_artifacts/`. Cleanup PR3 deleted that quarantined set
+after the PR2 verification showed no collect decrease and focused checks passed.
 
 ## Summary
 
@@ -9,14 +10,18 @@ Cleanup PR2 quarantined historical phase artifacts from `scripts/` into
 | --- | ---: | --- |
 | Original Python scripts under `scripts/` | 281 | Counted before quarantine. |
 | Scripts remaining under `scripts/` | 167 | 114 explicit keep/protected scripts plus 53 retained `unknown` scripts. |
-| Archived scripts | 114 | 113 from `scripts/evaluation`, 1 from `scripts/diagnostics`. |
-| Deleted files | 0 | No empty `.py` files or broken symlinks were found. |
+| PR2 quarantined scripts | 114 | 113 from `scripts/evaluation`, 1 from `scripts/diagnostics`. |
+| PR3 `deleted_after_quarantine` scripts | 114 | Deleted only from `archive/scripts/phase_artifacts/`. |
+| Archived Python scripts currently under `archive/scripts/phase_artifacts/` | 0 | No `.py` files remain in the working tree under the archive path. |
+| Retained `unknown` scripts | 53 | Still in `scripts/`; not processed in PR3. |
 | Legacy tests moved | 0 | Archive candidates had no direct test import/path references. |
 
-## What Moved
+## What Moved In PR2 And Was Deleted In PR3
 
 Archived files were moved under `archive/scripts/phase_artifacts/`, preserving
-their original subdirectory below that archive root.
+their original subdirectory below that archive root. PR3 deleted those archived
+Python scripts from the archive path without moving or deleting any current
+`scripts/` file.
 
 The moved set consists of:
 
@@ -31,6 +36,10 @@ The moved set consists of:
 
 The full proof matrix is in `docs/architecture/scripts_archive_candidates.md`.
 The keep allowlist is in `docs/architecture/scripts_keep_allowlist.md`.
+
+After PR3, `archive/scripts/phase_artifacts/` has zero working-tree Python scripts.
+No non-PR2-quarantine Python script was found under that archive path during the
+pre-delete cross-check.
 
 ## Tests Legacy Handling
 
@@ -49,17 +58,19 @@ Manual-run note: not applicable for tests; no legacy tests were moved.
 | --- | ---: |
 | Before quarantine | 1042 |
 | After quarantine | 1042 |
+| After delete-after-quarantine | 1042 |
 | Delta | 0 |
 
 There was no collect decrease. No tests were moved out of the active suite, and
-no import failure was introduced by the archive move.
+no import failure was introduced by the quarantine or delete-after-quarantine
+step.
 
 ## Verification
 
 Commands run:
 
 ```bash
-python -m compileall app src scripts tests archive
+python -m compileall app src scripts tests
 pytest --collect-only -q
 pytest tests/test_generation_v2.py -q
 pytest tests/test_phase7_table_retrieval_wiring_preview.py tests/test_phase7l_table_rag_smoke.py tests/test_phase7m_sandbox_contract_hardening.py tests/test_phase7q_table_citation_schema_prototype.py tests/test_phase7q1_table_citation_mapper_dry_run.py tests/test_phase7r_table_index_production_proposal.py tests/test_phase7s_production_readiness_dry_run.py tests/test_phase7t_table_preview_scaffold.py tests/test_phase7u_table_preview_eval_smoke.py tests/test_phase7v_fast_type_aware_merge.py tests/test_phase7w_slim_mainchain_preview.py tests/test_phase7x_final_default_on_table_preview.py -q
@@ -67,7 +78,8 @@ pytest tests/test_phase7_table_retrieval_wiring_preview.py tests/test_phase7l_ta
 
 Results:
 
-- `compileall`: passed.
+- PR2 `compileall` including `archive`: passed.
+- PR3 `python -m compileall app src scripts tests`: passed.
 - `pytest --collect-only -q`: passed, 1042 tests collected.
 - `pytest tests/test_generation_v2.py -q`: passed, 16 tests.
 - Phase7/table preview focused set: passed, 96 tests.
@@ -81,9 +93,12 @@ No official dataset, baseline data, accepted baseline artifact, or baseline
 registry was changed.
 
 `config/settings.example.env` was already modified before this cleanup pass and
-was not edited as part of the quarantine work.
+was not edited as part of the cleanup work.
 
 The current ops, ingestion, and evaluation entries remain in `scripts/`.
+
+Generation v2, the old generation path, retrieval, BM25, dense, hybrid, rerank,
+and `/v1/ask` production behavior were not changed.
 
 ## Phase7 Boundary
 
@@ -110,9 +125,8 @@ reference, so they were archived with the rest of the generation-stage artifact
 set. A second closure check confirmed that remaining `scripts/` files no longer
 import or path-reference archived original scripts.
 
-## Next Delete PR
+## Next Cleanup Round
 
-The next round can consider a true delete PR for the archived files, but only
-after reviewing `archive/scripts/phase_artifacts/` and confirming no retained
-manual workflow still needs a specific file. The 53 retained `unknown` scripts
-should get their own proof pass before any archive or deletion decision.
+The 53 retained `unknown` scripts should get their own proof pass before any
+archive or deletion decision. PR3 deliberately did not expand the cleanup scope
+or process unknown scripts.
