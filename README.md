@@ -6,7 +6,13 @@
 
 当前 accepted baseline 是 **Phase 20 convergence baseline**（Phase 20M）。
 
-权威实验基线文档：[reports/phase20m_convergence_summary/summary.md](reports/phase20m_convergence_summary/summary.md)
+当前可用配置记录：[results/phase20m_convergence_summary/current_best_config.md](results/phase20m_convergence_summary/current_best_config.md)
+
+仓库清理边界文档：
+
+- [当前 inventory](docs/architecture/current_inventory.md)
+- [cleanup policy](docs/architecture/cleanup_policy.md)
+- [scripts inventory](docs/architecture/script_inventory.md)
 
 ### Phase 7 表格证据链路状态（实验原型）
 
@@ -173,20 +179,18 @@ biorag/
 │   ├── infrastructure/     # vectorstores (hybrid, BM25, Milvus)
 │   ├── rewrite/            # query rewrite service
 │   └── evaluation/         # failure taxonomy
-├── tests/                  # 测试 (Phase 20: 30 tests)
+├── docs/architecture/      # cleanup inventory / policy / script inventory
+├── tests/                  # 单元、集成与 phase regression 测试
 ├── results/                # Phase 实验结果 (20A-20M)
 └── resources/prompts/      # LLM prompt 模板
 ```
 
 ## Phase 20 文档索引
 
-- [Phase 20M 收敛总结](reports/phase20m_convergence_summary/summary.md)
-- [Phase 20M 复习笔记](reports/phase20m_convergence_summary/review_notes.md)
-- [Phase 20L-2 CN Fallback 报告](reports/phase20l2_original_cn_fallback_floor_feature_ab/summary.md)
-- [Phase 20K Comparison Decomposition 报告](reports/phase20k_comparison_decomposition_fix/summary.md)
-- [Phase 20G Summary Quality 报告](reports/phase20g_summary_quality_minimal_fix/summary.md)
-- [Phase 20E Factoid Diversity 报告](reports/phase20e_support_diversity_rebaseline/summary.md)
 - [当前实验最佳配置](results/phase20m_convergence_summary/current_best_config.md)
+
+部分 Phase 20 报告路径在历史记录中出现过，但当前工作树未恢复对应
+`reports/phase20*` markdown 文件。本轮 cleanup 不重建这些报告，也不把缺失路径作为当前状态依据。
 
 ## License
 

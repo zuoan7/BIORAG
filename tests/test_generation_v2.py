@@ -122,7 +122,7 @@ def test_support_selector_factoid_prefers_highest_score() -> None:
     assert [item.evidence_id for item in support] == ["E2"]
 
 
-def test_support_selector_summary_caps_same_doc_at_two_items() -> None:
+def test_support_selector_summary_prefers_doc_diversity_before_second_same_doc() -> None:
     selector = SupportPackSelector()
     config = GenerationConfig(v2_max_support_summary=5)
     candidates = [
@@ -134,7 +134,8 @@ def test_support_selector_summary_caps_same_doc_at_two_items() -> None:
 
     support = selector.select("总结结果", _analysis(QueryIntent.SUMMARY), candidates, config)
 
-    assert len([item for item in support if item.candidate.doc_id == "doc1"]) == 2
+    assert len([item for item in support if item.candidate.doc_id == "doc1"]) == 1
+    assert {"doc1", "doc2"}.issubset({item.candidate.doc_id for item in support})
 
 
 def test_support_selector_summary_prefers_at_least_two_eligible_items() -> None:
@@ -152,7 +153,7 @@ def test_support_selector_summary_prefers_at_least_two_eligible_items() -> None:
     assert any("summary_min_support_fill" in item.reasons for item in support)
 
 
-def test_support_selector_summary_does_not_fill_with_reference_noise() -> None:
+def test_support_selector_summary_filters_reference_and_author_noise_before_fill() -> None:
     selector = SupportPackSelector()
     config = GenerationConfig(v2_max_support_summary=5)
     candidates = [
@@ -164,9 +165,8 @@ def test_support_selector_summary_does_not_fill_with_reference_noise() -> None:
 
     support = selector.select("总结这篇论文的结果", _analysis(QueryIntent.SUMMARY), candidates, config)
 
-    assert len(support) == 1
-    assert support[0].candidate.section == "Results"
-    assert "insufficient_summary_support" in support[0].reasons
+    assert {item.candidate.section for item in support} == {"Results", "Title"}
+    assert all(item.candidate.section not in {"References", "Author Contributions"} for item in support)
 
 
 def test_support_selector_comparison_covers_both_branches() -> None:
@@ -307,6 +307,12 @@ def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
     retrieved = [_chunk("c1", "seed text", rerank=0.9)]
     pipeline._search_with_filter_fallback = lambda **kwargs: (retrieved, {"selected": "original", "attempts": []})
+    pipeline._rewrite_svc = SimpleNamespace(
+        rewrite=lambda question, is_negative=False: (
+            question,
+            SimpleNamespace(to_dict=lambda: {}, query_rewrite_mode="off"),
+        )
+    )
     pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={"rerank": True})
     pipeline.retriever = SimpleNamespace(last_debug={"retrieval": True})
 
@@ -348,6 +354,66 @@ def test_pipeline_v2_skips_neighbor_expansion_and_old_generator() -> None:
     assert response.debug["generation_v2"]["generation_version"] == "v2"
 
 
-def test_generation_version_defaults_to_old() -> None:
+def test_generation_version_defaults_to_v2() -> None:
     settings = Settings()
+    assert settings.generation.version == "v2"
+
+
+def test_generation_version_env_can_select_old(monkeypatch) -> None:
+    monkeypatch.setenv("GENERATION_VERSION", "old")
+
+    settings = Settings.from_env()
+
     assert settings.generation.version == "old"
+
+
+def test_pipeline_old_version_uses_legacy_generation_path_when_configured() -> None:
+    pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
+    pipeline.settings = Settings(
+        retrieval=RetrievalConfig(final_top_k=1),
+        generation=GenerationConfig(version="old"),
+    )
+    pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
+    retrieved = [_chunk("c1", "legacy seed text", rerank=0.9)]
+    pipeline._search_with_filter_fallback = lambda **kwargs: (
+        retrieved,
+        {"selected": "original", "attempts": []},
+    )
+    pipeline._rewrite_svc = SimpleNamespace(
+        rewrite=lambda question, is_negative=False: (
+            question,
+            SimpleNamespace(to_dict=lambda: {}, query_rewrite_mode="off"),
+        )
+    )
+    pipeline.retriever = SimpleNamespace(last_debug={"retrieval": True})
+    pipeline.reranker = SimpleNamespace(rerank=lambda *args, **kwargs: retrieved, last_debug={})
+    pipeline.neighbor_expander = SimpleNamespace(
+        expand=lambda chunks: chunks,
+        last_debug={"enabled": True, "output_count": 1},
+    )
+    pipeline.context_builder = SimpleNamespace(build=lambda *args, **kwargs: "legacy context")
+    evidence_quality = SimpleNamespace(status="supported")
+    pipeline.generator = SimpleNamespace(
+        assess_evidence=lambda *args, **kwargs: evidence_quality,
+        generate=lambda *args, **kwargs: "legacy answer",
+        build_citations=lambda *args, **kwargs: [],
+        validate_generated_answer=lambda answer, citations, evidence: answer,
+    )
+    pipeline.confidence_scorer = SimpleNamespace(
+        score=lambda chunks: 0.77,
+        needs_external_tool=lambda confidence: False,
+    )
+    pipeline.external_tools = SimpleNamespace(
+        run_if_needed=lambda *args, **kwargs: SimpleNamespace(
+            invoked=False,
+            tool_name=None,
+            result=None,
+            references=[],
+        )
+    )
+
+    response = pipeline.answer("问题是什么？")
+
+    assert response.answer == "legacy answer"
+    assert "generation_v2" not in response.debug
+    assert response.debug["context_chars"] == len("legacy context")
