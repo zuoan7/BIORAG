@@ -47,6 +47,30 @@ Total tracked files in scope: 70.
 Total tracked bytes in scope: 834004.
 `du -ch` reported 980K on disk.
 
+## Ignored But Protected Official Baseline
+
+`reports/phase5f_eval_semantic_enhancement_v2/` is not part of the tracked
+artifact matrix because `reports/` is ignored by `.gitignore` and the files in
+this directory are not tracked by git in the current checkout.
+
+It is still explicitly protected by the PR6 retention policy:
+
+- `reports/phase5f_eval_semantic_enhancement_v2/strict_main_eval_set_v2.jsonl`
+  is the official clean baseline dataset path in
+  `configs/baseline_registry.yaml`.
+- `configs/baseline_registry.yaml` pins the dataset SHA256:
+  `39e817bf492fe6d40a784dc457b9ab566cb3061d13fef6cec0443b19d5ca09b3`.
+- `reports/phase5f_eval_semantic_enhancement_v2/summary.md` and
+  `reports/phase5f_eval_semantic_enhancement_v2/strict_main_eval_set_v2_summary.md`
+  are the summary reports for that official denominator.
+- Retained Phase6/Phase7 reports and scripts repeatedly treat
+  `strict_main_eval_set_v2.jsonl` as official dataset input and guard against
+  modifying it.
+
+Disposition: keep in place if present locally; do not delete, archive, rewrite,
+or add a replacement in cleanup. If this official dataset must become tracked in
+a future PR, do that as an explicit baseline-data PR, not as cleanup.
+
 ## Reference Proof
 
 Reference checks searched exact paths in:
@@ -231,4 +255,3 @@ Results:
 - `pytest --collect-only -q`: passed, 1042 tests collected.
 - No RAGAS, Qwen, embedding, rerank, retrieval evaluation, or index build was
   run.
-
