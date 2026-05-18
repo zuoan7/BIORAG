@@ -15,6 +15,11 @@ def _analysis(intent: QueryIntent) -> QueryAnalysis:
     return QueryAnalysis(intent=intent, requires_external_tools=False, search_limit=5, rerank_top_k=5)
 
 
+def _rewrite_disabled():
+    trace = SimpleNamespace(to_dict=lambda: {})
+    return SimpleNamespace(rewrite=lambda question, is_negative=False: (question, trace))
+
+
 def _chunk(
     chunk_id: str,
     doc_id: str,
@@ -518,6 +523,7 @@ def test_pipeline_default_off_behavior_unchanged():
         retrieval=RetrievalConfig(final_top_k=2, parent_expansion_enabled=False),
         generation=GenerationConfig(version="v2"),
     )
+    pipeline._rewrite_svc = _rewrite_disabled()
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
     retrieved = [_seed_from_chunk(_chunk("c1", "d1", 1))]
     pipeline._search_with_filter_fallback = lambda **kwargs: (retrieved, {"selected": "original", "attempts": []})
@@ -541,6 +547,7 @@ def test_pipeline_enabled_shows_parent_expansion_debug(tmp_path: Path):
         retrieval=config,
         generation=GenerationConfig(version="v2"),
     )
+    pipeline._rewrite_svc = _rewrite_disabled()
     pipeline.router = SimpleNamespace(analyze=lambda question: _analysis(QueryIntent.FACTOID))
     retrieved = [_seed_from_chunk(chunks[1])]
     pipeline._search_with_filter_fallback = lambda **kwargs: (retrieved, {"selected": "original", "attempts": []})
