@@ -240,6 +240,42 @@ A future cleanup can separately inspect untracked or ignored local outputs, but
 that should be local workspace hygiene unless those files are intentionally
 tracked by git.
 
+## Phase7 Recheck After Runtime Cleanup
+
+After the Phase0-6 runtime/config cleanup checkpoint
+`7d751a5 refactor: stabilize rag runtime cleanup through phase6`, the
+artifact inventory was rechecked without moving, deleting, promoting, or
+tracking any generated artifact.
+
+Tracked artifact scope remains unchanged:
+
+- `git ls-files reports results data/eval data/evaluation data/experiments`
+  reports 70 tracked files.
+- The tracked package distribution still matches the PR6 matrix above.
+- `git status --short -- scripts reports results data/eval data/evaluation
+  data/experiments archive` was clean before this documentation update.
+
+Local generated-output scope remains intentionally broader than the tracked
+audit:
+
+- `find results reports artifacts -maxdepth 3 -type f` reports 1600 local files
+  in this checkout.
+- Those local files include ignored generated phase packages, official baseline
+  material, preview fixtures, and local reports already classified by
+  `docs/architecture/pr7_local_artifact_inventory.md`.
+
+Disposition for this Phase7 pass: keep tracked and ignored artifacts in place.
+No artifact package has enough proof for deletion or archive movement under
+`docs/architecture/cleanup_policy.md`.
+
+Verification for this recheck:
+
+- `pytest tests/test_phase7*.py -q`: passed, 278 tests.
+- `pytest --collect-only -q`: passed, 1047 tests collected.
+- `git diff --check`: passed.
+- `git status --short -- src config scripts reports results data/eval
+  data/evaluation data/experiments archive`: clean.
+
 ## Verification
 
 Commands run for PR6 audit:

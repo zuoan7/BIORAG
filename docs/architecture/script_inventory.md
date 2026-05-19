@@ -70,6 +70,47 @@ empty archive directory was removed.
 - 5 `scripts/ingestion` scripts that remain `unknown`; Phase7 baseline and rollback guardrails treat `scripts/ingestion` git drift as ingestion pipeline drift.
 - Official datasets, baseline data, accepted baseline artifacts, production configs, and source code under `app/` or `src/`.
 
+## Phase7 Recheck After Runtime Cleanup
+
+After the Phase0-6 runtime/config cleanup checkpoint
+`7d751a5 refactor: stabilize rag runtime cleanup through phase6`, the script
+inventory was rechecked without moving or deleting files.
+
+Current `scripts/` Python counts:
+
+| Directory | Python scripts |
+| --- | ---: |
+| `scripts/diagnostics` | 2 |
+| `scripts/evaluation` | 74 |
+| `scripts/extraction` | 28 |
+| `scripts/ingestion` | 15 |
+| `scripts/ops` | 1 |
+| Total | 120 |
+
+Additional recheck results:
+
+- `archive/` contains zero Python scripts.
+- `git status --short -- scripts` was clean before this documentation update.
+- Exact-path checks for the 5 retained `scripts/ingestion` unknown files found
+  cleanup-inventory references and a self-usage example in
+  `scripts/ingestion/rebuild_docs_by_id.py`, but no current app/src/test/config
+  dependency that justifies moving them in this pass.
+- No new script archive candidate was opened by Phase0-6. The retained unknown
+  ingestion scripts still need a separate decision because Phase7 guardrails
+  treat `scripts/ingestion` drift as ingestion pipeline drift.
+
+Disposition for this Phase7 pass: keep every remaining script in place and
+record the recheck only. Do not quarantine or delete scripts until a future
+ingestion-specific cleanup proves safety under the deletion rules.
+
+Verification for this recheck:
+
+- `pytest tests/test_phase7*.py -q`: passed, 278 tests.
+- `pytest --collect-only -q`: passed, 1047 tests collected.
+- `git diff --check`: passed.
+- `git status --short -- src config scripts reports results data/eval
+  data/evaluation data/experiments archive`: clean.
+
 ## Cleanup Notes
 
 - No tests were moved to `tests/legacy/`; archive candidates had no direct test import/path refs.

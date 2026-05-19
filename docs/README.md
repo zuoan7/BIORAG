@@ -15,8 +15,12 @@ Phase7 preview 边界以仓库根目录的 [README.md](../README.md) 为准。
   脚本保留白名单。
 - [scripts archive candidates](architecture/scripts_archive_candidates.md)：
   Cleanup PR2 脚本归档候选矩阵。
-- [scripts cleanup report](architecture/scripts_cleanup_report.md)：Cleanup PR2
-  quarantine 结果和验证记录。
+- [scripts cleanup report](architecture/scripts_cleanup_report.md)：Cleanup
+  PR2-PR5 quarantine/delete-after-quarantine 结果和验证记录。
+- [tracked artifact inventory](architecture/results_reports_artifact_inventory.md)：
+  tracked reports/results/data artifact 保留矩阵。
+- [local artifact inventory](architecture/pr7_local_artifact_inventory.md)：
+  ignored/untracked local artifact 分类和保留建议。
 
 ## Phase7 表格证据边界
 
