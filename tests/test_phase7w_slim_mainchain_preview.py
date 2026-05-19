@@ -63,14 +63,14 @@ def _clear_table_preview_env():
     os.environ.update(old_values)
 
 
-def test_table_preview_merge_strategy_defaults_to_type_aware_merge_v1():
+def test_table_preview_defaults_to_shadow_only_type_aware_merge_v1():
     settings = Settings.from_env()
 
     assert RetrievalConfig().table_preview_enabled is True
-    assert RetrievalConfig().table_preview_merge_enabled is True
+    assert RetrievalConfig().table_preview_merge_enabled is False
     assert RetrievalConfig().table_preview_merge_strategy == "type_aware_merge_v1"
     assert settings.retrieval.table_preview_enabled is True
-    assert settings.retrieval.table_preview_merge_enabled is True
+    assert settings.retrieval.table_preview_merge_enabled is False
     assert settings.retrieval.table_preview_merge_strategy == "type_aware_merge_v1"
 
 

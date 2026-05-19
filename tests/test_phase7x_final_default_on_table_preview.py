@@ -61,14 +61,14 @@ def _clear_table_preview_env():
     os.environ.update(old_values)
 
 
-def test_default_on_config_uses_type_aware_merge_v1():
+def test_default_on_config_is_shadow_only_type_aware_merge_v1():
     settings = Settings.from_env()
 
     assert RetrievalConfig().table_preview_enabled is True
-    assert RetrievalConfig().table_preview_merge_enabled is True
+    assert RetrievalConfig().table_preview_merge_enabled is False
     assert RetrievalConfig().table_preview_merge_strategy == "type_aware_merge_v1"
     assert settings.retrieval.table_preview_enabled is True
-    assert settings.retrieval.table_preview_merge_enabled is True
+    assert settings.retrieval.table_preview_merge_enabled is False
     assert settings.retrieval.table_preview_merge_strategy == "type_aware_merge_v1"
 
 
@@ -111,31 +111,39 @@ def test_table_preview_merge_enabled_false_keeps_shadow_out_of_rerank_input():
     assert debug["table_candidates_in_rerank_input"] is False
 
 
-def test_non_table_query_hard_blocks_default_on_merge():
+def test_default_shadow_keeps_preview_out_of_rerank_input():
     provider = StaticProvider([_unit("table_1", "table_unit")], [0.9])
 
-    output, debug = apply_table_preview(
-        question="Summarize the study motivation and biological system.",
-        retrieved=[_normal_chunk()],
-        config=RetrievalConfig(table_preview_units_path=str(UNITS_PATH)),
-        provider=provider,  # type: ignore[arg-type]
-    )
-
-    assert provider.called is True
-    assert debug["mode"] == "merge_blocked"
-    assert debug["reason"] == "non_table_query_guard"
-    assert debug["table_candidates_in_rerank_input"] is False
-    assert _preview_chunks(output) == []
-
-
-def test_citation_guard_blocks_default_on_preview_formal_citation():
-    provider = StaticProvider([_unit("table_1", "table_unit")], [0.9])
     output, debug = apply_table_preview(
         question="Which table reports Table 1 test table?",
         retrieved=[_normal_chunk()],
         config=RetrievalConfig(table_preview_units_path=str(UNITS_PATH)),
         provider=provider,  # type: ignore[arg-type]
     )
+
+    assert provider.called is True
+    assert debug["mode"] == "shadow"
+    assert debug["reason"] == "shadow_debug_only"
+    assert debug["candidate_count"] == 1
+    assert debug["merged_count"] == 0
+    assert debug["table_candidates_in_rerank_input"] is False
+    assert _preview_chunks(output) == []
+
+
+def test_explicit_merge_still_allows_preview_candidates_before_citation_guard():
+    os.environ["TABLE_PREVIEW_MERGE_ENABLED"] = "true"
+    settings = Settings.from_env()
+    provider = StaticProvider([_unit("table_1", "table_unit")], [0.9])
+
+    output, debug = apply_table_preview(
+        question="Which table reports Table 1 test table?",
+        retrieved=[_normal_chunk()],
+        config=settings.retrieval,
+        provider=provider,  # type: ignore[arg-type]
+    )
+
+    assert settings.retrieval.table_preview_merge_enabled is True
+    assert debug["mode"] == "merged_preview"
     chunk = _preview_chunks(output)[0]
     candidate = _evidence_candidate_from_chunk("E1", chunk)
     support = [SupportItem("E1", candidate, 0.9, ["selected_preview_table"])]

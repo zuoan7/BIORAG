@@ -13,18 +13,26 @@ this document.
 - `src/synbio_rag/application/rag_service.py`: application service wrapper for
   sessions, audit logging, and pipeline invocation.
 - `src/synbio_rag/application/pipeline.py`: current main RAG orchestration path.
+- `src/synbio_rag/application/pipeline_stages.py`: behavior-preserving internal
+  stages used by `SynBioRAGPipeline.answer()`.
 - `src/synbio_rag/application/generation_v2/`: current generation chain. The
   runtime is v2-only; `GenerationConfig.version` and `GENERATION_VERSION` are no
   longer supported.
 - `src/synbio_rag/application/rerank_service.py`: main-process local BGE
   reranker orchestration and guarded rerank logic.
+- `src/synbio_rag/application/retrieval_query_planner.py`,
+  `src/synbio_rag/application/alias_expansion_policy.py`, and
+  `src/synbio_rag/application/retrieval_postprocessor.py`: application-owned
+  retrieval query planning, BM25 alias expansion, and retrieval postprocessing
+  policies injected into `HybridRetriever`.
 - `src/synbio_rag/application/parent_expansion.py`: current v2 context expansion
   path after rerank seeds.
 - `src/synbio_rag/rewrite/query_rewrite_service.py`: feature-flagged query
   rewrite service. Production default remains `QUERY_REWRITE_MODE=off`.
 - `src/synbio_rag/application/table_preview.py`: preview table sidecar candidate
-  provider. It can add preview candidates before rerank when enabled, but formal
-  table citation remains blocked by default.
+  provider. By default it is shadow-only debug data; explicit preview merge can
+  add candidates before rerank for eval/experiments, but formal table citation
+  remains blocked by default.
 
 ## production_core
 
@@ -36,13 +44,16 @@ this document.
   selection, answer planning/building, citation binding, validation, and optional
   Qwen synthesis.
 - `src/synbio_rag/infrastructure/`: embedding, reranker, vectorstores, persistence,
-  external clients, and parent index store.
+  external clients, and parent index store. `HybridRetriever` keeps dense/BM25
+  fusion mechanics and receives application retrieval policies by injection.
 - `src/synbio_rag/rewrite/`: query rewrite service and prompt-backed rewrite
   wiring.
 - `src/synbio_rag/ingestion/`: reusable ingestion helpers used by current
   ingestion scripts.
 - `resources/prompts/query_rewrite_en_mirror.txt`: query rewrite prompt resource.
 - `config/settings.example.env`: documented environment variable example.
+- `docs/architecture/runtime_config_contract.md`: frozen `/v1/ask` runtime,
+  debug, env-key, and Phase7 preview contract for the cleanup migration.
 
 ## experimental_preview
 
@@ -75,7 +86,8 @@ Phase7 constraints:
   enter formal citation source fields.
 - Production `CitationBinder` must not be changed to allow formal Phase7 table
   citation as part of cleanup.
-- Cleanup must not alter `/v1/ask` behavior when Phase7 preview data is present.
+- Cleanup must not promote Phase7 preview data into formal `/v1/ask` table
+  evidence or citation behavior.
 
 ## legacy_candidate
 

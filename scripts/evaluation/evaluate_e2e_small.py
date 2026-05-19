@@ -37,7 +37,13 @@ from src.synbio_rag.application.parent_expansion import ParentContextExpander
 from src.synbio_rag.application.summary_supplement import build_empty_supplement_debug, supplement_summary_sections
 from src.synbio_rag.application.table_preview_pipeline import run_table_preview
 from src.synbio_rag.domain.config import Settings
-from src.synbio_rag.domain.schemas import Citation, QueryAnalysis, QueryFilters, RAGResponse, RetrievedChunk
+from src.synbio_rag.domain.schemas import (
+    Citation,
+    QueryAnalysis,
+    QueryFilters,
+    RAGPipelineResponse,
+    RetrievedChunk,
+)
 
 
 CONFIG_SCAN_PATHS = [
@@ -371,7 +377,7 @@ def detect_hallucination(spec: QuerySpec, answer: str, citations: list[dict[str,
 def grade_mode(
     spec: QuerySpec,
     reranked_rows: list[dict[str, Any]],
-    response: RAGResponse,
+    response: RAGPipelineResponse,
 ) -> dict[str, Any]:
     retrieval_hit = any(row.get("target_match") for row in reranked_rows)
     rank1_row = reranked_rows[0] if reranked_rows else None

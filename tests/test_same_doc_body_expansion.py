@@ -1,4 +1,4 @@
-"""Test same-doc body candidate expansion in hybrid.py."""
+"""Test same-doc body candidate expansion policy."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.synbio_rag.domain.config import RetrievalConfig
 from src.synbio_rag.domain.schemas import RetrievedChunk
-from src.synbio_rag.infrastructure.vectorstores.hybrid import (
+from src.synbio_rag.application.retrieval_postprocess import (
     _apply_same_doc_body_expansion,
     _BODY_EXPAND_SECTIONS,
 )

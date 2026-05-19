@@ -2,13 +2,193 @@ from __future__ import annotations
 
 import os
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from dotenv import dotenv_values
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+_SUPPORTED_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "APP_ENV",
+        "AUDIT_LOG_PATH",
+        "BGE_EMBED_MAX_LENGTH",
+        "BGE_M3_MODEL_PATH",
+        "BGE_RERANKER_MODEL_PATH",
+        "BIORAG_RERANK_MODE",
+        "EVAL_REWRITE_CACHE_PATH",
+        "EVAL_REWRITE_FAIL_FAST_ON_MISSING",
+        "EVAL_REWRITE_REQUIRE_CACHE",
+        "GENERATION_V2_ENABLE_COMPARISON_COVERAGE",
+        "GENERATION_V2_ENABLE_NEIGHBOR_AUDIT",
+        "GENERATION_V2_ENABLE_NEIGHBOR_PROMOTION",
+        "GENERATION_V2_INCLUDE_NEIGHBOR_CONTEXT_IN_QWEN",
+        "GENERATION_V2_MAX_EXTRACTIVE_EVIDENCE_LINES",
+        "GENERATION_V2_MAX_NEIGHBORS_PER_SEED",
+        "GENERATION_V2_MAX_SUPPORT_COMPARISON",
+        "GENERATION_V2_MAX_SUPPORT_FACTOID",
+        "GENERATION_V2_MAX_SUPPORT_SUMMARY",
+        "GENERATION_V2_MIN_SUPPORT_SCORE",
+        "GENERATION_V2_NEIGHBOR_MIN_PROMOTION_SCORE",
+        "GENERATION_V2_NEIGHBOR_PROMOTION_DRY_RUN",
+        "GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE1",
+        "GENERATION_V2_NEIGHBOR_SCORE_DECAY_DISTANCE2",
+        "GENERATION_V2_NEIGHBOR_WINDOW",
+        "GENERATION_V2_PROFILE",
+        "GENERATION_V2_QWEN_SYNTHESIS_MAX_CHARS_PER_EVIDENCE",
+        "GENERATION_V2_QWEN_SYNTHESIS_MAX_OUTPUT_CHARS",
+        "GENERATION_V2_QWEN_SYNTHESIS_TIMEOUT_SECONDS",
+        "GENERATION_V2_REQUIRE_CITATION",
+        "GENERATION_V2_USE_HISTORY",
+        "GENERATION_V2_USE_QWEN_SYNTHESIS",
+        "MILVUS_COLLECTION",
+        "MILVUS_URI",
+        "QUERY_REWRITE_CACHE_ENABLED",
+        "QUERY_REWRITE_CACHE_KEY_VERSION",
+        "QUERY_REWRITE_CACHE_TTL_SECONDS",
+        "QUERY_REWRITE_FAIL_FAST_ON_FALLBACK_RATE",
+        "QUERY_REWRITE_FALLBACK_ON_ERROR",
+        "QUERY_REWRITE_GUARD_IMPLICIT_REFERENCE",
+        "QUERY_REWRITE_GUARD_NEGATIVE_INTENT",
+        "QUERY_REWRITE_MODE",
+        "QUERY_REWRITE_MODEL",
+        "QUERY_REWRITE_REQUIRE_LLM_FOR_EVAL",
+        "QUERY_REWRITE_TEMPERATURE",
+        "QUERY_REWRITE_TIMEOUT_MS",
+        "QUERY_REWRITE_TRACE_ENABLED",
+        "QWEN_CHAT_API_BASE",
+        "QWEN_CHAT_API_KEY",
+        "RETRIEVAL_ALIAS_EXPANSION_ENABLED",
+        "RETRIEVAL_ALIAS_EXPANSION_RISK_LEVELS",
+        "RETRIEVAL_ALIAS_EXPANSION_SCOPE",
+        "RETRIEVAL_ALIAS_MAX_ENTITIES_PER_QUERY",
+        "RETRIEVAL_ALIAS_MAX_TOTAL_TERMS",
+        "RETRIEVAL_BM25_ENABLED",
+        "RETRIEVAL_BM25_LIMIT",
+        "RETRIEVAL_BM25_RRF_WEIGHT",
+        "RETRIEVAL_CJK_QUERY_BM25_WEIGHT",
+        "RETRIEVAL_COMPARISON_MAX_CHUNKS_PER_DOC",
+        "RETRIEVAL_COMPARISON_QUERY_WEIGHT",
+        "RETRIEVAL_COMPARISON_RERANK_MAX_CHUNKS_PER_DOC",
+        "RETRIEVAL_COMPARISON_SUBQUERY_WEIGHT",
+        "RETRIEVAL_DENSE_LIMIT",
+        "RETRIEVAL_DENSE_RRF_WEIGHT",
+        "RETRIEVAL_EVIDENCE_DEFINITION_BONUS",
+        "RETRIEVAL_EVIDENCE_NUMERIC_BONUS",
+        "RETRIEVAL_EVIDENCE_RESULT_BONUS",
+        "RETRIEVAL_FIGURE_CAPTION_BOOST",
+        "RETRIEVAL_FINAL_TOP_K",
+        "RETRIEVAL_GUARDED_DOC_WEIGHT",
+        "RETRIEVAL_GUARDED_HYBRID_WEIGHT",
+        "RETRIEVAL_GUARDED_INCOMPLETE_PENALTY",
+        "RETRIEVAL_GUARDED_KEYWORD_WEIGHT",
+        "RETRIEVAL_GUARDED_MARKER_WEIGHT",
+        "RETRIEVAL_GUARDED_RANK1_MAX_SCORE_GAP",
+        "RETRIEVAL_GUARDED_RANK1_MIN_COMPLETENESS_GAIN",
+        "RETRIEVAL_GUARDED_RERANKER_WEIGHT",
+        "RETRIEVAL_HNSW_EF",
+        "RETRIEVAL_HYBRID_ENABLED",
+        "RETRIEVAL_INDEX_SCHEMA_VERSION",
+        "RETRIEVAL_INDEX_TYPE",
+        "RETRIEVAL_NEIGHBOR_EXPANSION_ENABLED",
+        "RETRIEVAL_NEIGHBOR_EXPANSION_MAX_CHUNKS",
+        "RETRIEVAL_NEIGHBOR_WINDOW_SIZE",
+        "RETRIEVAL_NPROBE",
+        "RETRIEVAL_ORIGINAL_CN_FALLBACK_BM25_TOP_N",
+        "RETRIEVAL_ORIGINAL_CN_FALLBACK_DENSE_TOP_N",
+        "RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED",
+        "RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL",
+        "RETRIEVAL_PARENT_EXPANSION_CAPTION_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_EVIDENCE_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_MAX_TOTAL",
+        "RETRIEVAL_PARENT_EXPANSION_PAGE_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT",
+        "RETRIEVAL_PARENT_EXPANSION_SECTION_PATH_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS",
+        "RETRIEVAL_PARENT_EXPANSION_SUMMARY_SECTIONS_ENABLED",
+        "RETRIEVAL_PARENT_EXPANSION_WINDOW_ENABLED",
+        "RETRIEVAL_PARENT_INDEX_PATH",
+        "RETRIEVAL_RERANK_MODE",
+        "RETRIEVAL_RERANK_SCORE_FLOOR_RATIO",
+        "RETRIEVAL_RERANK_STRATEGY_BONUS",
+        "RETRIEVAL_RERANK_SUBQUERY_AGGREGATE_ALPHA",
+        "RETRIEVAL_RERANK_TOP_K",
+        "RETRIEVAL_SAME_DOC_BODY_COVERAGE_ENABLED",
+        "RETRIEVAL_SAME_DOC_BODY_COVERAGE_INTENTS",
+        "RETRIEVAL_SAME_DOC_BODY_COVERAGE_MARGIN",
+        "RETRIEVAL_SAME_DOC_BODY_COVERAGE_MAX_TOTAL",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_ENABLED",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_MAX_TOTAL",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_MIN_DOC_RANK",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_PER_DOC",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_REQUIRE_MISSING_BODY",
+        "RETRIEVAL_SAME_DOC_BODY_EXPAND_TOP_DOCS",
+        "RETRIEVAL_SCORE_FLOOR",
+        "RETRIEVAL_SEARCH_LIMIT",
+        "RETRIEVAL_SECTION_ABSTRACT_BONUS",
+        "RETRIEVAL_SECTION_DISCUSSION_BONUS",
+        "RETRIEVAL_SECTION_GROUP_COVERAGE_LEVEL2_ENABLED",
+        "RETRIEVAL_SECTION_INTRODUCTION_PENALTY",
+        "RETRIEVAL_SECTION_RESULTS_BONUS",
+        "RETRIEVAL_SOURCE_FLOOR_BM25_TOP_N",
+        "RETRIEVAL_SOURCE_FLOOR_DENSE_TOP_N",
+        "RETRIEVAL_SOURCE_FLOOR_ENABLED",
+        "RETRIEVAL_SOURCE_FLOOR_MAX_CANDIDATES_TOTAL",
+        "RETRIEVAL_TABLE_CAPTION_BOOST",
+        "RETRIEVAL_TABLE_TEXT_BOOST",
+        "RETRIEVAL_TITLE_KEYWORD_BOOST",
+        "SESSION_STORE_PATH",
+        "SYNBIO_MILVUS_URI",
+        "TABLE_ENHANCEMENT_AUDIT_ROOT",
+        "TABLE_ENHANCEMENT_DRY_RUN",
+        "TABLE_ENHANCEMENT_ENABLED",
+        "TABLE_ENHANCEMENT_FAIL_ON_SCHEMA_DRIFT",
+        "TABLE_ENHANCEMENT_MAX_ASSOCIATED_BLOCKS_PER_CAPTION",
+        "TABLE_ENHANCEMENT_MIN_CONFIDENCE",
+        "TABLE_ENHANCEMENT_MODE",
+        "TABLE_ENHANCEMENT_OUTPUT_SUFFIX",
+        "TABLE_ENHANCEMENT_WINDOW_AFTER_CAPTION",
+        "TABLE_ENHANCEMENT_WINDOW_BEFORE_CAPTION",
+        "TABLE_ENHANCEMENT_WRITE_AUDIT",
+        "TABLE_PREVIEW_ALLOW_FORMAL_CITATION",
+        "TABLE_PREVIEW_ENABLED",
+        "TABLE_PREVIEW_MAX_CANDIDATES",
+        "TABLE_PREVIEW_MERGE_ENABLED",
+        "TABLE_PREVIEW_MERGE_MAX_CANDIDATES",
+        "TABLE_PREVIEW_MERGE_STRATEGY",
+        "TABLE_PREVIEW_MIN_SCORE",
+        "TABLE_PREVIEW_UNITS_PATH",
+    }
+)
+_DEPRECATED_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "GENERATION_VERSION",
+        "GENERATION_V2_USE_EXTERNAL_TOOLS",
+        "QWEN_RERANK_API_BASE",
+        "QWEN_RERANK_API_KEY",
+        "RERANKER_SERVICE_URL",
+    }
+)
+_DEPRECATED_ENV_PREFIXES: tuple[str, ...] = ("ROUND8_",)
+_PROJECT_ENV_PREFIXES: tuple[str, ...] = (
+    "AUDIT_",
+    "BGE_",
+    "BIORAG_",
+    "EVAL_REWRITE_",
+    "GENERATION_",
+    "MILVUS_",
+    "QUERY_REWRITE_",
+    "QWEN_",
+    "RERANKER_",
+    "RETRIEVAL_",
+    "ROUND8_",
+    "SESSION_",
+    "SYNBIO_",
+    "TABLE_",
+)
 
 
 @dataclass
@@ -33,7 +213,7 @@ class RerankerConfig:
 
 
 @dataclass
-class RetrievalConfig:
+class RetrievalCoreConfig:
     milvus_uri: str = "./runtime/vectorstores/milvus/papers.db"
     collection_name: str = "synbio_papers"
     vector_field: str = "embedding"
@@ -41,9 +221,7 @@ class RetrievalConfig:
     search_limit: int = 40
     dense_limit: int = 40
     bm25_limit: int = 40
-    rerank_top_k: int = 10
     final_top_k: int = 8
-    rerank_mode: str = "plain"
     metric_type: str = "COSINE"
     ef: int = 64
     score_floor: float = 0.05
@@ -54,14 +232,23 @@ class RetrievalConfig:
     dense_rrf_weight: float = 1.0
     bm25_rrf_weight: float = 1.0
     cjk_query_bm25_weight: float = 0.25
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+    bm25_batch_size: int = 1000
+
+
+@dataclass
+class ComparisonRetrievalConfig:
     comparison_query_weight: float = 1.1
     comparison_subquery_weight: float = 0.9
     comparison_max_chunks_per_doc: int = 3
+
+
+@dataclass
+class RerankPolicyConfig:
+    rerank_top_k: int = 10
+    rerank_mode: str = "plain"
     comparison_rerank_max_chunks_per_doc: int = 3
-    title_keyword_boost: float = 0.08
-    table_text_boost: float = 0.10
-    table_caption_boost: float = 0.06
-    figure_caption_boost: float = 0.08
     rerank_subquery_aggregate_alpha: float = 0.15
     rerank_strategy_bonus: float = 0.1
     guarded_hybrid_weight: float = 0.45
@@ -72,6 +259,15 @@ class RetrievalConfig:
     guarded_incomplete_penalty: float = 0.18
     guarded_rank1_min_completeness_gain: float = 0.18
     guarded_rank1_max_score_gap: float = 0.20
+    rerank_score_floor_ratio: float = 0.4
+
+
+@dataclass
+class RetrievalEvidenceBoostConfig:
+    title_keyword_boost: float = 0.08
+    table_text_boost: float = 0.10
+    table_caption_boost: float = 0.06
+    figure_caption_boost: float = 0.08
     evidence_numeric_bonus: float = 0.20
     evidence_result_bonus: float = 0.22
     evidence_definition_bonus: float = 0.06
@@ -79,28 +275,31 @@ class RetrievalConfig:
     section_discussion_bonus: float = 0.28
     section_abstract_bonus: float = 0.0
     section_introduction_penalty: float = -0.05
-    # Post-rerank same-doc body section coverage (Phase 4)
+
+
+@dataclass
+class SameDocExpansionConfig:
     same_doc_body_coverage_enabled: bool = False
     same_doc_body_coverage_intents: list[str] = field(default_factory=lambda: ["factoid"])
     same_doc_body_coverage_margin: int = 5
     same_doc_body_coverage_per_doc: int = 1
     same_doc_body_coverage_max_total: int = 1
     same_doc_body_coverage_replace_policy: str = "same_doc_non_body"
-    # Phase 5: section group coverage Level 2 (INTRO/METHOD missing)
     same_doc_section_group_coverage_level2_enabled: bool = False
-    # Same-doc body candidate expansion (Phase 2, not used)
     same_doc_body_expand_enabled: bool = False
     same_doc_body_expand_top_docs: int = 5
     same_doc_body_expand_per_doc: int = 2
     same_doc_body_expand_max_total: int = 8
     same_doc_body_expand_min_doc_rank: int = 20
     same_doc_body_expand_require_missing_body: bool = True
-    # Source-floor: retain top-N single-source candidates suppressed by RRF merge
     source_floor_enabled: bool = True
     source_floor_dense_top_n: int = 3
     source_floor_bm25_top_n: int = 3
     source_floor_max_candidates_total: int = 6
-    # Controlled alias expansion: query-time BM25-only Chinese-English domain alias
+
+
+@dataclass
+class AliasExpansionConfig:
     alias_expansion_enabled: bool = False
     alias_expansion_scope: str = "bm25_only"
     alias_expansion_risk_levels: list[str] = field(default_factory=lambda: ["low"])
@@ -108,7 +307,10 @@ class RetrievalConfig:
     alias_expansion_max_expansions_per_entity: int = 3
     alias_expansion_max_total_terms: int = 8
     alias_expansion_map_path: str = ""
-    rerank_score_floor_ratio: float = 0.4
+
+
+@dataclass
+class ContextExpansionConfig:
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
     neighbor_expansion_max_chunks: int = 30
@@ -133,7 +335,10 @@ class RetrievalConfig:
             "Results and Discussion",
         ]
     )
-    # Phase 20L: original CN fallback floor for bilingual retrieval
+
+
+@dataclass
+class OriginalCnFallbackConfig:
     original_cn_fallback_enabled: bool = False
     original_cn_fallback_dense_top_n: int = 2
     original_cn_fallback_bm25_top_n: int = 2
@@ -141,25 +346,97 @@ class RetrievalConfig:
     original_cn_fallback_require_rewrite_enabled: bool = True
     original_cn_fallback_require_cjk: bool = True
     original_cn_fallback_min_query_diff: bool = True
-    # Phase7X: local preview-only table candidate sidecar. Default on with emergency off.
+
+
+@dataclass
+class TablePreviewConfig:
     table_preview_enabled: bool = True
     table_preview_units_path: str = (
         "./data/experiments/v7_phase7_table_index_unit_qa/phase7j_preview_eligible_units.jsonl"
     )
     table_preview_max_candidates: int = 20
-    table_preview_merge_enabled: bool = True
+    table_preview_merge_enabled: bool = False
     table_preview_merge_strategy: str = "type_aware_merge_v1"
     table_preview_merge_max_candidates: int = 5
     table_preview_min_score: float = 0.05
     table_preview_allow_formal_citation: bool = False
-    bm25_k1: float = 1.5
-    bm25_b: float = 0.75
-    bm25_batch_size: int = 1000
-    # Phase 12A: 结构化索引契约
+
+
+@dataclass
+class IndexContractConfig:
     index_schema_version: str = "v2"
     index_type: str = "IVF_FLAT"
     nprobe: int = 16
     hnsw_ef: int = 64
+
+
+@dataclass(init=False)
+class RetrievalConfig:
+    core: RetrievalCoreConfig = field(default_factory=RetrievalCoreConfig)
+    comparison: ComparisonRetrievalConfig = field(default_factory=ComparisonRetrievalConfig)
+    rerank: RerankPolicyConfig = field(default_factory=RerankPolicyConfig)
+    evidence_boost: RetrievalEvidenceBoostConfig = field(
+        default_factory=RetrievalEvidenceBoostConfig
+    )
+    same_doc: SameDocExpansionConfig = field(default_factory=SameDocExpansionConfig)
+    alias_expansion: AliasExpansionConfig = field(default_factory=AliasExpansionConfig)
+    context_expansion: ContextExpansionConfig = field(default_factory=ContextExpansionConfig)
+    original_cn_fallback: OriginalCnFallbackConfig = field(default_factory=OriginalCnFallbackConfig)
+    table_preview: TablePreviewConfig = field(default_factory=TablePreviewConfig)
+    index_contract: IndexContractConfig = field(default_factory=IndexContractConfig)
+
+    def __init__(self, **overrides) -> None:
+        for group_name, group_type in _RETRIEVAL_CONFIG_GROUPS.items():
+            group_value = overrides.pop(group_name, None)
+            if group_value is None:
+                group_value = group_type()
+            elif isinstance(group_value, dict):
+                group_value = group_type(**group_value)
+            elif not isinstance(group_value, group_type):
+                raise TypeError(
+                    f"RetrievalConfig {group_name} must be {group_type.__name__}, "
+                    f"got {type(group_value).__name__}."
+                )
+            object.__setattr__(self, group_name, group_value)
+
+        for key, value in overrides.items():
+            if key not in _RETRIEVAL_FIELD_TO_GROUP:
+                raise TypeError(
+                    f"RetrievalConfig.__init__() got an unexpected keyword argument {key!r}"
+                )
+            setattr(self, key, value)
+
+    def __getattr__(self, name: str):
+        group_name = _RETRIEVAL_FIELD_TO_GROUP.get(name)
+        if group_name is None:
+            raise AttributeError(name)
+        return getattr(object.__getattribute__(self, group_name), name)
+
+    def __setattr__(self, name: str, value) -> None:
+        group_name = _RETRIEVAL_FIELD_TO_GROUP.get(name)
+        if group_name is None:
+            object.__setattr__(self, name, value)
+            return
+        setattr(object.__getattribute__(self, group_name), name, value)
+
+
+_RETRIEVAL_CONFIG_GROUPS = {
+    "core": RetrievalCoreConfig,
+    "comparison": ComparisonRetrievalConfig,
+    "rerank": RerankPolicyConfig,
+    "evidence_boost": RetrievalEvidenceBoostConfig,
+    "same_doc": SameDocExpansionConfig,
+    "alias_expansion": AliasExpansionConfig,
+    "context_expansion": ContextExpansionConfig,
+    "original_cn_fallback": OriginalCnFallbackConfig,
+    "table_preview": TablePreviewConfig,
+    "index_contract": IndexContractConfig,
+}
+_RETRIEVAL_FIELD_TO_GROUP: dict[str, str] = {
+    config_field.name: group_name
+    for group_name, group_type in _RETRIEVAL_CONFIG_GROUPS.items()
+    for config_field in fields(group_type)
+}
 
 
 @dataclass
@@ -309,6 +586,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         settings = cls()
         env_file = dotenv_values(PROJECT_ROOT / ".env")
+        _warn_ignored_env_keys(env_file)
 
         def get_value(key: str, default: str) -> str:
             return os.getenv(key, env_file.get(key, default))
@@ -929,6 +1207,33 @@ def _resolve_local_path(value: str) -> str:
 
 def _parse_bool(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _warn_ignored_env_keys(env_file: dict) -> None:
+    provided_keys = set(os.environ) | {str(key) for key in env_file}
+    deprecated_keys: list[str] = []
+    unknown_keys: list[str] = []
+    for key in sorted(provided_keys):
+        if key in _SUPPORTED_ENV_KEYS:
+            continue
+        if key in _DEPRECATED_ENV_KEYS or key.startswith(_DEPRECATED_ENV_PREFIXES):
+            deprecated_keys.append(key)
+            continue
+        if key == "APP_ENV" or key.startswith(_PROJECT_ENV_PREFIXES):
+            unknown_keys.append(key)
+
+    if deprecated_keys:
+        warnings.warn(
+            "Deprecated BIORAG env keys are ignored by Settings.from_env(): "
+            + ", ".join(deprecated_keys),
+            stacklevel=3,
+        )
+    if unknown_keys:
+        warnings.warn(
+            "Unknown BIORAG env keys are ignored by Settings.from_env(): "
+            + ", ".join(unknown_keys),
+            stacklevel=3,
+        )
 
 
 def _apply_profile(gen: "GenerationConfig", profile: str) -> None:

@@ -4,7 +4,7 @@ import time
 from typing import Any
 
 from ..domain.config import Settings
-from ..domain.schemas import QueryFilters, QueryIntent, RAGResponse, RetrievedChunk
+from ..domain.schemas import QueryFilters, QueryIntent, RAGPipelineResponse, RetrievedChunk
 from .original_cn_fallback import sanitize_original_cn_fallback_debug
 from .table_preview import sanitize_table_preview_debug
 
@@ -33,7 +33,7 @@ def build_generation_v2_response(
     evidence_lifecycle_debug: dict,
     rewrite_trace: Any,
     table_preview_answer_without_formal_citation: bool,
-) -> RAGResponse:
+) -> RAGPipelineResponse:
     gv2_debug = gen_result.debug
     gv2_debug["table_preview_answer_without_formal_citation"] = (
         table_preview_answer_without_formal_citation
@@ -47,16 +47,12 @@ def build_generation_v2_response(
     if analysis.intent == QueryIntent.NEGATIVE:
         v2_citations = []
 
-    return RAGResponse(
+    return RAGPipelineResponse(
         answer=gen_result.answer,
         confidence=confidence,
         route=analysis.intent,
         citations=v2_citations,
-        used_external_tool=False,
-        tool_name=None,
-        tool_result=None,
         session_id=session_id,
-        external_references=[],
         debug={
             "analysis_notes": analysis.notes,
             "retrieved_count": len(retrieved),

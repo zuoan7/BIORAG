@@ -23,7 +23,7 @@ from scripts.evaluation.phase7x_final_build_query_set import (
 from src.synbio_rag.application.generation_v2 import GenerationV2Service
 from src.synbio_rag.application.table_preview import apply_table_preview
 from src.synbio_rag.domain.config import GenerationConfig, ModelEndpointConfig, RetrievalConfig, Settings
-from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RAGResponse, RetrievedChunk
+from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RAGPipelineResponse, RetrievedChunk
 
 
 PHASE_DIR = "v7_phase7_table_preview_final_acceptance"
@@ -193,14 +193,11 @@ def _run_seam_mode(query: dict[str, Any], mode: str) -> dict[str, Any]:
     reranked = _stub_rerank(output)
     support_chunks = _select_support_chunks(query, reranked)
     result = _generate_extract_answer(query["query_text"], support_chunks)
-    response = RAGResponse(
+    response = RAGPipelineResponse(
         answer=result.answer,
         confidence=1.0 if support_chunks else 0.0,
         route=QueryIntent.FACTOID,
         citations=result.citations,
-        used_external_tool=False,
-        tool_name=None,
-        tool_result=None,
         debug={
             "table_preview": debug,
             "generation_v2": result.debug,
@@ -214,7 +211,7 @@ def _record_from_response(
     query: dict[str, Any],
     mode: str,
     backend_mode: str,
-    response: RAGResponse,
+    response: RAGPipelineResponse,
 ) -> dict[str, Any]:
     table_debug = response.debug.get("table_preview", {}) or {}
     generation_debug = response.debug.get("generation_v2", {}) or {}

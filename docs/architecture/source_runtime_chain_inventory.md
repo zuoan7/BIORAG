@@ -11,6 +11,7 @@ app/main.py::ask()
       -> load session history
       -> SynBioRAGPipeline.answer()
       -> append user/assistant turns
+      -> adapt RAGPipelineResponse to legacy RAGResponse
       -> hide debug unless include_debug=true
       -> write audit log
   -> serialize RAGResponse
@@ -39,11 +40,14 @@ Externally visible response fields remain:
 | `QueryRouter` | `domain/router.py` | Query intent and retrieval sizing. |
 | `MilvusRetriever` | `infrastructure/vectorstores/milvus.py` | Dense retrieval. |
 | `BM25Retriever` | `infrastructure/vectorstores/bm25.py` | Lexical retrieval. |
-| `HybridRetriever` | `infrastructure/vectorstores/hybrid.py` | Dense/BM25 fusion. |
+| `RetrievalQueryPlanner` | `application/retrieval_query_planner.py` | Retrieval query variants, comparison subqueries, and CJK signal. |
+| `AliasExpansionPolicy` | `application/alias_expansion_policy.py` | BM25-only controlled alias expansion. |
+| `RetrievalPostProcessor` | `application/retrieval_postprocessor.py` | Retrieval boosts, comparison diversity, same-doc expansion, and source floor. |
+| `HybridRetriever` | `infrastructure/vectorstores/hybrid.py` | Dense/BM25 retrieval and fusion using injected application policies. |
 | `LocalBGERerankerService` | `application/rerank_service.py` | Main-process local BGE reranker and guarded rerank logic. |
 | `GenerationV2Service` | `application/generation_v2/service.py` | Only answer generation path. |
 | `ParentContextExpander` | `application/parent_expansion.py` | v2 parent/window/caption/page expansion. |
-| `TablePreviewCandidateProvider` | `application/table_preview.py` | Phase7 preview-only table candidates. |
+| `TablePreviewCandidateProvider` | `application/table_preview.py` | Phase7 preview-only table candidates; shadow-only by default. |
 | `ConfidenceScorer` | `domain/confidence.py` | Confidence score from selected chunks. |
 | `QueryRewriteService` | `rewrite/query_rewrite_service.py` | Feature-flagged query rewrite. |
 
@@ -58,14 +62,16 @@ optional generation v2 neighbor audit engine. It is not an answer branch.
 2. Rewrite retrieval query when query rewrite is enabled.
 3. Retrieve chunks with filter fallback.
 4. Optionally merge original Chinese query fallback candidates.
-5. Optionally run Phase7 table preview.
+5. Optionally run Phase7 table preview. The default is shadow-only debug;
+   explicit preview merge can add candidates before rerank.
 6. Rerank candidates.
 7. Select final seed chunks and annotate `rerank_rank`.
 8. For summary queries, supplement Abstract/Conclusion chunks from top docs.
 9. Run v2 parent/evidence selection.
 10. Score seed/final confidence.
 11. Run `GenerationV2Service`.
-12. Build a v2 `RAGResponse`.
+12. Build a v2 internal `RAGPipelineResponse`.
+13. Adapt to legacy `RAGResponse` in `RAGApplicationService.ask()`.
 
 There is no generation-version branch. `GenerationConfig.version` and
 `GENERATION_VERSION` are no longer supported.

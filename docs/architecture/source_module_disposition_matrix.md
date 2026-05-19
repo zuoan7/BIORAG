@@ -12,7 +12,6 @@ Highest-value remaining refactor candidates:
 
 - `src/synbio_rag/domain/config.py`
 - `src/synbio_rag/application/rerank_service.py`
-- `src/synbio_rag/infrastructure/vectorstores/hybrid.py`
 - `src/synbio_rag/application/parent_expansion.py`
 
 ## Application Layer
@@ -25,12 +24,15 @@ Highest-value remaining refactor candidates:
 | `src/synbio_rag/application/generation_v2_response.py` | `keep_current` | v2 response/debug assembly. |
 | `src/synbio_rag/application/generation_v2/` | `keep_current` | Only generation path. |
 | `src/synbio_rag/application/rerank_service.py` | `keep_current` | Main-process local BGE reranker and guarded rerank logic. |
+| `src/synbio_rag/application/retrieval_query_planner.py` | `keep_current` | Application-owned retrieval query variants, comparison decomposition, and CJK signal. |
+| `src/synbio_rag/application/alias_expansion_policy.py` | `keep_current` | BM25-only controlled alias expansion policy injected into hybrid retrieval. |
+| `src/synbio_rag/application/retrieval_postprocessor.py` | `keep_current` | Application-owned wrapper for retrieval boosts, diversity, same-doc expansion, and source-floor policy. |
 | `src/synbio_rag/application/parent_expansion.py` | `keep_current` | v2 context expansion. |
 | `src/synbio_rag/application/summary_supplement.py` | `keep_current` | Summary Abstract/Conclusion supplement. |
 | `src/synbio_rag/application/original_cn_fallback.py` | `keep_current_flagged` | Original-CN fallback behind retrieval flags. |
 | `src/synbio_rag/application/query_rewrite_adapter.py` | `keep_current_flagged` | Query rewrite service setup. |
-| `src/synbio_rag/application/table_preview.py` | `isolate_preview` | Phase7 preview sidecar, not formal citation. |
-| `src/synbio_rag/application/table_preview_pipeline.py` | `isolate_preview` | Preview gate into v2 rerank input. |
+| `src/synbio_rag/application/table_preview.py` | `isolate_preview` | Phase7 preview sidecar, shadow-only by default and not formal citation. |
+| `src/synbio_rag/application/table_preview_pipeline.py` | `isolate_preview` | Preview gate into v2 rerank input only when merge is explicitly enabled. |
 | `src/synbio_rag/application/neighbor_expansion.py` | `keep_current` | Retained only as v2 neighbor-audit index source. |
 | `src/synbio_rag/application/query_expansion.py` | `unknown_keep` | Prototype expansion; not part of current main chain. |
 
@@ -56,9 +58,6 @@ Highest-value remaining refactor candidates:
 2. `application/rerank_service.py`
    - If it grows again, separate local model scoring from guarded rerank policy.
 
-3. `infrastructure/vectorstores/hybrid.py`
-   - Separate fusion mechanics from route/comparison/alias/source-floor policy.
-
-4. `application/neighbor_expansion.py`
+3. `application/neighbor_expansion.py`
    - If neighbor audit remains, consider renaming/splitting the index-loading
      subset from the old `expand()` API in a later behavior-preserving PR.

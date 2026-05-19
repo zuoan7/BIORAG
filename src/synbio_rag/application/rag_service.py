@@ -7,6 +7,7 @@ from ..domain.schemas import ConversationTurn, QueryFilters, RAGResponse
 from ..infrastructure.persistence.audit import AuditLogger, to_serializable
 from ..infrastructure.persistence.session_store import SessionStore
 from .pipeline import SynBioRAGPipeline
+from .rag_response_adapter import to_legacy_rag_response
 
 
 class RAGApplicationService:
@@ -26,14 +27,18 @@ class RAGApplicationService:
         session_id = session_id or str(uuid.uuid4())
         active_filters = filters or QueryFilters()
         history = self.sessions.get_turns(session_id)
-        response = self.pipeline.answer(
+        pipeline_response = self.pipeline.answer(
             question=question,
             session_id=session_id,
             history=history,
             filters=active_filters,
         )
         self.sessions.append_turn(session_id, ConversationTurn(role="user", content=question))
-        self.sessions.append_turn(session_id, ConversationTurn(role="assistant", content=response.answer))
+        self.sessions.append_turn(
+            session_id,
+            ConversationTurn(role="assistant", content=pipeline_response.answer),
+        )
+        response = to_legacy_rag_response(pipeline_response)
         if not include_debug:
             response.debug = {}
         self.audit.log(

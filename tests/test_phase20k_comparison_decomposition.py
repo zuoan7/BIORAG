@@ -1,9 +1,10 @@
 """Phase 20K: Comparison decomposition fix tests."""
 import pytest, re
-from src.synbio_rag.infrastructure.vectorstores.hybrid import (
-    _extract_comparison_subqueries, _build_query_plan,
+from src.synbio_rag.application.query_semantics import (
+    _extract_comparison_subqueries,
     _mask_organism_abbrevs, _unmask_organism_abbrevs,
 )
+from src.synbio_rag.application.retrieval_query_planner import _build_query_plan
 from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent
 
 class FC: comparison_query_weight = 1.0; comparison_subquery_weight = 0.7
@@ -48,8 +49,8 @@ def test_decomposition_query_used_for_comparison():
 
 def test_no_sample_special_case():
     import inspect
-    from src.synbio_rag.infrastructure.vectorstores import hybrid
-    src = inspect.getsource(hybrid)
+    from src.synbio_rag.application import retrieval_query_planner
+    src = inspect.getsource(retrieval_query_planner)
     for banned in ["ent_010", "ent_083", "doc_0009", "doc_0073", "doc_0119", "doc_0147"]:
         assert banned not in src, f"Banned string {banned} in source"
 

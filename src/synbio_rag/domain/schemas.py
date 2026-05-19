@@ -80,6 +80,16 @@ class ToolReference:
 
 
 @dataclass
+class RAGPipelineResponse:
+    answer: str
+    confidence: float
+    route: QueryIntent
+    citations: list[Citation]
+    session_id: str | None = None
+    debug: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class RAGResponse:
     answer: str
     confidence: float

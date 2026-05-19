@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -191,3 +192,76 @@ class TestFromEnvProfileIntegration:
         gen = self._from_env_with({})
         assert gen.v2_profile == "stable"
         assert gen.v2_use_qwen_synthesis is False
+
+    def test_unknown_project_env_key_warns_and_is_ignored(self):
+        env = self._build_minimal_env({"RETRIEVAL_DOES_NOT_EXIST": "1"})
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            gen = self._from_env_with(env)
+        assert gen.v2_profile == "stable"
+        assert any(
+            "Unknown BIORAG env keys" in str(warning.message)
+            and "RETRIEVAL_DOES_NOT_EXIST" in str(warning.message)
+            for warning in w
+        )
+
+    def test_deprecated_env_key_warns_and_is_ignored(self):
+        env = self._build_minimal_env({
+            "GENERATION_VERSION": "old",
+            "GENERATION_V2_USE_EXTERNAL_TOOLS": "true",
+            "ROUND8_ENABLE_ROUND8_POLICY": "true",
+        })
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            gen = self._from_env_with(env)
+        assert gen.v2_profile == "stable"
+        assert not hasattr(gen, "version")
+        assert any(
+            "Deprecated BIORAG env keys" in str(warning.message)
+            and "GENERATION_VERSION" in str(warning.message)
+            and "GENERATION_V2_USE_EXTERNAL_TOOLS" in str(warning.message)
+            and "ROUND8_ENABLE_ROUND8_POLICY" in str(warning.message)
+            for warning in w
+        )
+
+    def test_unrelated_process_env_key_does_not_warn(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            gen = self._from_env_with({"SHELL": "/bin/bash"})
+        assert gen.v2_profile == "stable"
+        assert not any("BIORAG env keys" in str(warning.message) for warning in w)
+
+    def test_settings_example_omits_removed_generation_assignments(self):
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "config/settings.example.env").read_text()
+        assigned_keys = {
+            line.split("=", 1)[0]
+            for line in text.splitlines()
+            if line and not line.startswith("#") and "=" in line
+        }
+        for key in {
+            "GENERATION_VERSION",
+            "GENERATION_V2_USE_EXTERNAL_TOOLS",
+            "QWEN_RERANK_API_BASE",
+            "QWEN_RERANK_API_KEY",
+            "RERANKER_SERVICE_URL",
+        }:
+            assert key not in assigned_keys
+        assert not any(key.startswith("ROUND8_") for key in assigned_keys)
+
+    def test_settings_example_includes_key_supported_cleanup_envs(self):
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "config/settings.example.env").read_text()
+        assigned_keys = {
+            line.split("=", 1)[0]
+            for line in text.splitlines()
+            if line and not line.startswith("#") and "=" in line
+        }
+        for key in {
+            "SYNBIO_MILVUS_URI",
+            "BIORAG_RERANK_MODE",
+            "RETRIEVAL_COMPARISON_QUERY_WEIGHT",
+            "RETRIEVAL_INDEX_SCHEMA_VERSION",
+            "QUERY_REWRITE_FAIL_FAST_ON_FALLBACK_RATE",
+        }:
+            assert key in assigned_keys

@@ -58,14 +58,14 @@ def test_table_preview_config_defaults_on():
     settings = Settings.from_env()
 
     assert settings.retrieval.table_preview_enabled is True
-    assert settings.retrieval.table_preview_merge_enabled is True
+    assert settings.retrieval.table_preview_merge_enabled is False
     assert settings.retrieval.table_preview_merge_strategy == "type_aware_merge_v1"
     assert settings.retrieval.table_preview_allow_formal_citation is False
 
 
 def test_table_preview_config_emergency_env_overrides():
     os.environ["TABLE_PREVIEW_ENABLED"] = "false"
-    os.environ["TABLE_PREVIEW_MERGE_ENABLED"] = "false"
+    os.environ["TABLE_PREVIEW_MERGE_ENABLED"] = "true"
     os.environ["TABLE_PREVIEW_UNITS_PATH"] = str(UNITS_PATH)
     os.environ["TABLE_PREVIEW_MAX_CANDIDATES"] = "7"
     os.environ["TABLE_PREVIEW_MERGE_STRATEGY"] = "baseline_current"
@@ -73,7 +73,7 @@ def test_table_preview_config_emergency_env_overrides():
     settings = Settings.from_env()
 
     assert settings.retrieval.table_preview_enabled is False
-    assert settings.retrieval.table_preview_merge_enabled is False
+    assert settings.retrieval.table_preview_merge_enabled is True
     assert settings.retrieval.table_preview_merge_strategy == "baseline_current"
     assert settings.retrieval.table_preview_max_candidates == 7
     assert settings.retrieval.table_preview_units_path == str(UNITS_PATH)
