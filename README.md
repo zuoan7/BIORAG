@@ -190,8 +190,8 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
 | `TABLE_PREVIEW_ENABLED` | `true` | 合入 preview-only table candidate |
 | `TABLE_PREVIEW_ALLOW_FORMAL_CITATION` | `false` | 是否允许 table preview 进入正式 citation |
 | `GENERATION_V2_PROFILE` | `stable` | generation v2 配置档位 |
-| `GENERATION_V2_USE_QWEN_SYNTHESIS` | `false` | 是否使用 Qwen 生成综合答案 |
-| `GENERATION_V2_ENABLE_COMPARISON_COVERAGE` | `false` | comparison 覆盖分析增强 |
+| `GENERATION_V2_USE_QWEN_SYNTHESIS` | `false` | 候选功能：使用 Qwen 生成综合答案，默认关闭 |
+| `GENERATION_V2_ENABLE_COMPARISON_COVERAGE` | `false` | 候选功能：comparison 覆盖分析增强，默认关闭 |
 | `GENERATION_V2_ENABLE_NEIGHBOR_AUDIT` | `false` | 邻居证据 dry-run audit |
 
 `GENERATION_V2_PROFILE` 支持：
@@ -202,6 +202,12 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
 | `qwen` | 开启 Qwen synthesis |
 | `comparison` | 开启 Qwen synthesis 和 comparison coverage |
 | `debug` | 开启 Qwen synthesis、comparison coverage 和 neighbor audit |
+
+检查当前运行环境中两个候选开关的实际值：
+
+```bash
+python -W default -c "from src.synbio_rag.domain.config import Settings; s=Settings.from_env(); print(s.generation.v2_use_qwen_synthesis, s.generation.v2_enable_comparison_coverage)"
+```
 
 ## 评测与验证
 

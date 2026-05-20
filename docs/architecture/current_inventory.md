@@ -89,6 +89,18 @@ Phase7 constraints:
 - Cleanup must not promote Phase7 preview data into formal `/v1/ask` table
   evidence or citation behavior.
 
+## feature_flag_inventory
+
+This inventory classifies currently visible feature switches by runtime status.
+It is a governance aid only; it does not promote or remove behavior.
+
+| Class | Switches | Current default | Notes |
+|-------|----------|-----------------|-------|
+| runtime | `RETRIEVAL_HYBRID_ENABLED`, `RETRIEVAL_BM25_ENABLED`, `RETRIEVAL_SOURCE_FLOOR_ENABLED`, `RETRIEVAL_PARENT_EXPANSION_ENABLED`, `BIORAG_RERANK_MODE` | active runtime defaults | Core production retrieval controls. |
+| preview | `TABLE_PREVIEW_ENABLED`, `TABLE_PREVIEW_MERGE_ENABLED`, `TABLE_PREVIEW_ALLOW_FORMAL_CITATION` | preview/debug only unless explicitly merged | Phase7 table candidate sidecar; formal citation remains blocked by default. |
+| candidate | `GENERATION_V2_USE_QWEN_SYNTHESIS`, `GENERATION_V2_ENABLE_COMPARISON_COVERAGE`, `GENERATION_V2_ENABLE_NEIGHBOR_AUDIT` | `false` | Generation v2 candidate behavior. Tests that cover explicit enabled paths use the `candidate_feature` pytest marker. |
+| legacy/ignored | `GENERATION_VERSION`, `GENERATION_V2_USE_EXTERNAL_TOOLS`, `ROUND8_*`, `QWEN_RERANK_API_BASE`, `QWEN_RERANK_API_KEY`, `RERANKER_SERVICE_URL` | unsupported | `Settings.from_env()` warns and ignores these migration leftovers. |
+
 ## legacy_candidate
 
 These items may be considered for later archival or explicit support decisions.

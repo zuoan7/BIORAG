@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.synbio_rag.application.generation_v2.answer_planner import AnswerPlanner
 from src.synbio_rag.application.generation_v2.comparison_coverage import (
     build_comparison_coverage,
@@ -11,6 +13,9 @@ from src.synbio_rag.domain.config import GenerationConfig
 from src.synbio_rag.domain.schemas import QueryIntent
 
 from tests.test_generation_v2 import _analysis, _candidate
+
+
+pytestmark = pytest.mark.candidate_feature
 
 
 def _support(

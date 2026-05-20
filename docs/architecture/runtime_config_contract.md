@@ -150,6 +150,24 @@ copied as-is. Source-supported keys include:
 `GENERATION_V2_INCLUDE_NEIGHBOR_CONTEXT_IN_QWEN` are parsed only so the hard
 guard can force them back to `false` with a warning.
 
+## Generation V2 Candidate Flags
+
+These generation switches are supported runtime keys, but they are candidate
+features and must stay default-off in code, `.env`, and
+`config/settings.example.env`:
+
+| Env key | Default | Scope |
+|---------|---------|-------|
+| `GENERATION_V2_USE_QWEN_SYNTHESIS` | `false` | Optional Qwen final-answer synthesis after extractive generation. Falls back to extractive behavior when disabled, unconfigured, failed, or invalid. |
+| `GENERATION_V2_ENABLE_COMPARISON_COVERAGE` | `false` | Optional comparison branch parsing, branch evidence selection, missing-branch disclosure, and restricted citation set for comparison answers. |
+
+Enable them only by explicit evaluation profile or env override. The quick check
+for the active process environment is:
+
+```bash
+python -W default -c "from src.synbio_rag.domain.config import Settings; s=Settings.from_env(); print(s.generation.v2_use_qwen_synthesis, s.generation.v2_enable_comparison_coverage)"
+```
+
 ## Retrieval Config Split
 
 `RetrievalConfig` is now a migration compatibility shell around smaller config

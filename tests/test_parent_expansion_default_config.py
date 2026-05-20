@@ -49,7 +49,7 @@ class TestParentExpansionDefaultConfig:
         assert s.retrieval.parent_expansion_caption_enabled is True
         assert s.retrieval.final_top_k == 8
         assert s.retrieval.rerank_top_k == 10
-        assert s.generation.v2_use_qwen_synthesis is True  # env default, evaluation scripts set False
+        assert s.generation.v2_use_qwen_synthesis is False
 
 
 class TestPipelineDebugWithDefaultOn:

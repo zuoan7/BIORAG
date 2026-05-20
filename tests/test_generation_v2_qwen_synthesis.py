@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.synbio_rag.application.generation_v2.models import (
     AnswerPlan,
     BranchEvidence,
@@ -11,6 +13,9 @@ from src.synbio_rag.application.generation_v2.qwen_synthesizer import QwenSynthe
 from src.synbio_rag.application.generation_v2.service import GenerationV2Service
 from src.synbio_rag.domain.config import GenerationConfig
 from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
+
+
+pytestmark = pytest.mark.candidate_feature
 
 
 def _analysis(intent: QueryIntent = QueryIntent.FACTOID) -> QueryAnalysis:
