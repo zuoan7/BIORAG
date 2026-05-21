@@ -18,6 +18,9 @@ class Round1BuildPaths:
     parsed_input_dir: Path
     chunk_dir: Path
     chunk_jsonl: Path
+    parent_chunk_jsonl: Path
+    child_chunk_jsonl: Path
+    parent_index_jsonl: Path
     bm25_cache_path: Path
     milvus_uri: str
     collection_name: str
@@ -107,9 +110,27 @@ class KnowledgeBaseBuilder:
         self._run(
             [
                 "python",
+                "scripts/ingestion/build_parent_child_index.py",
+                "--chunks",
+                str(build_paths.chunk_jsonl),
+                "--parent-output",
+                str(build_paths.parent_chunk_jsonl),
+                "--child-output",
+                str(build_paths.child_chunk_jsonl),
+                "--parent-index-output",
+                str(build_paths.parent_index_jsonl),
+                "--child-size",
+                "160",
+                "--child-overlap",
+                "40",
+            ]
+        )
+        self._run(
+            [
+                "python",
                 "scripts/ingestion/import_to_milvus.py",
                 "--jsonl",
-                str(build_paths.chunk_jsonl),
+                str(build_paths.child_chunk_jsonl),
                 "--collection_name",
                 build_paths.collection_name,
                 "--milvus_uri",
@@ -132,12 +153,18 @@ class KnowledgeBaseBuilder:
         parsed_dir = Path(self.settings.kb.parsed_dir)
         chunk_dir = Path(self.settings.kb.chunk_dir)
         chunk_jsonl = Path(self.settings.kb.chunk_jsonl)
+        parent_chunk_jsonl = chunk_jsonl.with_name("parent_chunks.jsonl")
+        child_chunk_jsonl = chunk_jsonl.with_name("child_chunks.jsonl")
+        parent_index_jsonl = chunk_jsonl.with_name("parent_index.jsonl")
         bm25_cache_path = Path(self.settings.retrieval.bm25_cache_path)
         if not table_config.enabled:
             return Round1BuildPaths(
                 parsed_input_dir=parsed_dir,
                 chunk_dir=chunk_dir,
                 chunk_jsonl=chunk_jsonl,
+                parent_chunk_jsonl=parent_chunk_jsonl,
+                child_chunk_jsonl=child_chunk_jsonl,
+                parent_index_jsonl=parent_index_jsonl,
                 bm25_cache_path=bm25_cache_path,
                 milvus_uri=self.settings.retrieval.milvus_uri,
                 collection_name=self.settings.retrieval.collection_name,
@@ -147,6 +174,9 @@ class KnowledgeBaseBuilder:
         enhanced_parsed_dir = derive_suffixed_path(parsed_dir, suffix)
         enhanced_chunk_dir = derive_suffixed_path(chunk_dir, suffix)
         enhanced_chunk_jsonl = enhanced_chunk_dir / chunk_jsonl.name
+        enhanced_parent_chunk_jsonl = enhanced_chunk_dir / parent_chunk_jsonl.name
+        enhanced_child_chunk_jsonl = enhanced_chunk_dir / child_chunk_jsonl.name
+        enhanced_parent_index_jsonl = enhanced_chunk_dir / parent_index_jsonl.name
         enhanced_bm25_cache_path = enhanced_chunk_dir / bm25_cache_path.name
         enhanced_milvus_uri = self._suffixed_milvus_uri(self.settings.retrieval.milvus_uri, suffix)
         enhanced_collection = f"{self.settings.retrieval.collection_name}_{suffix}"
@@ -162,6 +192,9 @@ class KnowledgeBaseBuilder:
             enhanced_parsed_dir=enhanced_parsed_dir,
             enhanced_chunk_dir=enhanced_chunk_dir,
             enhanced_chunk_jsonl=enhanced_chunk_jsonl,
+            enhanced_parent_chunk_jsonl=enhanced_parent_chunk_jsonl,
+            enhanced_child_chunk_jsonl=enhanced_child_chunk_jsonl,
+            enhanced_parent_index_jsonl=enhanced_parent_index_jsonl,
             enhanced_bm25_cache_path=enhanced_bm25_cache_path,
             enhanced_milvus_uri=enhanced_milvus_uri,
             enhanced_collection=enhanced_collection,
@@ -172,6 +205,9 @@ class KnowledgeBaseBuilder:
             parsed_input_dir=parsed_input,
             chunk_dir=chunk_dir if table_config.dry_run else enhanced_chunk_dir,
             chunk_jsonl=chunk_jsonl if table_config.dry_run else enhanced_chunk_jsonl,
+            parent_chunk_jsonl=parent_chunk_jsonl if table_config.dry_run else enhanced_parent_chunk_jsonl,
+            child_chunk_jsonl=child_chunk_jsonl if table_config.dry_run else enhanced_child_chunk_jsonl,
+            parent_index_jsonl=parent_index_jsonl if table_config.dry_run else enhanced_parent_index_jsonl,
             bm25_cache_path=bm25_cache_path if table_config.dry_run else enhanced_bm25_cache_path,
             milvus_uri=self.settings.retrieval.milvus_uri if table_config.dry_run else enhanced_milvus_uri,
             collection_name=self.settings.retrieval.collection_name if table_config.dry_run else enhanced_collection,
@@ -195,6 +231,9 @@ class KnowledgeBaseBuilder:
         enhanced_parsed_dir: Path,
         enhanced_chunk_dir: Path,
         enhanced_chunk_jsonl: Path,
+        enhanced_parent_chunk_jsonl: Path,
+        enhanced_child_chunk_jsonl: Path,
+        enhanced_parent_index_jsonl: Path,
         enhanced_bm25_cache_path: Path,
         enhanced_milvus_uri: str,
         enhanced_collection: str,
@@ -203,6 +242,9 @@ class KnowledgeBaseBuilder:
             ("parsed_dir", parsed_dir, enhanced_parsed_dir),
             ("chunk_dir", chunk_dir, enhanced_chunk_dir),
             ("chunk_jsonl", chunk_jsonl, enhanced_chunk_jsonl),
+            ("parent_chunk_jsonl", Path(chunk_jsonl).with_name("parent_chunks.jsonl"), enhanced_parent_chunk_jsonl),
+            ("child_chunk_jsonl", Path(chunk_jsonl).with_name("child_chunks.jsonl"), enhanced_child_chunk_jsonl),
+            ("parent_index_jsonl", Path(chunk_jsonl).with_name("parent_index.jsonl"), enhanced_parent_index_jsonl),
             ("bm25_cache_path", bm25_cache_path, enhanced_bm25_cache_path),
         ]
         for name, baseline, enhanced in path_pairs:

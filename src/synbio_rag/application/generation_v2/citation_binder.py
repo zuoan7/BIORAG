@@ -69,6 +69,18 @@ class CitationBinder:
                 evidence_id=item.evidence_id,
                 support_score=item.support_score,
                 reasons=list(item.reasons),
+                parent_child_generation_view_used=bool(
+                    metadata.get("parent_child_generation_view_used")
+                ),
+                matched_child_chunk_ids=_matched_child_chunk_ids(metadata),
+                generation_evidence_role=str(
+                    metadata.get("generation_evidence_role")
+                    or (
+                        "matched_child_focused_evidence"
+                        if metadata.get("parent_child_generation_view_used")
+                        else "parent_text"
+                    )
+                ),
                 drop_reason=drop_reason,
             )
             candidates.append(candidate)
@@ -180,6 +192,15 @@ class CitationBinder:
             "citation_eligible_count": sum(1 for c in candidates if c.citation_eligible),
             "citation_completion_count": completed_count,
             "plan_mode": plan_mode,
+            "parent_child_generation_view_used_by_evidence_id": {
+                c.evidence_id: c.parent_child_generation_view_used for c in candidates
+            },
+            "matched_child_chunk_ids_by_evidence_id": {
+                c.evidence_id: list(c.matched_child_chunk_ids) for c in candidates
+            },
+            "generation_evidence_role_by_evidence_id": {
+                c.evidence_id: c.generation_evidence_role for c in candidates
+            },
         }
         return final_answer, citations, debug
 
@@ -202,6 +223,16 @@ def _compress_quote(text: str) -> str:
     if len(quote) <= 1200:
         return quote
     return quote[:1197].rstrip() + "..."
+
+
+def _matched_child_chunk_ids(metadata: dict) -> list[str]:
+    value = metadata.get("matched_child_chunk_ids")
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    value = metadata.get("matched_child_chunk_id")
+    if value:
+        return [str(value)]
+    return []
 
 
 def _table_preview_citation_block_reason(

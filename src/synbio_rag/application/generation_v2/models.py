@@ -112,6 +112,9 @@ class CitationCandidate:
     page_start: int | None = None
     page_end: int | None = None
     reasons: list[str] = field(default_factory=list)
+    parent_child_generation_view_used: bool = False
+    matched_child_chunk_ids: list[str] = field(default_factory=list)
+    generation_evidence_role: str = ""
     drop_reason: str = ""
     branch_id: str = ""
     comparison_branch_id: str = ""

@@ -5,7 +5,7 @@ import pytest
 
 
 class TestParentExpansionDefaultConfig:
-    """Phase 12H: parent_expansion_enabled default is True, env override works."""
+    """parent_expansion_enabled defaults off, env override works."""
 
     @pytest.fixture(autouse=True)
     def _clear_env(self):
@@ -17,10 +17,10 @@ class TestParentExpansionDefaultConfig:
             if key.upper().startswith("RETRIEVAL_PARENT"):
                 del os.environ[key]
 
-    def test_default_is_true(self):
+    def test_default_is_false(self):
         from src.synbio_rag.domain.config import Settings
         s = Settings.from_env()
-        assert s.retrieval.parent_expansion_enabled is True
+        assert s.retrieval.parent_expansion_enabled is False
 
     def test_env_false_disables(self):
         os.environ["RETRIEVAL_PARENT_EXPANSION_ENABLED"] = "false"
@@ -52,7 +52,7 @@ class TestParentExpansionDefaultConfig:
         assert s.generation.v2_use_qwen_synthesis is False
 
 
-class TestPipelineDebugWithDefaultOn:
+class TestPipelineDebugWithDefaultOff:
     """Ensure pipeline debug reflects parent_expansion state."""
 
     @pytest.fixture(autouse=True)
@@ -75,19 +75,21 @@ class TestPipelineDebugWithDefaultOn:
         # Without parent_store + False enabled, expand does nothing
         assert expander.config.parent_expansion_enabled is False
 
-    def test_default_on_debug_structure(self):
-        """Default-on should produce standard debug fields."""
+    def test_default_off_debug_structure(self):
+        """Default-off should produce standard debug fields."""
         from src.synbio_rag.application.parent_expansion import ParentContextExpander
         from src.synbio_rag.domain.config import Settings
         s = Settings.from_env()
-        assert s.retrieval.parent_expansion_enabled is True
+        assert s.retrieval.parent_expansion_enabled is False
         expander = ParentContextExpander(parent_store=None, config=s.retrieval)
         # Even without parent_store, expand should gracefully return seeds
         from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
         seed = RetrievedChunk(chunk_id="test", doc_id="doc_test", source_file="test.pdf", title="Test Title", section="Results", text="test content")
         analysis = QueryAnalysis(intent=QueryIntent.FACTOID, notes="", requires_external_tools=False, search_limit=40, rerank_top_k=10)
         chunks, debug = expander.expand("test question", [seed], analysis)
+        assert chunks == [seed]
         assert isinstance(debug, dict)
         assert "enabled" in debug
         assert "input_count" in debug
         assert "output_count" in debug
+        assert debug["reason"] == "disabled"

@@ -82,9 +82,12 @@ class ParentContextExpander:
         mode = self._select_mode(question, seed_chunks, analysis, caption_plan)
         local_context_plan = self._build_non_caption_window_plan(question, seed_chunks, mode, caption_plan)
         max_total, per_seed_limit, limit_reason = self._effective_limits(mode)
+        preserve_seed_chunks = bool(self.config.parent_expansion_preserve_seed_chunks)
+        max_added = max(0, int(self.config.parent_expansion_max_added))
         debug["effective_intent"] = mode
         debug["effective_max_total"] = max_total
         debug["effective_per_seed_limit"] = per_seed_limit
+        debug["seed_preservation_enabled"] = preserve_seed_chunks
         debug["limit_reason"] = limit_reason
         debug["primary_doc_window_gating"] = local_context_plan["enabled"]
         debug["window_target_doc_id"] = local_context_plan["target_doc_id"]
@@ -94,15 +97,17 @@ class ParentContextExpander:
         debug["local_context_gating_reason"] = local_context_plan["reason"]
         self._initialize_optional_debug_reasons(debug=debug, mode=mode, question=question, seed_chunks=seed_chunks)
 
-        if max_total == 0:
+        if max_total == 0 and not preserve_seed_chunks:
             debug["reason"] = "max_total_zero"
             return [], debug
 
-        final_chunks = list(seed_chunks[:max_total])
+        final_chunks = list(seed_chunks if preserve_seed_chunks else seed_chunks[:max_total])
         seen_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
-        addable_total = max(0, max_total - len(final_chunks))
+        addable_total = max_added if preserve_seed_chunks else max(0, max_total - len(final_chunks))
+        debug["effective_max_added"] = addable_total
+        debug["effective_final_context_cap"] = len(final_chunks) + addable_total if preserve_seed_chunks else max_total
         if addable_total == 0:
-            debug["reason"] = "seed_already_at_limit"
+            debug["reason"] = "seed_preserved_no_expansion_budget" if preserve_seed_chunks else "seed_already_at_limit"
             debug["output_count"] = len(final_chunks)
             return final_chunks, debug
 

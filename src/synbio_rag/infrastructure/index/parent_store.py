@@ -13,6 +13,7 @@ class ParentRecord:
     parent_id: str
     parent_type: str
     doc_id: str
+    parent_chunk_id: str = ""
     source_file: str = ""
     title: str = ""
     section: str = ""
@@ -42,10 +43,14 @@ class ParentStore:
         parents: dict[str, ParentRecord],
         parents_by_chunk: dict[str, list[str]],
         chunk_by_id: dict[str, RetrievedChunk] | None = None,
+        parent_chunk_by_id: dict[str, RetrievedChunk] | None = None,
     ) -> None:
         self._parents = parents
         self._parents_by_chunk = parents_by_chunk
         self._chunk_by_id = chunk_by_id or {}
+        self._parent_chunk_by_id = parent_chunk_by_id or {}
+        for chunk_id, chunk in self._parent_chunk_by_id.items():
+            self._chunk_by_id.setdefault(chunk_id, chunk)
         self._parents_by_type: dict[str, list[ParentRecord]] = {}
         self._parents_by_doc: dict[str, list[ParentRecord]] = {}
         self._page_parents: dict[tuple[str, int], ParentRecord] = {}
@@ -54,7 +59,12 @@ class ParentStore:
         self._build_indexes()
 
     @classmethod
-    def from_jsonl(cls, path: str | Path, chunk_jsonl_path: str | Path | None = None) -> "ParentStore":
+    def from_jsonl(
+        cls,
+        path: str | Path,
+        chunk_jsonl_path: str | Path | None = None,
+        parent_chunk_jsonl_path: str | Path | None = None,
+    ) -> "ParentStore":
         parents: dict[str, ParentRecord] = {}
         parents_by_chunk: dict[str, list[str]] = {}
         with Path(path).open("r", encoding="utf-8") as handle:
@@ -67,6 +77,7 @@ class ParentStore:
                     parent_id=str(item.get("parent_id") or ""),
                     parent_type=str(item.get("parent_type") or ""),
                     doc_id=str(item.get("doc_id") or ""),
+                    parent_chunk_id=str(item.get("parent_chunk_id") or ""),
                     source_file=str(item.get("source_file") or ""),
                     title=str(item.get("title") or ""),
                     section=str(item.get("section") or ""),
@@ -96,7 +107,13 @@ class ParentStore:
                     parents_by_chunk.setdefault(chunk_id, []).append(record.parent_id)
 
         chunk_by_id = cls._load_chunks(chunk_jsonl_path) if chunk_jsonl_path else {}
-        return cls(parents=parents, parents_by_chunk=parents_by_chunk, chunk_by_id=chunk_by_id)
+        parent_chunk_by_id = cls._load_chunks(parent_chunk_jsonl_path) if parent_chunk_jsonl_path else {}
+        return cls(
+            parents=parents,
+            parents_by_chunk=parents_by_chunk,
+            chunk_by_id=chunk_by_id,
+            parent_chunk_by_id=parent_chunk_by_id,
+        )
 
     def get_parent(self, parent_id: str) -> ParentRecord | None:
         return self._parents.get(parent_id)
@@ -110,6 +127,60 @@ class ParentStore:
 
     def get_chunk(self, chunk_id: str) -> RetrievedChunk | None:
         return self._chunk_by_id.get(chunk_id)
+
+    def get_parent_chunk(self, chunk_id: str) -> RetrievedChunk | None:
+        return self._parent_chunk_by_id.get(chunk_id) or self._chunk_by_id.get(chunk_id)
+
+    def materialize_parent_hits(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        if not chunks:
+            return []
+
+        collapsed: dict[str, tuple[int, RetrievedChunk]] = {}
+        for rank, chunk in enumerate(chunks):
+            materialized = self.materialize_parent_hit(chunk)
+            existing = collapsed.get(materialized.chunk_id)
+            if existing is None:
+                collapsed[materialized.chunk_id] = (rank, materialized)
+                continue
+
+            _order, current = existing
+            current.vector_score = max(current.vector_score, materialized.vector_score)
+            current.bm25_score = max(current.bm25_score, materialized.bm25_score)
+            current.rerank_score = max(current.rerank_score, materialized.rerank_score)
+            current.fusion_score = max(current.fusion_score, materialized.fusion_score)
+            _append_unique_metadata_list(
+                current.metadata,
+                "matched_child_chunk_ids",
+                materialized.metadata.get("matched_child_chunk_ids") or [],
+            )
+            _append_unique_metadata_list(
+                current.metadata,
+                "matched_child_snippets",
+                materialized.metadata.get("matched_child_snippets") or [],
+            )
+
+        return [chunk for _rank, chunk in sorted(collapsed.values(), key=lambda item: item[0])]
+
+    def materialize_parent_hit(self, chunk: RetrievedChunk) -> RetrievedChunk:
+        parent_record = self._retrieval_parent_for_child(chunk)
+        parent_chunk_id = ""
+        if parent_record is not None:
+            parent_chunk_id = parent_record.parent_chunk_id
+        if not parent_chunk_id:
+            parent_chunk_id = str(chunk.metadata.get("parent_chunk_id") or "")
+        if not parent_chunk_id:
+            return chunk
+
+        parent_chunk = self.get_parent_chunk(parent_chunk_id)
+        if parent_chunk is None:
+            return chunk
+        return _clone_parent_hit(parent_chunk, chunk, parent_record)
+
+    def _retrieval_parent_for_child(self, chunk: RetrievedChunk) -> ParentRecord | None:
+        for parent in self.get_parents_for_chunk(chunk.chunk_id):
+            if parent.parent_type == "retrieval_parent":
+                return parent
+        return None
 
     def get_parents_by_type(self, parent_type: str) -> list[ParentRecord]:
         return list(self._parents_by_type.get(parent_type, []))
@@ -314,13 +385,27 @@ class ParentStore:
                     page_end=_safe_int(item.get("page_end")),
                     metadata={
                         "chunk_index": _safe_int(item.get("chunk_index"), ordinal) or ordinal,
+                        "retrieval_text": str(item.get("retrieval_text") or ""),
+                        "content_kind": str(item.get("content_kind") or "body"),
+                        "quality_score": item.get("quality_score", 0.0),
                         "page_numbers": _coerce_int_list(item.get("page_numbers")),
                         "section_path": _coerce_str_list(item.get("section_path")),
+                        "block_types": _coerce_str_list(item.get("block_types")),
+                        "block_ids": _coerce_str_list(item.get("block_ids")),
+                        "source_block_ids": _coerce_str_list(item.get("source_block_ids")),
                         "evidence_types": _coerce_str_list(item.get("evidence_types")),
                         "contains_table_caption": bool(item.get("contains_table_caption")),
                         "contains_figure_caption": bool(item.get("contains_figure_caption")),
                         "contains_table_text": bool(item.get("contains_table_text")),
                         "contains_image": bool(item.get("contains_image")),
+                        "object_type": str(item.get("object_type") or ""),
+                        "object_id": str(item.get("object_id") or ""),
+                        "index_role": str(item.get("index_role") or ""),
+                        "parent_id": str(item.get("parent_id") or ""),
+                        "parent_chunk_id": str(item.get("parent_chunk_id") or ""),
+                        "child_index": _safe_int(item.get("child_index")),
+                        "child_start_token": _safe_int(item.get("child_start_token")),
+                        "child_end_token": _safe_int(item.get("child_end_token")),
                         "parent_store_loaded": True,
                     },
                 )
@@ -352,6 +437,78 @@ def _clone_chunk(chunk: RetrievedChunk, parent: ParentRecord) -> RetrievedChunk:
         }
     )
     return cloned
+
+
+def _clone_parent_hit(
+    parent_chunk: RetrievedChunk,
+    child_chunk: RetrievedChunk,
+    parent_record: ParentRecord | None,
+) -> RetrievedChunk:
+    cloned = RetrievedChunk(
+        chunk_id=parent_chunk.chunk_id,
+        doc_id=parent_chunk.doc_id,
+        source_file=parent_chunk.source_file,
+        title=parent_chunk.title,
+        section=parent_chunk.section,
+        text=parent_chunk.text,
+        page_start=parent_chunk.page_start,
+        page_end=parent_chunk.page_end,
+        vector_score=child_chunk.vector_score,
+        bm25_score=child_chunk.bm25_score,
+        rerank_score=child_chunk.rerank_score,
+        fusion_score=child_chunk.fusion_score,
+        metadata=dict(parent_chunk.metadata),
+    )
+    child_ids = [child_chunk.chunk_id] if child_chunk.chunk_id != parent_chunk.chunk_id else []
+    cloned.metadata.update(
+        {
+            "parent_child_materialized": bool(child_ids),
+            "matched_child_chunk_ids": child_ids,
+            "matched_child_snippets": [_child_snippet_payload(child_chunk)] if child_ids else [],
+            "matched_child_chunk_id": child_chunk.chunk_id if child_ids else "",
+            "matched_child_index": child_chunk.metadata.get("child_index"),
+            "matched_child_start_token": child_chunk.metadata.get("child_start_token"),
+            "matched_child_end_token": child_chunk.metadata.get("child_end_token"),
+            "matched_child_vector_score": child_chunk.vector_score,
+            "matched_child_bm25_score": child_chunk.bm25_score,
+            "matched_child_fusion_score": child_chunk.fusion_score,
+        }
+    )
+    if parent_record is not None:
+        cloned.metadata["retrieval_parent_id"] = parent_record.parent_id
+        cloned.metadata["retrieval_parent_type"] = parent_record.parent_type
+    return cloned
+
+
+def _child_snippet_payload(child_chunk: RetrievedChunk) -> dict[str, Any]:
+    return {
+        "chunk_id": child_chunk.chunk_id,
+        "text": child_chunk.text,
+        "child_index": child_chunk.metadata.get("child_index"),
+        "child_start_token": child_chunk.metadata.get("child_start_token"),
+        "child_end_token": child_chunk.metadata.get("child_end_token"),
+        "block_types": list(child_chunk.metadata.get("block_types") or []),
+        "evidence_types": list(child_chunk.metadata.get("evidence_types") or []),
+        "contains_table_caption": bool(child_chunk.metadata.get("contains_table_caption")),
+        "contains_table_text": bool(child_chunk.metadata.get("contains_table_text")),
+        "contains_figure_caption": bool(child_chunk.metadata.get("contains_figure_caption")),
+        "contains_image": bool(child_chunk.metadata.get("contains_image")),
+        "vector_score": child_chunk.vector_score,
+        "bm25_score": child_chunk.bm25_score,
+        "fusion_score": child_chunk.fusion_score,
+    }
+
+
+def _append_unique_metadata_list(metadata: dict[str, Any], key: str, values: list[Any]) -> None:
+    existing = list(metadata.get(key) or [])
+    seen = {str(value) for value in existing}
+    for value in values:
+        value_str = str(value)
+        if not value_str or value_str in seen:
+            continue
+        seen.add(value_str)
+        existing.append(value)
+    metadata[key] = existing
 
 
 def _safe_int(value: object, default: int | None = None) -> int | None:

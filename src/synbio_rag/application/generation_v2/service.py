@@ -222,6 +222,17 @@ class GenerationV2Service:
                     "section": item.candidate.section,
                     "support_score": item.support_score,
                     "reasons": list(item.reasons),
+                    "parent_child_generation_view_used": bool(
+                        item.candidate.metadata.get("parent_child_generation_view_used")
+                    ),
+                    "matched_child_chunk_ids": (
+                        list(item.candidate.metadata.get("matched_child_chunk_ids") or [])
+                        if isinstance(item.candidate.metadata.get("matched_child_chunk_ids"), list)
+                        else []
+                    ),
+                    "generation_evidence_role": item.candidate.metadata.get(
+                        "generation_evidence_role", ""
+                    ),
                 }
                 for item in support_pack
             ],

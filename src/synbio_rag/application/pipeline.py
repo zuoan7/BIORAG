@@ -100,9 +100,20 @@ class SynBioRAGPipeline:
         parent_index_path = Path(settings.retrieval.parent_index_path)
         if parent_index_path.exists():
             try:
+                child_chunk_jsonl = (
+                    settings.kb.child_chunk_jsonl
+                    if Path(settings.kb.child_chunk_jsonl).exists()
+                    else settings.kb.chunk_jsonl
+                )
+                parent_chunk_jsonl = (
+                    settings.kb.parent_chunk_jsonl
+                    if Path(settings.kb.parent_chunk_jsonl).exists()
+                    else settings.kb.chunk_jsonl
+                )
                 parent_store = ParentStore.from_jsonl(
                     parent_index_path,
-                    chunk_jsonl_path=settings.kb.chunk_jsonl,
+                    chunk_jsonl_path=child_chunk_jsonl,
+                    parent_chunk_jsonl_path=parent_chunk_jsonl,
                 )
             except Exception:
                 parent_store = None
@@ -201,16 +212,25 @@ class SynBioRAGPipeline:
                 analysis=analysis,
                 original_question=original_question,
             )
+            raw_retrieved_count = len(retrieved)
+            retrieved = self._materialize_parent_child_hits(retrieved)
             attempts.append(
                 {
                     "name": name,
                     "filters": candidate_filters.__dict__ if candidate_filters else None,
                     "retrieved_count": len(retrieved),
+                    "raw_retrieved_count": raw_retrieved_count,
                 }
             )
             if retrieved:
                 return retrieved, {"selected": name, "attempts": attempts}
         return [], {"selected": "empty", "attempts": attempts}
+
+    def _materialize_parent_child_hits(self, retrieved: list) -> list:
+        parent_store = getattr(self, "parent_store", None)
+        if parent_store is None or not retrieved:
+            return retrieved
+        return parent_store.materialize_parent_hits(retrieved)
 
 
 def _build_filter_plan(filters: QueryFilters | None) -> list[tuple[str, QueryFilters | None]]:

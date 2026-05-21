@@ -1,9 +1,9 @@
 # BIORAG — 合成生物学领域 RAG 服务
 
 BIORAG 是面向合成生物学论文知识库的企业级 RAG 服务。当前主链路围绕
-FastAPI 问答接口、Dense + BM25 混合检索、本地 BGE rerank、parent context
-扩展、证据选择和 generation v2 证据约束生成构建，目标是让回答可追溯到
-知识库 chunk、doc、section 和 citation。
+FastAPI 问答接口、child chunk 级 Dense + BM25 混合检索、parent chunk
+materialization、本地 BGE rerank、证据选择和 generation v2 证据约束生成构建，
+目标是让回答可追溯到知识库 chunk、doc、section 和 citation。
 
 ## 当前能力
 
@@ -11,16 +11,19 @@ FastAPI 问答接口、Dense + BM25 混合检索、本地 BGE rerank、parent co
   `/healthz`，应用层入口为 `RAGApplicationService`。
 - **意图路由**：`QueryRouter` 识别 `factoid`、`summary`、`comparison`、
   `negative` 等查询意图，并决定检索与 rerank 规模。
-- **混合检索**：`HybridRetriever` 组合 Milvus dense 检索与 BM25 检索，通过
-  weighted RRF、comparison 子查询、source-floor、同文档 body 扩展和结构标记
-  boost 召回候选。
+- **混合检索**：`HybridRetriever` 组合 Milvus dense 检索与 BM25 检索；当
+  `child_chunks.jsonl` 存在时，Milvus/BM25 使用 child chunk 做召回，再通过
+  `ParentStore` materialize 回 parent chunk，citation 保持 parent chunk 级别。
+- **parent-child 证据视图**：child 命中的 `matched_child_snippets` 会进入 rerank
+  和 generation v2；rerank/generation 优先使用 `matched_child_evidence`，parent
+  正文主要作为 citation 和局部上下文。
 - **查询改写**：`QUERY_REWRITE_MODE` 默认关闭；可按需启用中文问题的英文镜像
   改写，并保留 original-CN fallback 作为跨语言召回补偿。
 - **本地重排**：`LocalBGERerankerService` 负责 BGE rerank、comparison 子查询
   聚合、route/evidence/structure bonus、guarded rerank 和同文档正文覆盖策略。
 - **上下文扩展**：`ParentContextExpander` 基于 `parent_index.jsonl` 扩展
   `chunk_window`、`caption_context`、`page`、`section_path`、`evidence_type_context`
-  等 parent context。
+  等 parent context；当前默认关闭，离线 sweep 可显式打开。
 - **表格候选预览**：`table_preview` 可把离线 table index unit 作为候选合入检索
   池，但默认仍是 preview-only；`TABLE_PREVIEW_ALLOW_FORMAL_CITATION=false` 时不
   生成正式表格 citation。
@@ -42,13 +45,14 @@ FastAPI request
   -> SynBioRAGPipeline
   -> QueryRouter
   -> optional query rewrite
-  -> HybridRetriever (Milvus dense + BM25 + RRF/post-process)
+  -> HybridRetriever (child chunk Milvus dense + BM25 + RRF/post-process)
+  -> ParentStore materialize child hits to parent chunks
   -> original-CN fallback
   -> table preview merge
-  -> LocalBGERerankerService
+  -> LocalBGERerankerService (matched_child_evidence focused rerank text)
   -> summary supplement
-  -> ParentContextExpander + evidence selection
-  -> GenerationV2Service
+  -> optional ParentContextExpander + evidence selection
+  -> GenerationV2Service (child-focused evidence, parent-level citations)
   -> response/citation/debug assembly
   -> session + audit persistence
 ```
@@ -98,7 +102,7 @@ src/synbio_rag/
       bm25.py                     # sparse retrieval
       fusion.py                   # RRF helpers
       hybrid.py                   # hybrid retrieval orchestration
-    index/parent_store.py         # parent index loader
+    index/parent_store.py         # parent index loader 与 child->parent materialization
     clients/openai_compatible.py  # Qwen/OpenAI-compatible client
     persistence/                  # audit/session persistence
 
@@ -107,7 +111,7 @@ src/synbio_rag/
   evaluation/                     # failure taxonomy
 
 scripts/
-  ingestion/                      # 建库、清洗、Milvus 导入、parent index 构建
+  ingestion/                      # 建库、清洗、parent-child index、Milvus 导入
   extraction/                     # 表格抽取和 table index unit 离线流程
   evaluation/                     # RAGAS、enterprise gate、phase smoke
   diagnostics/                    # 诊断脚本
@@ -134,6 +138,8 @@ cp config/settings.example.env .env
 - `MILVUS_URI=./runtime/vectorstores/milvus/papers.db`
 - `BGE_M3_MODEL_PATH=./models/BAAI/bge-m3`
 - `BGE_RERANKER_MODEL_PATH=./models/BAAI/bge-reranker-v2-m3`
+- `parent_chunks.jsonl: ./data/paper_round1/chunks/parent_chunks.jsonl`
+- `child_chunks.jsonl: ./data/paper_round1/chunks/child_chunks.jsonl`
 - `RETRIEVAL_PARENT_INDEX_PATH=./data/paper_round1/chunks/parent_index.jsonl`
 
 ### 3. 构建知识库
@@ -142,11 +148,23 @@ cp config/settings.example.env .env
 python scripts/ingestion/build_round1_kb.py
 ```
 
+该命令当前会生成 `chunks.jsonl`、`parent_chunks.jsonl`、`child_chunks.jsonl` 和
+`parent_index.jsonl`，并把 `child_chunks.jsonl` 导入 Milvus。BM25 也会优先读取
+`child_chunks.jsonl`，使 dense/BM25 召回保持同一 child chunk 粒度。
+
 必要时可单独运行：
 
 ```bash
-python scripts/ingestion/import_to_milvus.py
-python scripts/ingestion/build_parent_index.py
+python scripts/ingestion/build_parent_child_index.py \
+  --chunks data/paper_round1/chunks/chunks.jsonl \
+  --parent-output data/paper_round1/chunks/parent_chunks.jsonl \
+  --child-output data/paper_round1/chunks/child_chunks.jsonl \
+  --parent-index-output data/paper_round1/chunks/parent_index.jsonl
+
+python scripts/ingestion/import_to_milvus.py \
+  --jsonl data/paper_round1/chunks/child_chunks.jsonl \
+  --collection_name synbio_papers \
+  --milvus_uri ./runtime/vectorstores/milvus/papers.db
 ```
 
 ### 4. 启动服务
@@ -184,7 +202,9 @@ curl -X POST http://127.0.0.1:9000/v1/ask \
 | `RETRIEVAL_FINAL_TOP_K` | `8` | generation 前 seed chunk 数 |
 | `RETRIEVAL_RERANK_MODE` | `plain` | rerank 模式，支持关闭或 guarded 策略 |
 | `RETRIEVAL_SOURCE_FLOOR_ENABLED` | `true` | 保留 dense/BM25 单源 top-N 候选 |
-| `RETRIEVAL_PARENT_EXPANSION_ENABLED` | `true` | 启用 parent context 扩展 |
+| `RETRIEVAL_PARENT_EXPANSION_ENABLED` | `false` | 启用 parent context 扩展 |
+| `RETRIEVAL_PARENT_EXPANSION_MAX_TOTAL` | `12` | parent expansion 打开后的 final context 上限 |
+| `RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT` | `2` | 每个 seed 最多补充的 parent context 数 |
 | `QUERY_REWRITE_MODE` | `off` | query rewrite 模式：`off`/`shadow`/`enabled` |
 | `RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED` | `false` | 英文改写后追加中文原问题 fallback |
 | `TABLE_PREVIEW_ENABLED` | `true` | 合入 preview-only table candidate |
@@ -241,6 +261,14 @@ python scripts/evaluation/run_ragas_regression.py \
 pytest -q
 ```
 
+parent-child 参数 sweep：
+
+```bash
+python scripts/evaluation/run_parent_child_param_sweep.py --round recall
+python scripts/evaluation/run_parent_child_param_sweep.py --round parent --base-profile <recall_winner>
+python scripts/evaluation/run_parent_child_param_sweep.py --round generation --base-profile <recall_winner> --parent-profile <parent_winner>
+```
+
 最近一次 smoke20 链路验证结果：
 
 - 数据集：`data/eval/datasets/enterprise_ragas_smoke20.json`
@@ -261,6 +289,10 @@ metrics 的 RAGAS 流程。
 - accepted baseline 仍以 Phase 20 convergence baseline（Phase 20M）为当前记录。
 - production 默认保持 query rewrite、original-CN fallback、Qwen synthesis 等实验能力
   关闭；离线实验通过 feature flag 或 profile 显式启用。
+- 当前代码已支持 parent-child 检索：child chunk 用于召回，命中的 child 片段进入
+  rerank 和 generation，最终 citation 仍绑定 parent chunk。
+- `ParentContextExpander` 是 child->parent materialization 之后的额外上下文扩展；
+  当前默认关闭，parent-child sweep 用它评估不同 context budget。
 - table preview 是候选召回/诊断 sidecar，不等同于 production formal table citation。
 - 历史 Phase7/Phase20 脚本和报告仍保留为回归与审计材料，当前 README 以正在运行的
   模块边界和主链路为准。

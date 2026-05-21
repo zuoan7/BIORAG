@@ -416,6 +416,13 @@ def build_metadata_json(chunk: dict) -> str:
         "ocr_text": chunk.get("ocr_text") or "",
         "visual_summary": chunk.get("visual_summary") or "",
         "asset_uri": chunk.get("asset_uri") or "",
+        "index_role": chunk.get("index_role") or "",
+        "parent_id": chunk.get("parent_id") or "",
+        "parent_chunk_id": chunk.get("parent_chunk_id") or "",
+        "child_index": chunk.get("child_index"),
+        "child_start_token": chunk.get("child_start_token"),
+        "child_end_token": chunk.get("child_end_token"),
+        "child_token_count": chunk.get("child_token_count"),
     }
     return _json.dumps(payload, ensure_ascii=False)
 

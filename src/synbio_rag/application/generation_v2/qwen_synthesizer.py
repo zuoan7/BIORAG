@@ -412,6 +412,11 @@ def _build_messages(
             f"允许范围：{'、'.join(plan.allowed_scope) or '无'}",
             f"证据限制：{limitation_line}",
             f"允许引用证据：{'、'.join(plan.comparison_coverage.allowed_citation_evidence_ids) if plan.comparison_coverage else 'extractive_answer 原有 [E#] 集合'}",
+            (
+                "证据使用规则：如果证据包含 matched_child_evidence，"
+                "请优先依据 matched child evidence；doc_id/section/chunk metadata 只用于出处，"
+                "不代表可以从 parent 其他内容自由扩展。"
+            ),
             "可引用证据：",
             "\n\n".join(evidence_blocks),
             "当前抽取式草稿：",
@@ -441,7 +446,10 @@ def _build_messages(
                 "11. 输出中文。\n"
                 "12. 不要输出 JSON。\n"
                 "13. 不要输出 markdown 表格，除非问题明确要求表格。\n"
-                "14. 不要输出没有 citation 的事实句。"
+                "14. 不要输出没有 citation 的事实句。\n"
+                "15. 如果证据包含 matched_child_evidence，"
+                "优先依据 matched child evidence；parent citation metadata 只用于出处，"
+                "不能从未给出的 parent 正文扩展事实。"
             ),
         },
         {

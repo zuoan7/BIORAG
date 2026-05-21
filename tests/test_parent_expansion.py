@@ -517,6 +517,25 @@ def test_max_total_limit_and_metadata_tags_enforced(tmp_path: Path):
     assert final_chunks[1].metadata["parent_expansion_reason"]
 
 
+def test_seed_preservation_limits_added_chunks_without_truncating_seeds(tmp_path: Path):
+    chunks = [_chunk("c1", "d1", 1), _chunk("c2", "d1", 2), _chunk("c3", "d1", 3), _chunk("c4", "d1", 4)]
+    store, config = _build_store(tmp_path, chunks)
+    config.parent_expansion_max_total = 2
+    config.parent_expansion_preserve_seed_chunks = True
+    config.parent_expansion_max_added = 1
+    expander = ParentContextExpander(store, config)
+    seeds = [_seed_from_chunk(chunks[1]), _seed_from_chunk(chunks[2]), _seed_from_chunk(chunks[3])]
+
+    final_chunks, debug = expander.expand("what?", seeds, _analysis(QueryIntent.FACTOID))
+
+    assert [chunk.chunk_id for chunk in final_chunks[:3]] == ["c2", "c3", "c4"]
+    assert len(final_chunks) == 4
+    assert debug["seed_preservation_enabled"] is True
+    assert debug["effective_max_added"] == 1
+    assert debug["effective_final_context_cap"] == 4
+    assert debug["added_chunk_ids"] == ["c1"]
+
+
 def test_pipeline_default_off_behavior_unchanged():
     pipeline = SynBioRAGPipeline.__new__(SynBioRAGPipeline)
     pipeline.settings = Settings(

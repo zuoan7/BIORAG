@@ -56,6 +56,7 @@ def _candidate(
     vector: float = 0.0,
     bm25: float = 0.0,
     features: dict | None = None,
+    metadata: dict | None = None,
 ) -> EvidenceCandidate:
     return EvidenceCandidate(
         evidence_id=evidence_id,
@@ -71,7 +72,7 @@ def _candidate(
         bm25_score=bm25,
         rerank_score=rerank,
         fusion_score=fusion,
-        metadata={},
+        metadata=metadata or {},
         features={
             "has_table_text": False,
             "has_table_caption": False,
@@ -109,6 +110,91 @@ def test_evidence_ledger_builder_extracts_features() -> None:
     assert "has_numeric" in candidate.reasons
 
 
+def test_evidence_ledger_uses_child_focused_generation_text() -> None:
+    builder = EvidenceLedgerBuilder()
+    parent_text = " ".join(f"unrelated_parent_intro_{i}" for i in range(80))
+    parent_text += " matched_parent_context " + " ".join(f"context_{i}" for i in range(80, 170))
+    chunk = _chunk(
+        "parent_chunk_1",
+        parent_text,
+        metadata={
+            "matched_child_snippets": [
+                {
+                    "chunk_id": "parent_chunk_1::child003",
+                    "text": "specific matched child evidence shows 12 mg/L titer in strain A",
+                    "child_start_token": 90,
+                    "child_end_token": 99,
+                    "block_types": ["paragraph"],
+                    "evidence_types": ["paragraph"],
+                }
+            ]
+        },
+    )
+
+    candidate = builder.build("strain A titer?", _analysis(QueryIntent.FACTOID), [chunk])[0]
+
+    assert candidate.chunk_id == "parent_chunk_1"
+    assert "matched_child_evidence:" in candidate.text
+    assert "specific matched child evidence shows 12 mg/L titer" in candidate.text
+    assert "unrelated_parent_intro_0" not in candidate.text
+    assert candidate.metadata["parent_child_generation_view_used"] is True
+    assert candidate.metadata["generation_evidence_role"] == "matched_child_focused_evidence"
+    assert candidate.metadata["matched_child_chunk_ids"] == ["parent_chunk_1::child003"]
+    assert "parent_child_focused_evidence" in candidate.reasons
+
+
+def test_evidence_ledger_child_markers_drive_table_and_figure_features() -> None:
+    builder = EvidenceLedgerBuilder()
+    chunk = _chunk(
+        "parent_chunk_1",
+        " ".join(f"parent{i}" for i in range(120)),
+        metadata={
+            "matched_child_snippets": [
+                {
+                    "chunk_id": "parent_chunk_1::child_table",
+                    "text": "strain A 12.4 g/L; strain B 9.1 g/L",
+                    "child_start_token": 40,
+                    "child_end_token": 52,
+                    "block_types": ["table_text"],
+                    "evidence_types": ["table_text"],
+                    "contains_table_text": True,
+                },
+                {
+                    "chunk_id": "parent_chunk_1::child_figure",
+                    "text": "Figure 2 shows the pathway overview.",
+                    "child_start_token": 70,
+                    "child_end_token": 78,
+                    "block_types": ["figure_caption"],
+                    "evidence_types": ["figure_caption"],
+                    "contains_figure_caption": True,
+                },
+            ]
+        },
+    )
+
+    candidate = builder.build(
+        "Table and figure evidence?",
+        _analysis(QueryIntent.FACTOID),
+        [chunk],
+    )[0]
+
+    assert "[table text]" in candidate.text
+    assert "[figure caption]" in candidate.text
+    assert candidate.features["has_table_text"] is True
+    assert candidate.features["has_figure_caption"] is True
+
+
+def test_evidence_ledger_without_matched_children_keeps_parent_text_behavior() -> None:
+    builder = EvidenceLedgerBuilder()
+    chunk = _chunk("parent_chunk_1", "parent text with result 10 g/L")
+
+    candidate = builder.build("result?", _analysis(QueryIntent.FACTOID), [chunk])[0]
+
+    assert candidate.text == "parent text with result 10 g/L"
+    assert candidate.metadata["parent_child_generation_view_used"] is False
+    assert candidate.metadata["generation_evidence_role"] == "parent_text"
+
+
 def test_support_selector_factoid_prefers_highest_score() -> None:
     selector = SupportPackSelector()
     config = GenerationConfig(v2_max_support_factoid=1)
@@ -120,6 +206,88 @@ def test_support_selector_factoid_prefers_highest_score() -> None:
     support = selector.select("高分证据是什么？", _analysis(QueryIntent.FACTOID), candidates, config)
 
     assert [item.evidence_id for item in support] == ["E2"]
+
+
+def test_support_selector_table_query_prefers_child_focused_table_evidence() -> None:
+    builder = EvidenceLedgerBuilder()
+    chunks = [
+        _chunk(
+            "parent_table",
+            " ".join(f"parent_table_context_{i}" for i in range(120)),
+            rerank=0.35,
+            metadata={
+                "matched_child_snippets": [
+                    {
+                        "chunk_id": "parent_table::child001",
+                        "text": "Table 2: strain A produced 12.4 g/L.",
+                        "child_start_token": 50,
+                        "child_end_token": 60,
+                        "block_types": ["table_text"],
+                        "evidence_types": ["table_text"],
+                        "contains_table_text": True,
+                    }
+                ]
+            },
+        ),
+        _chunk(
+            "plain_parent",
+            "high score paragraph without table evidence",
+            doc_id="doc2",
+            rerank=0.95,
+        ),
+    ]
+    candidates = builder.build("Table 2 的产量是多少？", _analysis(QueryIntent.FACTOID), chunks)
+
+    support = SupportPackSelector().select(
+        "Table 2 的产量是多少？",
+        _analysis(QueryIntent.FACTOID),
+        candidates,
+        GenerationConfig(v2_max_support_factoid=1),
+    )
+
+    assert support[0].candidate.chunk_id == "parent_table"
+    assert "parent_child_focused_evidence" in support[0].reasons
+
+
+def test_support_selector_figure_query_prefers_child_focused_figure_caption() -> None:
+    builder = EvidenceLedgerBuilder()
+    chunks = [
+        _chunk(
+            "parent_figure",
+            " ".join(f"parent_figure_context_{i}" for i in range(120)),
+            rerank=0.35,
+            metadata={
+                "matched_child_snippets": [
+                    {
+                        "chunk_id": "parent_figure::child001",
+                        "text": "Figure 3 illustrates the engineered pathway.",
+                        "child_start_token": 50,
+                        "child_end_token": 60,
+                        "block_types": ["figure_caption"],
+                        "evidence_types": ["figure_caption"],
+                        "contains_figure_caption": True,
+                    }
+                ]
+            },
+        ),
+        _chunk(
+            "plain_parent",
+            "high score paragraph without figure evidence",
+            doc_id="doc2",
+            rerank=0.95,
+        ),
+    ]
+    candidates = builder.build("Figure 3 说明了什么？", _analysis(QueryIntent.FACTOID), chunks)
+
+    support = SupportPackSelector().select(
+        "Figure 3 说明了什么？",
+        _analysis(QueryIntent.FACTOID),
+        candidates,
+        GenerationConfig(v2_max_support_factoid=1),
+    )
+
+    assert support[0].candidate.chunk_id == "parent_figure"
+    assert "parent_child_focused_evidence" in support[0].reasons
 
 
 def test_support_selector_summary_prefers_doc_diversity_before_second_same_doc() -> None:
@@ -271,6 +439,49 @@ def test_citation_binder_maps_internal_ids_from_support_pack_only() -> None:
     assert len(citations) == 1
     assert citations[0].chunk_id == "e1_chunk"
     assert debug["invalid_evidence_ids"] == ["E9"]
+
+
+def test_citation_binder_keeps_parent_chunk_id_and_quotes_child_focused_text() -> None:
+    binder = CitationBinder()
+    candidate = EvidenceCandidate(
+        evidence_id="E1",
+        chunk_id="parent_chunk_1",
+        doc_id="doc1",
+        source_file="doc1.pdf",
+        title="title-doc1",
+        section="Results",
+        text=(
+            "matched_child_evidence:\n"
+            "matched child: parent_chunk_1::child002 [table text]\n"
+            "child table evidence 12 mg/L"
+        ),
+        page_start=3,
+        page_end=3,
+        vector_score=0.1,
+        bm25_score=0.1,
+        rerank_score=0.8,
+        fusion_score=0.7,
+        metadata={
+            "parent_child_generation_view_used": True,
+            "matched_child_chunk_ids": ["parent_chunk_1::child002"],
+            "generation_evidence_role": "matched_child_focused_evidence",
+            "parent_text_preview": "unrelated parent opening",
+        },
+        features={},
+        reasons=["seed_chunk", "parent_child_focused_evidence"],
+    )
+    support_pack = [SupportItem("E1", candidate, 0.9, ["picked"])]
+
+    answer, citations, debug = binder.bind("答案引用 [E1]。", support_pack)
+
+    assert "[1]" in answer
+    assert citations[0].chunk_id == "parent_chunk_1"
+    assert "child table evidence 12 mg/L" in citations[0].quote
+    assert "unrelated parent opening" not in citations[0].quote
+    citation_debug = debug["citation_candidates"][0]
+    assert citation_debug["parent_child_generation_view_used"] is True
+    assert citation_debug["matched_child_chunk_ids"] == ["parent_chunk_1::child002"]
+    assert citation_debug["generation_evidence_role"] == "matched_child_focused_evidence"
 
 
 def test_final_validator_refuses_non_refuse_answer_without_citation() -> None:

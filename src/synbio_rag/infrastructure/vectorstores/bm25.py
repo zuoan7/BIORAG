@@ -102,7 +102,7 @@ class BM25Retriever:
         self._avgdl = sum(self._doc_len) / len(self._doc_len) if self._doc_len else 0.0
 
     def _load_records(self) -> list[RetrievedChunk]:
-        jsonl_path = Path(self.kb_config.chunk_jsonl)
+        jsonl_path = _retrieval_jsonl_path(self.kb_config)
         if jsonl_path.exists():
             return self._load_from_jsonl(jsonl_path)
         if self.milvus_client is not None:
@@ -128,7 +128,17 @@ class BM25Retriever:
                     "object_type": item.get("object_type", "body"),
                     "object_id": item.get("object_id", ""),
                     "block_types": item.get("block_types", []),
+                    "block_ids": item.get("block_ids", []),
+                    "source_block_ids": item.get("source_block_ids", []),
                     "evidence_types": item.get("evidence_types", []),
+                    "page_numbers": item.get("page_numbers", []),
+                    "section_path": item.get("section_path", []),
+                    "index_role": item.get("index_role", ""),
+                    "parent_id": item.get("parent_id", ""),
+                    "parent_chunk_id": item.get("parent_chunk_id", ""),
+                    "child_index": item.get("child_index"),
+                    "child_start_token": item.get("child_start_token"),
+                    "child_end_token": item.get("child_end_token"),
                 }
                 records.append(
                     RetrievedChunk(
@@ -247,12 +257,17 @@ class BM25Retriever:
 
     def _load_cache(self) -> bool:
         cache_path = Path(self.retrieval_config.bm25_cache_path)
-        jsonl_path = Path(self.kb_config.chunk_jsonl)
+        jsonl_path = _retrieval_jsonl_path(self.kb_config)
         if not cache_path.exists():
             return False
         if jsonl_path.exists() and cache_path.stat().st_mtime < jsonl_path.stat().st_mtime:
             return False
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        cached_source = payload.get("source_jsonl")
+        if cached_source and Path(str(cached_source)).resolve() != jsonl_path.resolve():
+            return False
+        if not cached_source and jsonl_path != Path(self.kb_config.chunk_jsonl):
+            return False
         self._records = [
             RetrievedChunk(
                 chunk_id=item["chunk_id"],
@@ -277,6 +292,7 @@ class BM25Retriever:
         cache_path = Path(self.retrieval_config.bm25_cache_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "source_jsonl": str(_retrieval_jsonl_path(self.kb_config)),
             "records": [
                 {
                     "chunk_id": item.chunk_id,
@@ -421,6 +437,14 @@ def _retrieval_text(chunk: RetrievedChunk) -> str:
         metadata_lines.append(f"doc_id {chunk.doc_id}")
     metadata_lines.append(chunk.text or "")
     return "\n".join(metadata_lines)
+
+
+def _retrieval_jsonl_path(kb_config: KnowledgeBaseConfig) -> Path:
+    child_path_raw = str(getattr(kb_config, "child_chunk_jsonl", "") or "")
+    child_path = Path(child_path_raw) if child_path_raw else None
+    if child_path is not None and child_path.exists():
+        return child_path
+    return Path(kb_config.chunk_jsonl)
 
 
 def _safe_parse_metadata_json(raw: str) -> dict[str, Any]:

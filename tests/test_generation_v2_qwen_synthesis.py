@@ -9,7 +9,11 @@ from src.synbio_rag.application.generation_v2.models import (
     EvidenceCandidate,
     SupportItem,
 )
-from src.synbio_rag.application.generation_v2.qwen_synthesizer import QwenSynthesizer, validate_synthesized_answer
+from src.synbio_rag.application.generation_v2.qwen_synthesizer import (
+    QwenSynthesizer,
+    _build_messages,
+    validate_synthesized_answer,
+)
 from src.synbio_rag.application.generation_v2.service import GenerationV2Service
 from src.synbio_rag.domain.config import GenerationConfig
 from src.synbio_rag.domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
@@ -264,6 +268,64 @@ def test_qwen_synthesis_success_binds_internal_citation_ids() -> None:
     assert len(result.citations) == 1
     assert result.debug["qwen_synthesis"]["used_qwen"] is True
     assert result.debug["qwen_synthesis"]["fallback_used"] is False
+
+
+def test_qwen_prompt_uses_child_focused_evidence_without_full_parent_text() -> None:
+    focused_text = (
+        "matched_child_evidence:\n"
+        "matched child: parent_chunk_1::child001 [table text]\n"
+        "child table evidence reports 12 mg/L titer"
+    )
+    support_pack = [
+        SupportItem(
+            evidence_id="E1",
+            candidate=EvidenceCandidate(
+                evidence_id="E1",
+                chunk_id="parent_chunk_1",
+                doc_id="doc_0001",
+                source_file="doc_0001.pdf",
+                title="title-doc_0001",
+                section="Results",
+                text=focused_text,
+                page_start=None,
+                page_end=None,
+                vector_score=0.2,
+                bm25_score=0.1,
+                rerank_score=0.9,
+                fusion_score=0.8,
+                metadata={
+                    "parent_child_generation_view_used": True,
+                    "matched_child_chunk_ids": ["parent_chunk_1::child001"],
+                    "generation_evidence_role": "matched_child_focused_evidence",
+                    "parent_text_preview": (
+                        "unrelated full parent opening that should not be prompt evidence"
+                    ),
+                },
+                features={},
+                reasons=["seed_chunk", "parent_child_focused_evidence"],
+            ),
+            support_score=0.9,
+            reasons=["selected_support"],
+        )
+    ]
+
+    messages = _build_messages(
+        question="Table 里报告了什么？",
+        plan=AnswerPlan(mode="full", reason="factoid_supported"),
+        support_pack=support_pack,
+        extractive_answer="根据当前知识库证据：child table evidence reports 12 mg/L titer [E1]",
+        config=GenerationConfig(v2_use_qwen_synthesis=True),
+        existence_guardrail={},
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+    assert "[E1] doc_id=doc_0001; section=Results" in user_prompt
+    assert "matched_child_evidence:" in user_prompt
+    assert "child table evidence reports 12 mg/L titer" in user_prompt
+    assert "unrelated full parent opening" not in user_prompt
+    assert "优先依据 matched child evidence" in system_prompt
+    assert "parent citation metadata 只用于出处" in system_prompt
 
 
 def test_qwen_synthesis_falls_back_on_invalid_citation_ids() -> None:

@@ -314,10 +314,12 @@ class ContextExpansionConfig:
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
     neighbor_expansion_max_chunks: int = 30
-    parent_expansion_enabled: bool = True
+    parent_expansion_enabled: bool = False
     parent_index_path: str = "./data/paper_round1/chunks/parent_index.jsonl"
     parent_expansion_max_total: int = 12
     parent_expansion_per_seed_limit: int = 2
+    parent_expansion_preserve_seed_chunks: bool = False
+    parent_expansion_max_added: int = 0
     protect_rerank_seeds_enabled: bool = True
     protect_rerank_seeds_top_k: int = 5
     parent_expansion_window_enabled: bool = True
@@ -523,6 +525,8 @@ class KnowledgeBaseConfig:
     parsed_preview_dir: str = "./data/paper_round1/parsed_preview"
     chunk_dir: str = "./data/paper_round1/chunks"
     chunk_jsonl: str = "./data/paper_round1/chunks/chunks.jsonl"
+    parent_chunk_jsonl: str = "./data/paper_round1/chunks/parent_chunks.jsonl"
+    child_chunk_jsonl: str = "./data/paper_round1/chunks/child_chunks.jsonl"
     embedding_model_path: str = "./models/BAAI/bge-m3"
     embedding_dim: int = 1024
     embedding_max_length: int = 512
@@ -615,6 +619,8 @@ class Settings:
         self.kb.parsed_preview_dir = _resolve_local_path(self.kb.parsed_preview_dir)
         self.kb.chunk_dir = _resolve_local_path(self.kb.chunk_dir)
         self.kb.chunk_jsonl = _resolve_local_path(self.kb.chunk_jsonl)
+        self.kb.parent_chunk_jsonl = _resolve_local_path(self.kb.parent_chunk_jsonl)
+        self.kb.child_chunk_jsonl = _resolve_local_path(self.kb.child_chunk_jsonl)
         self.kb.embedding_model_path = _resolve_local_path(self.kb.embedding_model_path)
         self.table_enhancement.audit_root = _resolve_local_path(self.table_enhancement.audit_root)
         self.reranker.model_path = _resolve_local_path(self.reranker.model_path)
@@ -628,6 +634,8 @@ class Settings:
             self.kb.parsed_preview_dir,
             self.kb.chunk_dir,
             str(Path(self.kb.chunk_jsonl).parent),
+            str(Path(self.kb.parent_chunk_jsonl).parent),
+            str(Path(self.kb.child_chunk_jsonl).parent),
             str(Path(self.retrieval.bm25_cache_path).parent),
             str(Path(self.audit.audit_log_path).parent),
             str(Path(self.audit.session_store_path).parent),
@@ -935,6 +943,18 @@ def _load_retrieval_env(settings: Settings, get_value) -> None:
         get_value(
             "RETRIEVAL_PARENT_EXPANSION_PER_SEED_LIMIT",
             str(settings.retrieval.parent_expansion_per_seed_limit),
+        )
+    )
+    settings.retrieval.parent_expansion_preserve_seed_chunks = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_PRESERVE_SEED_CHUNKS",
+            str(settings.retrieval.parent_expansion_preserve_seed_chunks),
+        )
+    )
+    settings.retrieval.parent_expansion_max_added = int(
+        get_value(
+            "RETRIEVAL_PARENT_EXPANSION_MAX_ADDED",
+            str(settings.retrieval.parent_expansion_max_added),
         )
     )
     settings.retrieval.parent_expansion_window_enabled = _parse_bool(

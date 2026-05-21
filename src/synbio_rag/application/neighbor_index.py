@@ -74,7 +74,9 @@ class ChunkNeighborExpander:
     def _ensure_loaded(self) -> None:
         if self._loaded:
             return
-        path = Path(self.kb_config.chunk_jsonl)
+        parent_path_raw = str(getattr(self.kb_config, "parent_chunk_jsonl", "") or "")
+        parent_path = Path(parent_path_raw) if parent_path_raw else None
+        path = parent_path if parent_path is not None and parent_path.exists() else Path(self.kb_config.chunk_jsonl)
         if not path.exists():
             self._loaded = True
             return
