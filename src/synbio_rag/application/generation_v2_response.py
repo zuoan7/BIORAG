@@ -9,6 +9,47 @@ from .original_cn_fallback import sanitize_original_cn_fallback_debug
 from .table_preview import sanitize_table_preview_debug
 
 
+def _parent_chunk_id(chunk_id: Any) -> str:
+    return str(chunk_id or "").split("::child", 1)[0]
+
+
+def _matched_child_chunk_ids(chunk: RetrievedChunk) -> list[str]:
+    metadata = chunk.metadata or {}
+    value = metadata.get("matched_child_chunk_ids")
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    value = metadata.get("matched_child_chunk_id")
+    if value:
+        return [str(value)]
+    return []
+
+
+def _chunk_stage_debug(chunks: list[RetrievedChunk]) -> dict[str, Any]:
+    chunk_ids = [str(chunk.chunk_id or "") for chunk in chunks]
+    child_ids_by_chunk_id = {
+        str(chunk.chunk_id or ""): child_ids
+        for chunk in chunks
+        if (child_ids := _matched_child_chunk_ids(chunk))
+    }
+    matched_child_ids: list[str] = []
+    seen_child_ids: set[str] = set()
+    for child_ids in child_ids_by_chunk_id.values():
+        for child_id in child_ids:
+            if child_id in seen_child_ids:
+                continue
+            seen_child_ids.add(child_id)
+            matched_child_ids.append(child_id)
+    return {
+        "output_count": len(chunks),
+        "chunk_ids": chunk_ids,
+        "parent_chunk_ids": list(dict.fromkeys(_parent_chunk_id(chunk_id) for chunk_id in chunk_ids)),
+        "doc_ids": [str(chunk.doc_id or "") for chunk in chunks],
+        "source_files": [str(chunk.source_file or "") for chunk in chunks],
+        "matched_child_chunk_ids": matched_child_ids,
+        "matched_child_chunk_ids_by_chunk_id": child_ids_by_chunk_id,
+    }
+
+
 def build_generation_v2_response(
     *,
     gen_result: Any,
@@ -66,6 +107,10 @@ def build_generation_v2_response(
             "tenant_id": filters.tenant_id if filters else "default",
             "hybrid_enabled": settings.retrieval.hybrid_enabled,
             "bm25_enabled": settings.retrieval.bm25_enabled,
+            "retrieval_output": _chunk_stage_debug(retrieved),
+            "rerank_output": _chunk_stage_debug(reranked),
+            "seed_output": _chunk_stage_debug(seed_chunks),
+            "final_output": _chunk_stage_debug(final_chunks),
             "retrieval_hits": retriever_debug,
             "rerank_hits": reranker_debug,
             "neighbor_expansion": {

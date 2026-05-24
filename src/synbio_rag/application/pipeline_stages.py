@@ -18,6 +18,8 @@ from .original_cn_fallback import run_original_cn_fallback as _run_original_cn_f
 from .parent_expansion import ParentContextExpander
 from .summary_supplement import (
     build_empty_supplement_debug as _build_empty_supplement_debug,
+)
+from .summary_supplement import (
     supplement_summary_sections as _supplement_summary_sections,
 )
 from .table_preview import run_table_preview as _run_table_preview
@@ -26,6 +28,7 @@ from .table_preview import run_table_preview as _run_table_preview
 @dataclass
 class RetrievalStageResult:
     analysis: QueryAnalysis
+    original_query: str
     retrieval_question: str
     rewrite_trace: Any
     retrieved: list[RetrievedChunk]
@@ -38,6 +41,9 @@ class RetrievalStageResult:
 class RerankStageResult:
     reranked: list[RetrievedChunk]
     seed_chunks: list[RetrievedChunk]
+    original_query: str
+    rewritten_query: str
+    rerank_query: str
 
 
 @dataclass
@@ -107,6 +113,7 @@ class RetrievalStage:
         )
         return RetrievalStageResult(
             analysis=analysis,
+            original_query=question,
             retrieval_question=retrieval_question,
             rewrite_trace=rewrite_trace,
             retrieved=retrieved,
@@ -127,12 +134,18 @@ class RerankStage:
         question: str,
         retrieved: list[RetrievedChunk],
         analysis: QueryAnalysis,
+        original_question: str | None = None,
+        rewritten_question: str | None = None,
     ) -> RerankStageResult:
+        original_query = original_question or question
+        rewritten_query = rewritten_question or ""
         reranked = self.reranker.rerank(
             question,
             retrieved,
             top_k=analysis.rerank_top_k,
             analysis=analysis,
+            original_question=original_query,
+            rewritten_question=rewritten_query,
         )
         seed_chunks = reranked[: self.settings.retrieval.final_top_k]
         for rank_idx, chunk in enumerate(seed_chunks, start=1):
@@ -140,7 +153,13 @@ class RerankStage:
                 chunk.metadata["rerank_rank"] = rank_idx
             else:
                 chunk.metadata = {"rerank_rank": rank_idx}
-        return RerankStageResult(reranked=reranked, seed_chunks=seed_chunks)
+        return RerankStageResult(
+            reranked=reranked,
+            seed_chunks=seed_chunks,
+            original_query=original_query,
+            rewritten_query=rewritten_query,
+            rerank_query=question,
+        )
 
 
 class ContextStage:
@@ -262,7 +281,7 @@ class ResponseStage:
         filters: QueryFilters | None,
         start_time: float,
     ) -> RAGPipelineResponse:
-        return build_generation_v2_response(
+        response = build_generation_v2_response(
             gen_result=generation.gen_result,
             analysis=retrieval.analysis,
             session_id=session_id,
@@ -288,3 +307,10 @@ class ResponseStage:
                 generation.table_preview_answer_without_formal_citation
             ),
         )
+        response.debug["query_bundle"] = {
+            "original_query": retrieval.original_query,
+            "rewritten_query": rerank.rewritten_query,
+            "retrieval_query": retrieval.retrieval_question,
+            "rerank_query": rerank.rerank_query,
+        }
+        return response

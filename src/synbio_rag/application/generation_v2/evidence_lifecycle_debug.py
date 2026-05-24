@@ -84,6 +84,7 @@ def stage_debug_from_chunks(
     protected_dropped = [chunk_id for chunk_id in protected_ids if chunk_id not in output_set]
     for chunk_id in protected_dropped:
         drop_reasons.setdefault(chunk_id, normalize_drop_reason(default_drop_reason))
+    child_ids_by_chunk_id = _matched_child_ids_by_chunk_id(output_chunks)
     return {
         "input_count": len(input_chunks),
         "output_count": len(output_chunks),
@@ -95,6 +96,12 @@ def stage_debug_from_chunks(
         "protected_seed_dropped_count": len(protected_dropped),
         "protected_seed_kept_chunk_ids": sorted(protected_kept),
         "protected_seed_dropped_chunk_ids": sorted(protected_dropped),
+        "matched_child_chunk_ids": _dedupe(
+            child_id
+            for child_ids in child_ids_by_chunk_id.values()
+            for child_id in child_ids
+        ),
+        "matched_child_chunk_ids_by_chunk_id": child_ids_by_chunk_id,
     }
 
 
@@ -115,12 +122,19 @@ def rerank_output_debug(
 
 def support_input_debug(candidates: list[EvidenceCandidate]) -> dict[str, Any]:
     protected = protected_seed_chunk_ids(candidates)
+    child_ids_by_chunk_id = _matched_child_ids_by_chunk_id(candidates)
     return {
         "input_count": len(candidates),
         "chunk_ids": chunk_ids(candidates),
         "doc_ids": doc_ids(candidates),
         "protected_seed_count": len(protected),
         "protected_seed_chunk_ids": protected,
+        "matched_child_chunk_ids": _dedupe(
+            child_id
+            for child_ids in child_ids_by_chunk_id.values()
+            for child_id in child_ids
+        ),
+        "matched_child_chunk_ids_by_chunk_id": child_ids_by_chunk_id,
     }
 
 
@@ -151,10 +165,14 @@ def selected_support_debug(
     protected_dropped = [chunk_id for chunk_id in protected_ids if chunk_id not in selected_chunk_ids]
     for chunk_id in protected_dropped:
         drop_reasons.setdefault(chunk_id, "support_pack_size_limit")
+    child_ids_by_chunk_id = _matched_child_ids_by_chunk_id(
+        [item.candidate for item in support_pack]
+    )
     return {
         "input_count": len(candidates),
         "output_count": len(support_pack),
         "kept_chunk_ids": selected_chunk_ids,
+        "kept_evidence_ids": [item.evidence_id for item in support_pack],
         "doc_ids": doc_ids(support_pack),
         "dropped_chunk_ids": dropped_chunk_ids,
         "drop_reasons": drop_reasons,
@@ -162,6 +180,12 @@ def selected_support_debug(
         "protected_seed_dropped_count": len(protected_dropped),
         "protected_seed_kept_chunk_ids": sorted(protected_kept),
         "protected_seed_dropped_chunk_ids": sorted(protected_dropped),
+        "matched_child_chunk_ids": _dedupe(
+            child_id
+            for child_ids in child_ids_by_chunk_id.values()
+            for child_id in child_ids
+        ),
+        "matched_child_chunk_ids_by_chunk_id": child_ids_by_chunk_id,
         "support_pack_size": support_pack_size,
         "answer_mode": answer_mode,
         "plan_mode": plan_mode,
@@ -185,15 +209,32 @@ def citation_candidates_debug(
         for c in citation_candidates:
             if getattr(c, "drop_reason", ""):
                 drop_reasons[c.chunk_id] = c.drop_reason
+        child_ids_by_evidence_id = {
+            str(c.evidence_id): [str(child_id) for child_id in getattr(c, "matched_child_chunk_ids", []) or []]
+            for c in citation_candidates
+        }
+        child_ids_by_chunk_id = {
+            str(c.chunk_id): child_ids
+            for c in citation_candidates
+            if (child_ids := child_ids_by_evidence_id.get(str(c.evidence_id), []))
+        }
         return {
             "input_count": len(support_pack),
             "output_count": len(citation_candidates),
+            "evidence_ids": [c.evidence_id for c in citation_candidates],
             "chunk_ids": [c.chunk_id for c in citation_candidates],
             "doc_ids": [c.doc_id for c in citation_candidates],
             "protected_seed_count": len(protected),
             "protected_seed_chunk_ids": protected,
             "drop_reasons": drop_reasons,
             "citation_eligible_count": sum(1 for c in citation_candidates if getattr(c, "citation_eligible", False)),
+            "matched_child_chunk_ids": _dedupe(
+                child_id
+                for child_ids in child_ids_by_evidence_id.values()
+                for child_id in child_ids
+            ),
+            "matched_child_chunk_ids_by_evidence_id": child_ids_by_evidence_id,
+            "matched_child_chunk_ids_by_chunk_id": child_ids_by_chunk_id,
         }
     protected = [
         item.candidate.chunk_id
@@ -246,6 +287,9 @@ def citation_output_debug(
         "partial_mode": plan_mode == "partial",
         "ordered_evidence_ids": list(citation_debug.get("ordered_evidence_ids", [])),
         "invalid_evidence_ids": list(citation_debug.get("invalid_evidence_ids", [])),
+        "matched_child_chunk_ids_by_evidence_id": dict(
+            citation_debug.get("matched_child_chunk_ids_by_evidence_id", {}) or {}
+        ),
     }
 
 
@@ -255,3 +299,36 @@ def drop_reason_distribution(debug: dict[str, Any]) -> dict[str, int]:
         for reason in (debug.get(stage, {}).get("drop_reasons", {}) or {}).values():
             counter[normalize_drop_reason(reason)] += 1
     return dict(counter)
+
+
+def _matched_child_chunk_ids(metadata: dict[str, Any]) -> list[str]:
+    value = metadata.get("matched_child_chunk_ids")
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    value = metadata.get("matched_child_chunk_id")
+    if value:
+        return [str(value)]
+    return []
+
+
+def _matched_child_ids_by_chunk_id(chunks: list[Any]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for chunk in chunks:
+        chunk_id = str(getattr(chunk, "chunk_id", "") or "")
+        metadata = getattr(chunk, "metadata", {}) or {}
+        child_ids = _matched_child_chunk_ids(metadata)
+        if chunk_id and child_ids:
+            result[chunk_id] = child_ids
+    return result
+
+
+def _dedupe(values: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "")
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result

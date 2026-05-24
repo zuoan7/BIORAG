@@ -3,29 +3,34 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from ..domain.confidence import ConfidenceScorer
 from ..domain.config import Settings
 from ..domain.router import QueryRouter
-from ..domain.schemas import ConversationTurn, QueryAnalysis, QueryFilters, RAGPipelineResponse
+from ..domain.schemas import (
+    ConversationTurn,
+    QueryAnalysis,
+    QueryFilters,
+    RAGPipelineResponse,
+    RetrievedChunk,
+)
 from ..infrastructure.embedding.bge import BGEM3Embedder
 from ..infrastructure.index.parent_store import ParentStore
 from ..infrastructure.vectorstores.bm25 import BM25Retriever
 from ..infrastructure.vectorstores.hybrid import HybridRetriever
 from ..infrastructure.vectorstores.milvus import MilvusRetriever
+from .alias_expansion_policy import AliasExpansionPolicy
 from .generation_v2 import GenerationV2Service
 from .generation_v2.neighbor_audit import NeighborAuditEngine
-from .alias_expansion_policy import AliasExpansionPolicy
 from .neighbor_index import ChunkNeighborExpander
 from .original_cn_fallback import (
     contains_cjk as _contains_cjk,
+)
+from .original_cn_fallback import (
     run_original_cn_fallback as _run_original_cn_fallback,
 )
 from .parent_expansion import ParentContextExpander
-from .query_rewrite_adapter import (
-    _build_query_rewrite_llm_client,
-    build_query_rewrite_service,
-)
 from .pipeline_stages import (
     ContextStage,
     GenerationStage,
@@ -33,12 +38,18 @@ from .pipeline_stages import (
     ResponseStage,
     RetrievalStage,
 )
+from .query_rewrite_adapter import (
+    _build_query_rewrite_llm_client,
+    build_query_rewrite_service,
+)
+from .rerank_service import LocalBGERerankerService
 from .retrieval_postprocessor import RetrievalPostProcessor
 from .retrieval_query_planner import RetrievalQueryPlanner
-from .rerank_service import LocalBGERerankerService
 from .summary_supplement import supplement_summary_sections as _supplement_summary_sections
 from .table_preview import (
     TablePreviewCandidateProvider,
+)
+from .table_preview import (
     run_table_preview as _run_table_preview,
 )
 
@@ -152,9 +163,11 @@ class SynBioRAGPipeline:
         )
 
         rerank = RerankStage(settings=self.settings, reranker=self.reranker).run(
-            question=question,
+            question=retrieval.retrieval_question,
             retrieved=retrieval.retrieved,
             analysis=retrieval.analysis,
+            original_question=question,
+            rewritten_question=str(getattr(retrieval.rewrite_trace, "rewritten_query", "") or ""),
         )
 
         context = ContextStage(
@@ -212,18 +225,23 @@ class SynBioRAGPipeline:
                 analysis=analysis,
                 original_question=original_question,
             )
+            raw_child_debug = self._build_raw_child_debug(retrieved)
             raw_retrieved_count = len(retrieved)
             retrieved = self._materialize_parent_child_hits(retrieved)
+            aggregation_debug = raw_child_debug["child_to_parent_aggregation"]
+            aggregation_debug["materialized_parent_count"] = len(retrieved)
             attempts.append(
                 {
                     "name": name,
                     "filters": candidate_filters.__dict__ if candidate_filters else None,
                     "retrieved_count": len(retrieved),
                     "raw_retrieved_count": raw_retrieved_count,
+                    "raw_child_count": aggregation_debug["raw_child_count"],
+                    "raw_parent_count": aggregation_debug["raw_parent_count"],
                 }
             )
             if retrieved:
-                return retrieved, {"selected": name, "attempts": attempts}
+                return retrieved, {"selected": name, "attempts": attempts, **raw_child_debug}
         return [], {"selected": "empty", "attempts": attempts}
 
     def _materialize_parent_child_hits(self, retrieved: list) -> list:
@@ -231,6 +249,42 @@ class SynBioRAGPipeline:
         if parent_store is None or not retrieved:
             return retrieved
         return parent_store.materialize_parent_hits(retrieved)
+
+    def _build_raw_child_debug(self, retrieved: list[RetrievedChunk]) -> dict[str, Any]:
+        parent_store = getattr(self, "parent_store", None)
+        trace: list[dict[str, Any]] = []
+        child_ids_by_parent_id: dict[str, list[str]] = {}
+        for rank, chunk in enumerate(retrieved, start=1):
+            chunk_id = str(chunk.chunk_id or "")
+            parent_chunk_id = _debug_parent_chunk_id(chunk, parent_store)
+            child_ids_by_parent_id.setdefault(parent_chunk_id, []).append(chunk_id)
+            metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+            trace.append(
+                {
+                    "rank": rank,
+                    "child_chunk_id": chunk_id,
+                    "parent_chunk_id": parent_chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "source_file": chunk.source_file,
+                    "section": chunk.section,
+                    "source": _debug_retrieval_source(chunk),
+                    "vector_score": _debug_round_float(chunk.vector_score),
+                    "bm25_score": _debug_round_float(chunk.bm25_score),
+                    "fusion_score": _debug_round_float(chunk.fusion_score),
+                    "chunk_index": metadata.get("chunk_index"),
+                    "child_index": metadata.get("child_index"),
+                }
+            )
+        parent_ids = list(child_ids_by_parent_id.keys())
+        return {
+            "raw_child_trace": trace,
+            "child_to_parent_aggregation": {
+                "raw_child_count": len(retrieved),
+                "raw_parent_count": len(parent_ids),
+                "parent_ids_from_children": parent_ids,
+                "child_ids_by_parent_id": child_ids_by_parent_id,
+            },
+        }
 
 
 def _build_filter_plan(filters: QueryFilters | None) -> list[tuple[str, QueryFilters | None]]:
@@ -262,3 +316,37 @@ def _build_filter_plan(filters: QueryFilters | None) -> list[tuple[str, QueryFil
         seen.add(key)
         deduped.append((name, candidate))
     return deduped
+
+
+def _debug_parent_chunk_id(chunk: RetrievedChunk, parent_store: Any | None) -> str:
+    chunk_id = str(chunk.chunk_id or "")
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    parent_chunk_id = str(metadata.get("parent_chunk_id") or "")
+    if parent_chunk_id:
+        return parent_chunk_id
+    if parent_store is not None and hasattr(parent_store, "get_parents_for_chunk"):
+        for parent in parent_store.get_parents_for_chunk(chunk_id):
+            if (
+                getattr(parent, "parent_type", "") == "retrieval_parent"
+                and getattr(parent, "parent_chunk_id", "")
+            ):
+                return str(parent.parent_chunk_id)
+    return chunk_id.split("::child", 1)[0]
+
+
+def _debug_retrieval_source(chunk: RetrievedChunk) -> str:
+    sources: list[str] = []
+    if chunk.vector_score:
+        sources.append("vector")
+    if chunk.bm25_score:
+        sources.append("bm25")
+    if chunk.fusion_score:
+        sources.append("rrf")
+    return "+".join(sources) if sources else "unknown"
+
+
+def _debug_round_float(value: object) -> float:
+    try:
+        return round(float(value), 6)
+    except (TypeError, ValueError):
+        return 0.0

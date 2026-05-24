@@ -2,35 +2,40 @@
   "canonical_datasets": {
     "smoke50": {
       "canonical_path": "data/eval/datasets/smoke50.jsonl",
-      "legacy_paths": [
-        "data/evaluation/smoke50_parent_expansion_v1.jsonl"
-      ],
-      "manifest_path": "data/eval/manifests/smoke50_manifest.json"
+      "manifest_path": "data/eval/manifests/smoke50_manifest.json",
+      "status": "canonical",
+      "dataset_role": "legacy_diagnostic",
+      "notes": "早期诊断集，用于路由、引用、parent-expansion 和 table/figure 行为回归。不是主质量 gate。旧版源副本已清理，仅保留 canonical jsonl。"
     },
     "smoke100": {
       "canonical_path": "data/eval/datasets/smoke100.jsonl",
-      "legacy_paths": [
-        "data/eval/datasets/enterprise_ragas_smoke100.json"
-      ],
-      "manifest_path": "data/eval/manifests/smoke100_manifest.json"
+      "manifest_path": "data/eval/manifests/smoke100_manifest.json",
+      "status": "canonical",
+      "dataset_role": "legacy_quality_regression",
+      "notes": "带 expected_answer 的企业风格回归集。大量问题使用人为的“文库中”表述。旧版 enterprise_ragas 源副本已清理，仅保留 canonical jsonl。"
     },
     "smoke150": {
       "canonical_path": "data/eval/datasets/smoke150.jsonl",
-      "legacy_paths": [
-        "data/evaluation/smoke50_parent_expansion_v1.jsonl",
-        "data/eval/datasets/enterprise_ragas_smoke100.json"
+      "manifest_path": "data/eval/manifests/smoke150_manifest.json",
+      "status": "canonical",
+      "dataset_role": "composite_diagnostic",
+      "base_datasets": [
+        "smoke50",
+        "smoke100"
       ],
-      "manifest_path": "data/eval/manifests/smoke150_manifest.json"
+      "notes": "兼容组合集，等于 smoke50 + smoke100。混合了不同 schema 代际和不同问题风格。旧版组成源副本已清理，仅保留 canonical jsonl。"
     },
     "smoke200": {
       "canonical_path": "data/eval/datasets/smoke200.jsonl",
       "manifest_path": "data/eval/manifests/smoke200_manifest.json",
       "schema_path": "data/eval/schemas/eval_sample_schema.json",
       "status": "canonical",
+      "dataset_role": "legacy_diagnostic_regression",
       "base_dataset": "smoke150",
       "added_dataset": "phase21_added50",
       "created_by_phase": "21A-8",
-      "notes": "Smoke200 finalized from doc-disjoint reviewed draft; smoke150 entries preserved.",
+      "quality_eval_status": "not_primary_quality_gate",
+      "notes": "用于检索、路由、引用、table/figure 和多文档诊断。不要作为独立的自然问题产品质量分数。",
       "replacement_history": [
         {
           "manifest_updated": true,
@@ -50,17 +55,56 @@
             "p21a9v2_fact_005"
           ],
           "replacement_phase": "Phase 21A-9V-2",
-          "reason": "Replaced 5 invalid metadata/fragment negative samples with reviewed factoid replacements from parsed_preview.",
-          "notes": "Total sample count unchanged (200). Smoke150 subset unchanged (150). Added50 replaced 5/50 samples."
+          "reason": "用从 parsed_preview 审核通过的 factoid 替换样本，替换 5 条无效 metadata/fragment negative 样本。",
+          "notes": "总样本数保持 200 不变。smoke150 子集保持 150 不变。added50 中替换了 5/50 条样本。"
         }
       ]
     }
   },
+  "candidate_datasets": {
+    "parent_child_added300_naturalized_20260521": {
+      "canonical_path": "data/eval/hardsets/parent_child_added300_naturalized_20260521.jsonl",
+      "schema_path": "data/eval/schemas/eval_sample_schema.json",
+      "status": "hardset_candidate",
+      "dataset_role": "naturalized_hardset_candidate",
+      "sample_count": 300,
+      "notes": "自然化 parent-child hardset 候选集。晋升为主质量评测集前，需要补 expected_answer 或 rubric。"
+    },
+    "retrieval_anchor_90_phase5f": {
+      "canonical_path": "data/eval/hardsets/retrieval_anchor_90_phase5f.jsonl",
+      "manifest_path": "data/eval/manifests/retrieval_anchor_90_phase5f_manifest.json",
+      "schema_path": "data/eval/schemas/eval_sample_schema.json",
+      "status": "hardset_candidate",
+      "dataset_role": "retrieval_diagnostic",
+      "sample_count": 90,
+      "notes": "从 phase5f strict_main_eval_set_v2 迁入的 retrieval anchor 诊断集。适合 stable-block、target chunk、table/figure/caption 检索评测；不适合作为主答案质量 gate。"
+    },
+    "v3_baseline_dataset": {
+      "canonical_path": "data/eval/datasets/v3_baseline_dataset.jsonl",
+      "manifest_path": "data/eval/manifests/v3_baseline_dataset_manifest.json",
+      "schema_path": "data/eval/schemas/eval_sample_schema.json",
+      "status": "baseline_candidate",
+      "dataset_role": "baseline_candidate_full_answers",
+      "sample_count": 200,
+      "notes": "v3 新基线候选集。从 parent_child_added300_naturalized 选 170 条，从 retrieval_anchor_90_phase5f 选 30 条。200 条均已按原文证据补写 expected_answer 和 answer_rubric。"
+    }
+  },
+  "archive_datasets": {
+    "specialized_regression_glob": "data/eval/round8_*.json"
+  },
+  "current_defaults": {
+    "diagnostic_regression": "smoke200",
+    "naturalized_hardset_candidate": "parent_child_added300_naturalized_20260521",
+    "retrieval_diagnostic": "retrieval_anchor_90_phase5f",
+    "baseline_candidate_full_answers": "v3_baseline_dataset",
+    "primary_quality_gate": null
+  },
   "schema_path": "data/eval/schemas/eval_sample_schema.json",
   "status": {
     "canonical": true,
-    "legacy_preserved": true
+    "legacy_preserved": true,
+    "roles_declared": true
   },
-  "notes": "Legacy paths are NOT deleted. Scripts may still reference legacy paths.",
-  "last_updated": "2026-05-11T17:54:45Z"
+  "notes": "legacy 路径不会删除，脚本仍可能引用这些路径。dataset_role 用于区分数据集是 diagnostic、quality-oriented、candidate、composite 还是 archive。",
+  "last_updated": "2026-05-22T07:06:20Z"
 }

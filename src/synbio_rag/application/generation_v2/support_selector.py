@@ -25,6 +25,7 @@ from .support_retention import (
     _apply_close_margin_capacity_plus_one,
     _ensure_protected_support_seeds,
     _retain_doc_diversity,
+    _retain_matched_child_support_candidates,
 )
 
 _EN_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9'_.-]*", re.IGNORECASE)
@@ -84,6 +85,7 @@ class SupportPackSelector:
         selected = _retain_doc_diversity(selected, scored, all_scored, config)
         # Phase 21A-9M: close-margin distinct-doc capacity+1
         selected = _apply_close_margin_capacity_plus_one(selected, scored, config, analysis.intent)
+        selected = _retain_matched_child_support_candidates(selected, scored, config, analysis.intent)
         self.last_selection_debug = _build_selection_debug(
             candidates=candidates,
             all_scored=all_scored,

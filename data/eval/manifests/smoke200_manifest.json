@@ -6,15 +6,17 @@
     "smoke150",
     "phase21_added50"
   ],
+  "dataset_role": "legacy_diagnostic_regression",
+  "quality_eval_status": "not_primary_quality_gate",
   "sample_count": 200,
   "smoke150_count": 150,
   "added50_count": 50,
   "unique_sample_id_count": 200,
   "route_distribution": {
     "comparison": 33,
-    "factoid": 101,
-    "summary": 60,
-    "negative": 6
+    "factoid": 104,
+    "summary": 62,
+    "negative": 1
   },
   "category_distribution": {
     "comparison": 22,
@@ -23,14 +25,13 @@
     "negative_trigger_robustness": 5,
     "summary": 52,
     "table_figure_caption": 16,
-    "negative": 5,
     "paragraph": 3,
     "multi_doc_comparison": 10,
     "cross_lingual": 10,
-    "summary_review": 7,
+    "summary_review": 9,
     "negative_near_topic": 1,
     "pdf_table_figure": 6,
-    "factoid_precision": 2
+    "factoid_precision": 5
   },
   "difficulty_distribution": {
     "unknown": 50,
@@ -38,7 +39,8 @@
     "easy": 14,
     "hard": 61
   },
-  "negative_sample_count": 11,
+  "negative_sample_count": 1,
+  "legacy_negative_trigger_category_count": 5,
   "doc_disjoint_added50": true,
   "repeat_doc_exception_count": 0,
   "parser_dependent_main_set_count": 0,
@@ -47,10 +49,10 @@
     "phase21_added50_doc_disjoint_reviewed_draft": "a86f688605232bc2da8583b3b9a88c3f5fd4681701da44db2a138cdb761c3081",
     "smoke200_doc_disjoint_reviewed_draft": "1c9deca09f7fa96540b68f84b6bc887b9afc5b37560d6324c0c3bf8769cb01ab"
   },
-  "canonical_hash": "1c9deca09f7fa96540b68f84b6bc887b9afc5b37560d6324c0c3bf8769cb01ab",
+  "canonical_hash": "518bb61c9e9d49bf3a285dd6a1f86918813cd1d90dfead6f7476f3718c6a8fbb",
   "created_by_phase": "21A-8",
   "created_at": "2026-05-10T13:10:00.823263+00:00",
-  "notes": "Finalized from smoke200_doc_disjoint_reviewed_draft.jsonl after Phase21A-8 preflight validation.",
+  "notes": "legacy 诊断回归集。Phase21A-8 preflight validation 后由 smoke200_doc_disjoint_reviewed_draft.jsonl 定稿，随后经过 Phase21A-9V-2 替换更新。用于检索、路由、引用诊断，不作为主自然问题质量 gate。",
   "replacement_history": [
     {
       "manifest_updated": true,
@@ -70,9 +72,9 @@
         "p21a9v2_fact_005"
       ],
       "replacement_phase": "Phase 21A-9V-2",
-      "reason": "Replaced 5 invalid metadata/fragment negative samples with reviewed factoid replacements from parsed_preview.",
-      "notes": "Total sample count unchanged (200). Smoke150 subset unchanged (150). Added50 replaced 5/50 samples."
+      "reason": "用从 parsed_preview 审核通过的 factoid 替换样本，替换 5 条无效 metadata/fragment negative 样本。",
+      "notes": "总样本数保持 200 不变。smoke150 子集保持 150 不变。added50 中替换了 5/50 条样本。"
     }
   ],
-  "updated_at": "2026-05-11T17:54:45Z"
+  "updated_at": "2026-05-22T04:44:09Z"
 }

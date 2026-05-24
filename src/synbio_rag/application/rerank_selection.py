@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 from ..domain.config import RetrievalConfig
 from ..domain.schemas import QueryAnalysis, QueryIntent, RetrievedChunk
@@ -176,11 +177,30 @@ def _finalize_rerank(
     config: RetrievalConfig,
     mode: str,
     queries: list[str] | None = None,
+    debug: dict[str, Any] | None = None,
 ) -> list[RetrievedChunk]:
     if mode in {"guarded", "guarded_rank1"}:
         profiled = _apply_guarded_rerank(question, chunks, config)
         if mode == "guarded_rank1":
             profiled = _apply_rank1_evidence_guard(profiled, config)
+        profiled_ordered = sorted(profiled, key=_guarded_sort_key, reverse=True)
+        if debug is not None:
+            debug.update(
+                {
+                    "mode": mode,
+                    "top_k": top_k,
+                    "pre_floor_chunk_ids": _chunk_ids(profiled_ordered),
+                    "pre_floor_rank_by_chunk_id": _rank_by_chunk_id(profiled_ordered),
+                    "post_floor_chunk_ids": _chunk_ids(profiled_ordered),
+                    "post_floor_rank_by_chunk_id": _rank_by_chunk_id(profiled_ordered),
+                    "score_floor": {
+                        "enabled": False,
+                        "ratio": config.rerank_score_floor_ratio,
+                        "floor": None,
+                        "dropped_chunk_ids": [],
+                    },
+                }
+            )
         final = _apply_comparison_coverage_selection(
             chunks=profiled,
             queries=queries or [question],
@@ -188,18 +208,38 @@ def _finalize_rerank(
             config=config,
             top_k=top_k,
             sort_key=_guarded_sort_key,
+            debug=debug,
         )
+        if debug is not None:
+            debug["final_chunk_ids"] = _chunk_ids(final)
+            debug["final_rank_by_chunk_id"] = _rank_by_chunk_id(final)
+            debug["final_doc_ids"] = [chunk.doc_id for chunk in final]
         return final
     chunks.sort(key=_sort_key, reverse=True)
     pre_floor = list(chunks)
     chunks = _apply_rerank_score_floor(chunks, config)
+    post_floor = list(chunks)
+    if debug is not None:
+        debug.update(
+            {
+                "mode": mode,
+                "top_k": top_k,
+                "pre_floor_chunk_ids": _chunk_ids(pre_floor),
+                "pre_floor_rank_by_chunk_id": _rank_by_chunk_id(pre_floor),
+                "post_floor_chunk_ids": _chunk_ids(post_floor),
+                "post_floor_rank_by_chunk_id": _rank_by_chunk_id(post_floor),
+                "score_floor": _score_floor_debug(pre_floor, post_floor, config),
+            }
+        )
     final = _apply_comparison_coverage_selection(
         chunks=chunks,
         queries=queries or [question],
         analysis=analysis,
         config=config,
         top_k=top_k,
+        debug=debug,
     )
+    pre_body_coverage = list(final)
     if config.same_doc_body_coverage_enabled:
         final = _apply_same_doc_body_coverage(
             selected=final,
@@ -208,6 +248,25 @@ def _finalize_rerank(
             analysis=analysis,
             config=config,
         )
+    if debug is not None:
+        debug["pre_body_coverage_final_chunk_ids"] = _chunk_ids(pre_body_coverage)
+        debug["same_doc_body_coverage"] = {
+            "applied": bool(config.same_doc_body_coverage_enabled),
+            "changed": _chunk_ids(pre_body_coverage) != _chunk_ids(final),
+            "added_chunk_ids": [
+                chunk.chunk_id
+                for chunk in final
+                if chunk.chunk_id not in {item.chunk_id for item in pre_body_coverage}
+            ],
+            "dropped_chunk_ids": [
+                chunk.chunk_id
+                for chunk in pre_body_coverage
+                if chunk.chunk_id not in {item.chunk_id for item in final}
+            ],
+        }
+        debug["final_chunk_ids"] = _chunk_ids(final)
+        debug["final_rank_by_chunk_id"] = _rank_by_chunk_id(final)
+        debug["final_doc_ids"] = [chunk.doc_id for chunk in final]
     return final
 
 
@@ -216,9 +275,21 @@ def _apply_rerank_diversity(
     top_k: int,
     analysis: QueryAnalysis | None,
     config: RetrievalConfig,
+    debug: dict[str, Any] | None = None,
 ) -> list[RetrievedChunk]:
     if not analysis or analysis.intent != QueryIntent.COMPARISON:
-        return chunks[:top_k]
+        result = chunks[:top_k]
+        if debug is not None:
+            debug.update(
+                {
+                    "applied": False,
+                    "reason": "not_comparison_intent",
+                    "max_per_doc": None,
+                    "overflow_chunk_ids": [],
+                    "output_chunk_ids": _chunk_ids(result),
+                }
+            )
+        return result
     max_per_doc = max(1, config.comparison_rerank_max_chunks_per_doc)
     selected: list[RetrievedChunk] = []
     overflow: list[RetrievedChunk] = []
@@ -230,12 +301,34 @@ def _apply_rerank_diversity(
         else:
             overflow.append(chunk)
         if len(selected) >= top_k:
-            return selected[:top_k]
+            result = selected[:top_k]
+            if debug is not None:
+                debug.update(
+                    {
+                        "applied": True,
+                        "max_per_doc": max_per_doc,
+                        "overflow_chunk_ids": _chunk_ids(overflow),
+                        "output_chunk_ids": _chunk_ids(result),
+                        "doc_counts": dict(counts),
+                    }
+                )
+            return result
     for chunk in overflow:
         selected.append(chunk)
         if len(selected) >= top_k:
             break
-    return selected[:top_k]
+    result = selected[:top_k]
+    if debug is not None:
+        debug.update(
+            {
+                "applied": True,
+                "max_per_doc": max_per_doc,
+                "overflow_chunk_ids": _chunk_ids(overflow),
+                "output_chunk_ids": _chunk_ids(result),
+                "doc_counts": dict(counts),
+            }
+        )
+    return result
 
 
 def _apply_comparison_coverage_selection(
@@ -245,13 +338,32 @@ def _apply_comparison_coverage_selection(
     config: RetrievalConfig,
     top_k: int,
     sort_key=_sort_key,
+    debug: dict[str, Any] | None = None,
 ) -> list[RetrievedChunk]:
     ordered = sorted(chunks, key=sort_key, reverse=True)
-    diversified = _apply_rerank_diversity(ordered, top_k=len(ordered), analysis=analysis, config=config)
+    diversity_debug: dict[str, Any] = {}
+    diversified = _apply_rerank_diversity(
+        ordered,
+        top_k=len(ordered),
+        analysis=analysis,
+        config=config,
+        debug=diversity_debug,
+    )
+    if debug is not None:
+        debug["ordered_chunk_ids_before_diversity"] = _chunk_ids(ordered)
+        debug["doc_diversity"] = diversity_debug
     if not analysis or analysis.intent != QueryIntent.COMPARISON or len(queries) <= 1:
-        return diversified[:top_k]
+        result = diversified[:top_k]
+        if debug is not None:
+            debug["comparison_selection"] = {
+                "applied": False,
+                "reason": "not_comparison_or_single_query",
+                "selected_chunk_ids": _chunk_ids(result),
+            }
+        return result
     selected: list[RetrievedChunk] = []
     selected_ids: set[str] = set()
+    branch_steps: list[dict[str, Any]] = []
     for query_idx in range(1, len(queries)):
         best_chunk = None
         best_score = None
@@ -266,13 +378,48 @@ def _apply_comparison_coverage_selection(
                 best_score = score
                 best_chunk = chunk
         if best_chunk is None:
+            branch_steps.append(
+                {
+                    "query_index": query_idx,
+                    "selected_chunk_id": "",
+                    "selected_doc_id": "",
+                    "best_score": None,
+                    "reason": "no_query_score",
+                }
+            )
             continue
         if best_score is not None and best_score < 1.0:
+            branch_steps.append(
+                {
+                    "query_index": query_idx,
+                    "selected_chunk_id": best_chunk.chunk_id,
+                    "selected_doc_id": best_chunk.doc_id,
+                    "best_score": round(float(best_score), 6),
+                    "reason": "score_below_minimum",
+                }
+            )
             continue
         selected.append(best_chunk)
         selected_ids.add(best_chunk.doc_id)
+        branch_steps.append(
+            {
+                "query_index": query_idx,
+                "selected_chunk_id": best_chunk.chunk_id,
+                "selected_doc_id": best_chunk.doc_id,
+                "best_score": round(float(best_score), 6) if best_score is not None else None,
+                "reason": "selected",
+            }
+        )
         if len(selected) >= top_k:
-            return selected[:top_k]
+            result = selected[:top_k]
+            if debug is not None:
+                debug["comparison_selection"] = {
+                    "applied": True,
+                    "query_count": len(queries),
+                    "branch_steps": branch_steps,
+                    "selected_chunk_ids": _chunk_ids(result),
+                }
+            return result
     for chunk in diversified:
         if chunk.doc_id in selected_ids:
             continue
@@ -280,4 +427,46 @@ def _apply_comparison_coverage_selection(
         selected_ids.add(chunk.doc_id)
         if len(selected) >= top_k:
             break
-    return selected[:top_k]
+    result = selected[:top_k]
+    if debug is not None:
+        debug["comparison_selection"] = {
+            "applied": True,
+            "query_count": len(queries),
+            "branch_steps": branch_steps,
+            "selected_chunk_ids": _chunk_ids(result),
+        }
+    return result
+
+
+def _chunk_ids(chunks: list[RetrievedChunk]) -> list[str]:
+    return [str(chunk.chunk_id or "") for chunk in chunks]
+
+
+def _rank_by_chunk_id(chunks: list[RetrievedChunk]) -> dict[str, int]:
+    return {str(chunk.chunk_id or ""): rank for rank, chunk in enumerate(chunks, start=1)}
+
+
+def _score_floor_debug(
+    pre_floor: list[RetrievedChunk],
+    post_floor: list[RetrievedChunk],
+    config: RetrievalConfig,
+) -> dict[str, Any]:
+    if not pre_floor:
+        return {
+            "enabled": False,
+            "ratio": config.rerank_score_floor_ratio,
+            "floor": None,
+            "dropped_chunk_ids": [],
+        }
+    top_score = float(pre_floor[0].rerank_score or 0.0)
+    enabled = config.rerank_score_floor_ratio > 0 and top_score > 0
+    floor = top_score * config.rerank_score_floor_ratio if enabled else None
+    post_ids = set(_chunk_ids(post_floor))
+    dropped = [chunk.chunk_id for chunk in pre_floor if chunk.chunk_id not in post_ids]
+    return {
+        "enabled": enabled,
+        "ratio": config.rerank_score_floor_ratio,
+        "top_score": round(top_score, 6),
+        "floor": round(float(floor), 6) if floor is not None else None,
+        "dropped_chunk_ids": dropped,
+    }

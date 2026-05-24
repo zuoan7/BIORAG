@@ -166,3 +166,67 @@ def _apply_close_margin_capacity_plus_one(
     best = candidates[0]
     best.reasons.append("close_margin_capacity_plus_one")
     return selected + [best]
+
+
+def _retain_matched_child_support_candidates(
+    selected: list[SupportItem],
+    scored: list[SupportItem],
+    config: GenerationConfig,
+    intent,
+) -> list[SupportItem]:
+    if intent not in {QueryIntent.FACTOID, QueryIntent.UNKNOWN}:
+        return selected
+
+    selected_ids = {item.evidence_id for item in selected}
+    candidates = [
+        item for item in scored
+        if item.evidence_id not in selected_ids
+        and _has_matched_child_ids(item)
+        and _rerank_rank(item) <= 8
+    ]
+    if not candidates:
+        return selected
+
+    candidates.sort(key=lambda item: item.support_score, reverse=True)
+    best = candidates[0]
+    max_size = max(config.v2_max_support_factoid + 1, 1)
+
+    if len(selected) < max_size:
+        best.reasons.append("matched_child_support_retention_append")
+        return selected + [best]
+
+    replacement_idx = _matched_child_replacement_index(selected, config)
+    if replacement_idx is None:
+        return selected
+
+    best.reasons.append("matched_child_support_retention_swap")
+    result = list(selected)
+    result[replacement_idx] = best
+    return result
+
+
+def _matched_child_replacement_index(
+    selected: list[SupportItem],
+    config: GenerationConfig,
+) -> int | None:
+    protect_k = config.v2_protect_support_seeds_top_k
+    replaceable = [
+        (idx, item) for idx, item in enumerate(selected)
+        if _rerank_rank(item) > protect_k and not _has_matched_child_ids(item)
+    ]
+    if not replaceable:
+        return None
+    replaceable.sort(key=lambda pair: pair[1].support_score)
+    return replaceable[0][0]
+
+
+def _has_matched_child_ids(item: SupportItem) -> bool:
+    value = item.candidate.metadata.get("matched_child_chunk_ids")
+    return isinstance(value, list) and any(str(child_id or "").strip() for child_id in value)
+
+
+def _rerank_rank(item: SupportItem) -> int:
+    rank = item.candidate.metadata.get("rerank_rank", 999)
+    if isinstance(rank, (int, float)):
+        return int(rank)
+    return 999
