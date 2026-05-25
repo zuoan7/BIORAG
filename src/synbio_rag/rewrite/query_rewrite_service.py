@@ -1,6 +1,6 @@
 """Query rewrite service — English-mirror translation with cache, fallback, and trace.
 
-Default mode: off (no rewrite). shadow mode: compute rewrite but don't use for retrieval.
+Default mode: enabled. shadow mode: compute rewrite but don't use for retrieval.
 enabled mode: use rewritten query for retrieval with original preserved in context.
 """
 import hashlib, json, time, threading

@@ -551,8 +551,8 @@ class TableEnhancementConfig:
 
 @dataclass
 class QueryRewriteConfig:
-    """Phase 19: English-mirror query rewrite feature flag. Default: OFF."""
-    mode: str = "off"  # off | shadow | enabled
+    """Phase 19: English-mirror query rewrite feature flag. Default: enabled."""
+    mode: str = "enabled"  # off | shadow | enabled
     model: str = "qwen-plus"
     temperature: float = 0.0
     cache_enabled: bool = True
