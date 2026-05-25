@@ -30,7 +30,10 @@ class ExtractiveAnswerBuilder:
 
         lines: list[str] = []
         if analysis.intent == QueryIntent.EXPERIMENT:
-            lines.append("不能据此生成新的实验方案或 protocol；以下仅为文献/知识库中已有信息的归纳。")
+            lines.append(
+                "使用限制：不能据此生成新的实验方案或 protocol；"
+                "以下仅归纳文献/知识库中已有信息。"
+            )
         comparison_coverage = plan.comparison_coverage if analysis.intent == QueryIntent.COMPARISON else None
         if plan.reason == "existence_weak_support":
             lines.append(
@@ -105,7 +108,7 @@ class ExtractiveAnswerBuilder:
         else:
             max_lines = config.v2_max_extractive_evidence_lines if config else 3
             for item in support_pack[:max_lines]:
-                lines.append(f"{_summarize(item)} [{item.evidence_id}]")
+                lines.append(_build_extractive_claim(item))
         return "\n".join(lines)
 
 
@@ -115,6 +118,42 @@ def _summarize(item: SupportItem) -> str:
         text = text[:157].rstrip() + "..."
     section = item.candidate.section or "unknown"
     return f"{section} 证据显示：{text}"
+
+
+def _build_extractive_claim(item: SupportItem) -> str:
+    text = _clean_evidence_text(item.candidate.text or "")
+    claim = _compact_claim_text(text)
+    section = _section_short(item.candidate.section or "unknown")
+    if not claim:
+        claim = "当前证据提供了与问题相关的原文支持。"
+    return f"{section}：{claim} [{item.evidence_id}]"
+
+
+def _clean_evidence_text(text: str) -> str:
+    cleaned = " ".join((text or "").replace("\n", " ").split())
+    cleaned = re.sub(r"\bmatched_child_evidence:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\bmatched child:\s*[\w.\-]+_sec\d+_chunk\d+(?:::child\d+)?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\bparent_context_excerpt:\s*", "", cleaned, flags=re.IGNORECASE)
+    return " ".join(cleaned.split())
+
+
+def _compact_claim_text(text: str) -> str:
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) <= 220:
+        return text
+    candidate = text[:220].rstrip()
+    for sep in [". ", "。", "; ", "；"]:
+        index = candidate.rfind(sep)
+        if index > 60:
+            return candidate[: index + len(sep)].rstrip()
+    return candidate[:217].rstrip() + "..."
 
 
 # ── Phase 9: Summary supported-claims builder ────────────────────

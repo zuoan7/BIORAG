@@ -8,6 +8,7 @@ import os
 import re
 import statistics
 import sys
+import threading
 import time
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -104,14 +105,121 @@ VARIANTS: dict[str, dict[str, Any]] = {
 }
 
 
+def parse_variant_keys(raw: str) -> list[str]:
+    keys = [item.strip() for item in raw.split(",") if item.strip()]
+    if not keys:
+        raise ValueError("--variants must include at least one variant key")
+    return keys
+
+
+def select_variants(keys: list[str]) -> dict[str, dict[str, Any]]:
+    unknown = [key for key in keys if key not in VARIANTS]
+    if unknown:
+        raise ValueError(f"Unknown variant key(s): {', '.join(unknown)}")
+    return {key: VARIANTS[key] for key in keys}
+
+
+def selected_variants_slug(keys: list[str]) -> str:
+    aliases = {
+        "b0_stable": "b0",
+        "b1_parent_expansion": "b1",
+    }
+    return "_".join(aliases.get(key, key) for key in keys)
+
+
+def build_concurrency_schedule(initial: int, fallback_raw: str) -> list[int]:
+    if initial < 1:
+        raise ValueError("initial judge concurrency must be >= 1")
+    values = [initial]
+    values.extend(int(item.strip()) for item in fallback_raw.split(",") if item.strip())
+    schedule: list[int] = []
+    for value in values:
+        if value < 1:
+            raise ValueError("judge concurrency values must be >= 1")
+        if value > initial and schedule:
+            continue
+        if value not in schedule:
+            schedule.append(value)
+    return schedule
+
+
+def resolve_answer_model_config(mode: str) -> dict[str, Any]:
+    if mode == "off":
+        return {"mode": "off", "enabled": False}
+    values = {
+        "DEEPSEEK_URL": (os.getenv("DEEPSEEK_URL") or "").strip(),
+        "DEEPSEEK_API_KEY": (os.getenv("DEEPSEEK_API_KEY") or "").strip(),
+        "DEEPSEEK_MODEL_NAME": (os.getenv("DEEPSEEK_MODEL_NAME") or "").strip(),
+    }
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise RuntimeError(f"Missing DeepSeek answer model env vars: {', '.join(missing)}")
+    return {
+        "mode": "deepseek",
+        "enabled": True,
+        "provider": "deepseek",
+        "api_base": values["DEEPSEEK_URL"],
+        "api_key": values["DEEPSEEK_API_KEY"],
+        "model_name": values["DEEPSEEK_MODEL_NAME"],
+    }
+
+
+def public_answer_model_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mode": config.get("mode"),
+        "enabled": bool(config.get("enabled")),
+        "provider": config.get("provider", ""),
+        "model_name": config.get("model_name", ""),
+        "api_base": safe_url(str(config.get("api_base") or "")),
+    }
+
+
+def effective_run_overrides(
+    variant_overrides: dict[str, Any],
+    answer_model: dict[str, Any],
+    rewrite_mode: str,
+) -> dict[str, Any]:
+    overrides = dict(variant_overrides)
+    overrides["query_rewrite.mode"] = rewrite_mode
+    if answer_model.get("enabled"):
+        overrides["generation.v2_profile"] = "qwen"
+        overrides["generation.v2_use_qwen_synthesis"] = True
+        overrides["llm.provider"] = answer_model["provider"]
+        overrides["llm.api_base"] = safe_url(answer_model["api_base"])
+        overrides["llm.model_name"] = answer_model["model_name"]
+        overrides["query_rewrite.model"] = answer_model["model_name"]
+    else:
+        overrides["generation.v2_use_qwen_synthesis"] = False
+    return overrides
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run v3 B0/B1 baseline evaluation.")
+    parser = argparse.ArgumentParser(description="Run v3 baseline evaluation.")
     parser.add_argument("--dataset", default=str(DATASET_PATH))
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--run-id", default="")
-    parser.add_argument("--probe-concurrency", default="1,2,4,6,8")
+    parser.add_argument(
+        "--variants",
+        default="b0_stable",
+        help="Comma-separated variant keys to run. Default runs only b0_stable.",
+    )
+    parser.add_argument(
+        "--answer-model",
+        choices=("deepseek", "off"),
+        default="deepseek",
+        help="Model answer mode. deepseek uses DEEPSEEK_URL/API_KEY/MODEL_NAME from .env.",
+    )
+    parser.add_argument(
+        "--rewrite-mode",
+        choices=("off", "shadow", "enabled"),
+        default="enabled",
+        help="Run-level query rewrite mode applied after variant overrides.",
+    )
+    parser.add_argument("--answer-concurrency", type=int, default=10)
+    parser.add_argument("--probe-concurrency", default="10,5,2")
     parser.add_argument("--probe-requests-per-level", type=int, default=8)
-    parser.add_argument("--judge-concurrency", type=int, default=0)
+    parser.add_argument("--judge-concurrency", type=int, default=10)
+    parser.add_argument("--judge-fallback-concurrency", default="5,2")
     parser.add_argument("--judge-timeout-seconds", type=float, default=90.0)
     parser.add_argument("--judge-max-tokens", type=int, default=4096)
     parser.add_argument("--skip-judge", action="store_true")
@@ -120,13 +228,19 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv(".env")
+    selected_variant_keys = parse_variant_keys(args.variants)
+    selected_variants = select_variants(selected_variant_keys)
+    answer_model = resolve_answer_model_config(args.answer_model)
+    if args.answer_concurrency < 1:
+        raise ValueError("--answer-concurrency must be >= 1")
     samples = load_jsonl(Path(args.dataset))
     if args.limit > 0:
         samples = samples[: args.limit]
 
     run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_dir = RESULTS_ROOT / f"v3_baseline_b0_b1_{run_id}"
-    report_dir = REPORTS_ROOT / f"v3_baseline_b0_b1_{run_id}"
+    run_slug = selected_variants_slug(selected_variant_keys)
+    result_dir = RESULTS_ROOT / f"v3_baseline_{run_slug}_{run_id}"
+    report_dir = REPORTS_ROOT / f"v3_baseline_{run_slug}_{run_id}"
     result_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -156,8 +270,12 @@ def main() -> None:
         return
 
     selected_concurrency = args.judge_concurrency or int(probe["selected_concurrency"])
+    judge_concurrency_schedule = build_concurrency_schedule(
+        selected_concurrency,
+        args.judge_fallback_concurrency,
+    )
     all_summaries: dict[str, Any] = {}
-    for variant_key, spec in VARIANTS.items():
+    for variant_key, spec in selected_variants.items():
         variant_result_dir = result_dir / variant_key
         variant_result_dir.mkdir(parents=True, exist_ok=True)
         results = run_variant(
@@ -168,15 +286,30 @@ def main() -> None:
             judge_concurrency=selected_concurrency,
             skip_judge=args.skip_judge,
             output_dir=variant_result_dir,
+            answer_model=answer_model,
+            rewrite_mode=args.rewrite_mode,
+            answer_concurrency=args.answer_concurrency,
+            judge_concurrency_schedule=judge_concurrency_schedule,
         )
         summary = summarize_variant(results)
         summary["variant_key"] = variant_key
         summary["variant_name"] = spec["display_name"]
         summary["variant_description"] = spec["description"]
-        summary["config_overrides"] = spec["overrides"]
+        summary["config_overrides"] = effective_run_overrides(
+            spec["overrides"], answer_model, args.rewrite_mode
+        )
         all_summaries[variant_key] = summary
         write_json(variant_result_dir / "summary.json", summary)
-        write_markdown(report_dir / f"{variant_key}_failures.md", render_failure_report(spec, results))
+        write_markdown(
+            report_dir / f"{variant_key}_failures.md",
+            render_failure_report(
+                spec,
+                results,
+                effective_overrides=effective_run_overrides(
+                    spec["overrides"], answer_model, args.rewrite_mode
+                ),
+            ),
+        )
 
     comparison = compare_variants(all_summaries)
     run_config = {
@@ -186,16 +319,21 @@ def main() -> None:
         "sample_count": len(samples),
         "judge_model": judge.model,
         "judge_base_url": safe_url(judge.base_url),
+        "answer_model": public_answer_model_config(answer_model),
+        "rewrite_mode": args.rewrite_mode,
+        "answer_concurrency": args.answer_concurrency,
         "selected_judge_concurrency": selected_concurrency,
+        "judge_concurrency_schedule": judge_concurrency_schedule,
         "skip_judge": args.skip_judge,
         "skip_probe": args.skip_probe,
+        "selected_variants": selected_variant_keys,
         "variants": {
             key: {
                 "display_name": spec["display_name"],
                 "description": spec["description"],
-                "overrides": spec["overrides"],
+                "overrides": effective_run_overrides(spec["overrides"], answer_model, args.rewrite_mode),
             }
-            for key, spec in VARIANTS.items()
+            for key, spec in selected_variants.items()
         },
     }
     write_json(result_dir / "run_config.json", run_config)
@@ -295,10 +433,12 @@ class JudgeClient:
 def build_judge_prompt(payload: dict[str, Any], *, purpose: str) -> str:
     return (
         "请按给定 rubric 对 RAG 输出进行评估。评价文字必须使用中文。字段名必须保持英文。\n"
-        "不要引入外部知识，只能依据输入中的 rubric、参考答案、系统答案和引用上下文。\n"
+        "不要引入外部知识，只能依据输入中的 rubric、参考答案、system_answer 和引用上下文。\n"
+        "system_answer 是本轮用于打分的最终用户可见答案；当模型回答成功时，它就是模型生成后再完成引用绑定的答案。\n"
+        "答案正确率必须只按 system_answer 判断，不能按结构化草稿、expected_answer 或检索到的证据推测系统答对。\n"
         "正确率按 answer_rubric.must_include / acceptable_variants / reject_if 判断。\n"
         "忠实度按 system_answer 中事实性 claim 是否被 citations 的 quote 支持判断。\n"
-        "引用准确率按 answer 中的事实是否被对应 citations 支持判断；如果没有 citation，则 citation_support_score 为 0。\n"
+        "引用准确率按 system_answer 中的事实是否被对应 citations 支持判断；如果没有 citation，则 citation_support_score 为 0。\n"
         "若 reject_if 被触发，correctness_pass 必须为 false。\n"
         "若答案存在明显编造、数值方向错误、显著性反转或把不同实体混淆，critical_error 必须为 true。\n"
         "输出 JSON schema：\n"
@@ -482,17 +622,33 @@ def run_variant(
     judge_concurrency: int,
     skip_judge: bool,
     output_dir: Path,
+    answer_model: dict[str, Any],
+    rewrite_mode: str,
+    answer_concurrency: int,
+    judge_concurrency_schedule: list[int],
 ) -> list[dict[str, Any]]:
-    settings = Settings.from_env()
-    apply_overrides(settings, spec["overrides"])
     patch_transformers_prepare_for_model()
-    service = RAGApplicationService(settings)
-
-    rows: list[dict[str, Any]] = []
+    thread_local = threading.local()
+    rows: list[dict[str, Any] | None] = [None] * len(samples)
     started = time.perf_counter()
-    for idx, sample in enumerate(samples, start=1):
+
+    def get_service() -> RAGApplicationService:
+        service = getattr(thread_local, "service", None)
+        if service is None:
+            settings = Settings.from_env()
+            apply_overrides(settings, spec["overrides"])
+            apply_run_level_overrides(
+                settings,
+                answer_model=answer_model,
+                rewrite_mode=rewrite_mode,
+            )
+            service = RAGApplicationService(settings)
+            thread_local.service = service
+        return service
+
+    def run_one(index: int, sample: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         item_started = time.perf_counter()
-        response = service.ask(
+        response = get_service().ask(
             sample["question"],
             filters=QueryFilters(),
             include_debug=True,
@@ -503,27 +659,46 @@ def run_variant(
             response=response,
             latency_seconds=time.perf_counter() - item_started,
         )
-        rows.append(row)
-        if idx % 10 == 0:
-            write_jsonl(output_dir / "results.partial.jsonl", rows)
-            print(
-                f"[{variant_key}] RAG completed {idx}/{len(samples)}; elapsed={time.perf_counter() - started:.1f}s",
-                flush=True,
-            )
+        return index, row
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=answer_concurrency) as executor:
+        futures = {
+            executor.submit(run_one, idx, sample): idx
+            for idx, sample in enumerate(samples)
+        }
+        completed = 0
+        for future in concurrent.futures.as_completed(futures):
+            idx, row = future.result()
+            rows[idx] = row
+            completed += 1
+            if completed % 10 == 0:
+                write_jsonl(output_dir / "results.partial.jsonl", completed_rows(rows))
+                print(
+                    f"[{variant_key}] RAG completed {completed}/{len(samples)}; "
+                    f"answer_concurrency={answer_concurrency}; "
+                    f"elapsed={time.perf_counter() - started:.1f}s",
+                    flush=True,
+                )
+
+    final_rows = completed_rows(rows)
 
     if not skip_judge:
-        rows = run_judges(
-            rows=rows,
+        final_rows = run_judges(
+            rows=final_rows,
             judge=judge,
-            concurrency=judge_concurrency,
+            concurrency_schedule=judge_concurrency_schedule or [judge_concurrency],
             output_path=output_dir / "results.partial.jsonl",
         )
 
-    write_jsonl(output_dir / "results.jsonl", rows)
+    write_jsonl(output_dir / "results.jsonl", final_rows)
     partial = output_dir / "results.partial.jsonl"
     if partial.exists():
         partial.unlink()
-    return rows
+    return final_rows
+
+
+def completed_rows(rows: list[dict[str, Any] | None]) -> list[dict[str, Any]]:
+    return [row for row in rows if row is not None]
 
 
 def patch_transformers_prepare_for_model() -> None:
@@ -578,6 +753,25 @@ def apply_overrides(settings: Settings, overrides: dict[str, Any]) -> None:
         setattr(target, parts[-1], value)
 
 
+def apply_run_level_overrides(
+    settings: Settings,
+    *,
+    answer_model: dict[str, Any],
+    rewrite_mode: str,
+) -> None:
+    settings.query_rewrite.mode = rewrite_mode
+    if answer_model.get("enabled"):
+        settings.generation.v2_profile = "qwen"
+        settings.generation.v2_use_qwen_synthesis = True
+        settings.llm.provider = str(answer_model["provider"])
+        settings.llm.api_base = str(answer_model["api_base"])
+        settings.llm.api_key = str(answer_model["api_key"])
+        settings.llm.model_name = str(answer_model["model_name"])
+        settings.query_rewrite.model = str(answer_model["model_name"])
+    else:
+        settings.generation.v2_use_qwen_synthesis = False
+
+
 def build_eval_row(
     *,
     variant_key: str,
@@ -602,9 +796,13 @@ def build_eval_row(
     final_chunk_ids = list(final_output.get("kept_chunk_ids") or final_output.get("chunk_ids") or [])
     final_parent_chunk_ids = dedupe([parent_chunk_id(chunk_id) for chunk_id in final_chunk_ids])
     generation_debug = debug.get("generation_v2") or {}
+    answer_generation = extract_answer_generation(generation_debug)
+    answer_for_judge = str(response_dict.get("answer", "") or "")
     support_chunk_ids = extract_support_chunk_ids(generation_debug)
     support_matched_child_chunk_ids = extract_support_matched_child_ids(generation_debug)
     citation_matched_child_chunk_ids = extract_citation_matched_child_ids(generation_debug)
+    retrieval_matched_child_chunk_ids = extract_stage_matched_child_ids(retrieval_output)
+    final_matched_child_chunk_ids = extract_stage_matched_child_ids(final_output)
     citations = response_dict.get("citations") or []
     citation_doc_ids = [citation.get("doc_id", "") for citation in citations]
     citation_chunk_ids = [citation.get("chunk_id", "") for citation in citations]
@@ -619,6 +817,8 @@ def build_eval_row(
         sample=sample,
         retrieved_doc_ids=retrieved_doc_ids,
         retrieved_chunk_ids=retrieved_chunk_ids,
+        retrieval_matched_child_chunk_ids=retrieval_matched_child_chunk_ids,
+        final_matched_child_chunk_ids=final_matched_child_chunk_ids,
         support_chunk_ids=support_chunk_ids,
         support_matched_child_chunk_ids=support_matched_child_chunk_ids,
         citations=citations,
@@ -642,7 +842,10 @@ def build_eval_row(
         "stable_target_block_ids": sample.get("stable_target_block_ids") or [],
         "gold_chunk_ids": gold_chunk_ids,
         "gold_parent_chunk_ids": gold_parent_chunk_ids,
-        "system_answer": response_dict.get("answer", ""),
+        "system_answer": answer_for_judge,
+        "answer_for_judge": answer_for_judge,
+        "answer_for_judge_source": answer_generation["answer_source"],
+        "answer_generation": answer_generation,
         "confidence": response_dict.get("confidence"),
         "latency_seconds": round(latency_seconds, 3),
         "retrieved_doc_ids_top10": retrieved_doc_ids,
@@ -704,6 +907,33 @@ def dataclass_to_dict(value: Any) -> Any:
     return value
 
 
+def extract_answer_generation(generation_debug: dict[str, Any]) -> dict[str, Any]:
+    synthesis = generation_debug.get("qwen_synthesis") or {}
+    if not isinstance(synthesis, dict):
+        synthesis = {}
+    enabled = bool(synthesis.get("enabled"))
+    attempted = bool(synthesis.get("attempted"))
+    used_model = bool(synthesis.get("used_qwen"))
+    fallback_used = bool(synthesis.get("fallback_used"))
+    if used_model:
+        answer_source = "model_generated"
+    elif enabled:
+        answer_source = "fallback_extractive"
+    else:
+        answer_source = "extractive"
+    return {
+        "enabled": enabled,
+        "attempted": attempted,
+        "used_model": used_model,
+        "fallback_used": fallback_used,
+        "fallback_reason": str(synthesis.get("fallback_reason") or ""),
+        "answer_source": answer_source,
+        "validation_flags": list(synthesis.get("validation_flags") or []),
+        "input_evidence_ids": list(synthesis.get("input_evidence_ids") or []),
+        "output_evidence_ids": list(synthesis.get("output_evidence_ids") or []),
+    }
+
+
 def get_gold_chunk_ids(sample: dict[str, Any]) -> list[str]:
     source_trace = ((sample.get("answer_rubric") or {}).get("source_trace") or {})
     gold_chunks = [str(v) for v in source_trace.get("chunk_ids") or []]
@@ -732,6 +962,16 @@ def extract_support_matched_child_ids(generation_debug: dict[str, Any]) -> list[
         if not isinstance(item, dict):
             continue
         child_ids.extend(str(v) for v in item.get("matched_child_chunk_ids") or [])
+    return dedupe(child_ids)
+
+
+def extract_stage_matched_child_ids(stage_debug: dict[str, Any]) -> list[str]:
+    child_ids: list[str] = []
+    child_ids.extend(str(v) for v in stage_debug.get("matched_child_chunk_ids") or [])
+    by_chunk = stage_debug.get("matched_child_chunk_ids_by_chunk_id") or {}
+    if isinstance(by_chunk, dict):
+        for values in by_chunk.values():
+            child_ids.extend(str(v) for v in values or [])
     return dedupe(child_ids)
 
 
@@ -767,15 +1007,20 @@ def compute_rule_metrics(
     citation_matched_child_chunk_ids: list[str],
     inferred_matched_child_chunk_ids: list[str],
     actual_route: str,
+    retrieval_matched_child_chunk_ids: list[str] | None = None,
+    final_matched_child_chunk_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     expected_docs = [str(v) for v in sample.get("expected_doc_ids") or []]
     gold_chunks = get_gold_chunk_ids(sample)
+    gold_child_chunks = [chunk for chunk in gold_chunks if "::child" in chunk]
     gold_parent_chunks = dedupe([parent_chunk_id(chunk) for chunk in gold_chunks])
     retrieved_docs_set = set(retrieved_doc_ids)
     retrieved_chunks_set = set(retrieved_chunk_ids)
     retrieved_parent_chunks = dedupe([parent_chunk_id(chunk) for chunk in retrieved_chunk_ids])
     retrieved_parent_chunks_set = set(retrieved_parent_chunks)
     support_parent_chunks_set = {parent_chunk_id(chunk) for chunk in support_chunk_ids}
+    retrieval_matched_child_chunks_set = set(retrieval_matched_child_chunk_ids or [])
+    final_matched_child_chunks_set = set(final_matched_child_chunk_ids or [])
     support_matched_child_chunks_set = set(support_matched_child_chunk_ids)
     cited_docs = [str(citation.get("doc_id", "")) for citation in citations]
     cited_chunks = [str(citation.get("chunk_id", "")) for citation in citations]
@@ -796,16 +1041,34 @@ def compute_rule_metrics(
     parent_chunk_hits = [chunk for chunk in gold_parent_chunks if chunk in retrieved_parent_chunks_set]
     parent_chunk_recall = len(parent_chunk_hits) / len(gold_parent_chunks) if gold_parent_chunks else None
     parent_chunk_mrr = reciprocal_rank(retrieved_parent_chunks, set(gold_parent_chunks)) if gold_parent_chunks else None
+    retrieval_matched_child_hits = [
+        chunk for chunk in gold_child_chunks if chunk in retrieval_matched_child_chunks_set
+    ]
+    final_matched_child_hits = [
+        chunk for chunk in gold_child_chunks if chunk in final_matched_child_chunks_set
+    ]
     support_parent_chunk_hits = [chunk for chunk in gold_parent_chunks if chunk in support_parent_chunks_set]
-    support_child_evidence_hits = [chunk for chunk in gold_chunks if chunk in support_matched_child_chunks_set]
+    support_child_evidence_hits = [
+        chunk for chunk in gold_child_chunks if chunk in support_matched_child_chunks_set
+    ]
     citation_doc_hits = [doc for doc in expected_docs if doc in set(cited_docs)]
     citation_chunk_hits = [chunk for chunk in gold_chunks if chunk in set(cited_chunks)]
     citation_parent_chunk_hits = [chunk for chunk in gold_parent_chunks if chunk in cited_parent_chunks_set]
-    citation_child_evidence_hits = [chunk for chunk in gold_chunks if chunk in citation_matched_child_chunks_set]
-    inferred_child_evidence_hits = [chunk for chunk in gold_chunks if chunk in inferred_matched_child_chunks_set]
+    citation_child_evidence_hits = [
+        chunk for chunk in gold_child_chunks if chunk in citation_matched_child_chunks_set
+    ]
+    inferred_child_evidence_hits = [
+        chunk for chunk in gold_child_chunks if chunk in inferred_matched_child_chunks_set
+    ]
     route_match = normalize_route(actual_route) == expected_route
+    child_gold_sample = bool(gold_child_chunks)
+    parent_gold_sample = bool(gold_chunks and not gold_child_chunks)
+    parent_hit_child_gold_sample = child_gold_sample and bool(parent_chunk_hits)
 
     return {
+        "child_gold_sample": child_gold_sample,
+        "parent_gold_sample": parent_gold_sample,
+        "parent_hit_child_gold_sample": parent_hit_child_gold_sample,
         "doc_recall_at10": round(doc_recall, 6) if doc_recall is not None else None,
         "doc_hit_at10": doc_any_hit,
         "strict_doc_all_hit_at10": doc_all_hit if expected_docs else None,
@@ -819,6 +1082,30 @@ def compute_rule_metrics(
         "parent_chunk_recall_at10": round(parent_chunk_recall, 6) if parent_chunk_recall is not None else None,
         "parent_chunk_hit_at10": bool(parent_chunk_hits) if gold_parent_chunks else None,
         "parent_chunk_mrr_at10": round(parent_chunk_mrr, 6) if parent_chunk_mrr is not None else None,
+        "matched_child_hit_at_retrieval": (
+            bool(retrieval_matched_child_hits) if child_gold_sample else None
+        ),
+        "matched_child_hit_at_final": bool(final_matched_child_hits) if child_gold_sample else None,
+        "matched_child_hit_at_support": (
+            bool(support_child_evidence_hits) if child_gold_sample else None
+        ),
+        "matched_child_hit_at_citation": (
+            bool(citation_child_evidence_hits) if child_gold_sample and not is_negative else None
+        ),
+        "parent_hit_child_gold_matched_child_hit_at_retrieval": (
+            bool(retrieval_matched_child_hits) if parent_hit_child_gold_sample else None
+        ),
+        "parent_hit_child_gold_matched_child_hit_at_final": (
+            bool(final_matched_child_hits) if parent_hit_child_gold_sample else None
+        ),
+        "parent_hit_child_gold_matched_child_hit_at_support": (
+            bool(support_child_evidence_hits) if parent_hit_child_gold_sample else None
+        ),
+        "parent_hit_child_gold_matched_child_hit_at_citation": (
+            bool(citation_child_evidence_hits)
+            if parent_hit_child_gold_sample and not is_negative
+            else None
+        ),
         "route_match": route_match,
         "citation_doc_hit": bool(citation_doc_hits) if expected_docs and not is_negative else None,
         "citation_doc_all_hit": len(citation_doc_hits) == len(expected_docs) if expected_docs and not is_negative else None,
@@ -830,9 +1117,11 @@ def compute_rule_metrics(
             else None
         ),
         "support_parent_chunk_hit": bool(support_parent_chunk_hits) if gold_parent_chunks else None,
-        "support_child_evidence_hit": bool(support_child_evidence_hits) if gold_chunks else None,
-        "citation_child_evidence_hit": bool(citation_child_evidence_hits) if gold_chunks and not is_negative else None,
-        "inferred_child_evidence_hit": bool(inferred_child_evidence_hits) if gold_chunks else None,
+        "support_child_evidence_hit": bool(support_child_evidence_hits) if child_gold_sample else None,
+        "citation_child_evidence_hit": (
+            bool(citation_child_evidence_hits) if child_gold_sample and not is_negative else None
+        ),
+        "inferred_child_evidence_hit": bool(inferred_child_evidence_hits) if child_gold_sample else None,
         "citation_count": len(citations),
         "negative_no_citation": len(citations) == 0 if is_negative else None,
     }
@@ -856,10 +1145,50 @@ def run_judges(
     *,
     rows: list[dict[str, Any]],
     judge: JudgeClient,
-    concurrency: int,
+    concurrency_schedule: list[int],
     output_path: Path,
 ) -> list[dict[str, Any]]:
-    indexed = {idx: row for idx, row in enumerate(rows)}
+    pending_indices = list(range(len(rows)))
+    for schedule_index, concurrency in enumerate(concurrency_schedule, start=1):
+        if not pending_indices:
+            break
+        print(
+            f"[judge] starting concurrency={concurrency}; "
+            f"pending={len(pending_indices)}/{len(rows)}",
+            flush=True,
+        )
+        run_judge_batch(
+            rows=rows,
+            pending_indices=pending_indices,
+            judge=judge,
+            concurrency=concurrency,
+            output_path=output_path,
+            schedule_index=schedule_index,
+        )
+        failed_indices = [
+            idx for idx in pending_indices if row_has_judge_error(rows[idx])
+        ]
+        if failed_indices and schedule_index < len(concurrency_schedule):
+            next_concurrency = concurrency_schedule[schedule_index]
+            print(
+                f"[judge] {len(failed_indices)} row(s) failed at concurrency={concurrency}; "
+                f"retrying with concurrency={next_concurrency}",
+                flush=True,
+            )
+        pending_indices = failed_indices
+    return rows
+
+
+def run_judge_batch(
+    *,
+    rows: list[dict[str, Any]],
+    pending_indices: list[int],
+    judge: JudgeClient,
+    concurrency: int,
+    output_path: Path,
+    schedule_index: int,
+) -> None:
+    indexed = {idx: rows[idx] for idx in pending_indices}
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = {
             executor.submit(judge_row_with_retry, judge, row): idx
@@ -868,21 +1197,35 @@ def run_judges(
         completed = 0
         for future in concurrent.futures.as_completed(futures):
             idx = futures[future]
-            rows[idx]["judge"] = future.result()
+            result = future.result()
+            result["_judge_concurrency"] = concurrency
+            result["_judge_schedule_index"] = schedule_index
+            rows[idx]["judge"] = result
             completed += 1
             if completed % 10 == 0:
                 write_jsonl(output_path, rows)
-                print(f"[judge] completed {completed}/{len(rows)}", flush=True)
-    return rows
+                print(
+                    f"[judge] completed {completed}/{len(indexed)} "
+                    f"at concurrency={concurrency}",
+                    flush=True,
+                )
+
+
+def row_has_judge_error(row: dict[str, Any]) -> bool:
+    judge = row.get("judge") or {}
+    return bool(judge.get("judge_error"))
 
 
 def judge_row_with_retry(judge: JudgeClient, row: dict[str, Any]) -> dict[str, Any]:
+    answer_for_judge = row.get("answer_for_judge", row.get("system_answer", ""))
     payload = {
         "sample_id": row["sample_id"],
         "question": row["question"],
         "expected_answer": row["expected_answer"],
         "answer_rubric": row["answer_rubric"],
-        "system_answer": row["system_answer"],
+        "system_answer": answer_for_judge,
+        "answer_for_judge_source": row.get("answer_for_judge_source", ""),
+        "answer_generation": row.get("answer_generation", {}),
         "citations": row["citations"],
         "expected_route": row["expected_route"],
         "category": row["category"],
@@ -955,9 +1298,15 @@ def validate_judge_schema(result: Any) -> list[str]:
 def summarize_variant(rows: list[dict[str, Any]]) -> dict[str, Any]:
     rule = [row["rule_metrics"] for row in rows]
     judges = [row.get("judge") or {} for row in rows]
+    generations = [row.get("answer_generation") or {} for row in rows]
     summary = {
         "sample_count": len(rows),
         "rule_metrics": {
+            "child_gold_sample_rate": rate([m.get("child_gold_sample") for m in rule]),
+            "parent_gold_sample_rate": rate([m.get("parent_gold_sample") for m in rule]),
+            "parent_hit_child_gold_sample_rate": rate(
+                [m.get("parent_hit_child_gold_sample") for m in rule]
+            ),
             "doc_recall_at10_avg": avg([m.get("doc_recall_at10") for m in rule]),
             "doc_hit_at10_rate": rate([m.get("doc_hit_at10") for m in rule]),
             "strict_doc_all_hit_at10_rate": rate([m.get("strict_doc_all_hit_at10") for m in rule]),
@@ -971,6 +1320,30 @@ def summarize_variant(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "parent_chunk_recall_at10_avg": avg([m.get("parent_chunk_recall_at10") for m in rule]),
             "parent_chunk_hit_at10_rate": rate([m.get("parent_chunk_hit_at10") for m in rule]),
             "parent_chunk_mrr_at10_avg": avg([m.get("parent_chunk_mrr_at10") for m in rule]),
+            "matched_child_hit_at_retrieval_rate": rate(
+                [m.get("matched_child_hit_at_retrieval") for m in rule]
+            ),
+            "matched_child_hit_at_final_rate": rate(
+                [m.get("matched_child_hit_at_final") for m in rule]
+            ),
+            "matched_child_hit_at_support_rate": rate(
+                [m.get("matched_child_hit_at_support") for m in rule]
+            ),
+            "matched_child_hit_at_citation_rate": rate(
+                [m.get("matched_child_hit_at_citation") for m in rule]
+            ),
+            "parent_hit_child_gold_matched_child_hit_at_retrieval_rate": rate(
+                [m.get("parent_hit_child_gold_matched_child_hit_at_retrieval") for m in rule]
+            ),
+            "parent_hit_child_gold_matched_child_hit_at_final_rate": rate(
+                [m.get("parent_hit_child_gold_matched_child_hit_at_final") for m in rule]
+            ),
+            "parent_hit_child_gold_matched_child_hit_at_support_rate": rate(
+                [m.get("parent_hit_child_gold_matched_child_hit_at_support") for m in rule]
+            ),
+            "parent_hit_child_gold_matched_child_hit_at_citation_rate": rate(
+                [m.get("parent_hit_child_gold_matched_child_hit_at_citation") for m in rule]
+            ),
             "route_match_rate": rate([m.get("route_match") for m in rule]),
             "citation_doc_hit_rate": rate([m.get("citation_doc_hit") for m in rule]),
             "citation_doc_all_hit_rate": rate([m.get("citation_doc_all_hit") for m in rule]),
@@ -1007,6 +1380,22 @@ def summarize_variant(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             "judge_error_count": sum(1 for j in judges if j.get("judge_error")),
             "judge_success_count": sum(1 for j in judges if j and not j.get("judge_error")),
+        },
+        "answer_generation_metrics": {
+            "enabled_rate": rate([item.get("enabled") for item in generations]),
+            "attempted_rate": rate([item.get("attempted") for item in generations]),
+            "used_model_rate": rate([item.get("used_model") for item in generations]),
+            "fallback_rate": rate([item.get("fallback_used") for item in generations]),
+            "answer_source_counts": count_values(
+                [item.get("answer_source") for item in generations]
+            ),
+            "fallback_reason_counts": count_values(
+                [
+                    item.get("fallback_reason")
+                    for item in generations
+                    if item.get("fallback_used")
+                ]
+            ),
         },
         "latency": {
             "rag_latency_avg_seconds": avg([row.get("latency_seconds") for row in rows]),
@@ -1118,6 +1507,12 @@ def build_slices(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "parent_chunk_hit_at10_rate": rate(
                     [row["rule_metrics"].get("parent_chunk_hit_at10") for row in subset]
                 ),
+                "matched_child_hit_at_support_rate": rate(
+                    [row["rule_metrics"].get("matched_child_hit_at_support") for row in subset]
+                ),
+                "matched_child_hit_at_citation_rate": rate(
+                    [row["rule_metrics"].get("matched_child_hit_at_citation") for row in subset]
+                ),
                 "citation_parent_chunk_hit_rate": rate(
                     [row["rule_metrics"].get("citation_parent_chunk_hit") for row in subset]
                 ),
@@ -1200,7 +1595,7 @@ def compare_variants(summaries: dict[str, Any]) -> dict[str, Any]:
 
 def flatten_summary_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     flat = {}
-    for section in ("rule_metrics", "judge_metrics", "latency"):
+    for section in ("rule_metrics", "judge_metrics", "answer_generation_metrics", "latency"):
         for key, value in (summary.get(section) or {}).items():
             flat[f"{section}.{key}"] = value
     return flat
@@ -1215,21 +1610,32 @@ def render_main_report(
     result_dir: Path,
 ) -> str:
     lines = [
-        "# v3 baseline B0/B1 评测报告",
+        "# v3 baseline 评测报告",
         "",
         f"- 运行 ID：`{run_config['run_id']}`",
         f"- 数据集：`{run_config['dataset_path']}`",
         f"- 样本数：{run_config['sample_count']}",
+        f"- 运行变体：`{', '.join(run_config.get('selected_variants') or [])}`",
+        f"- Query rewrite mode：`{run_config.get('rewrite_mode')}`",
+        f"- 答案模型模式：`{nested(run_config, 'answer_model', 'mode')}`",
+        f"- 答案模型：`{nested(run_config, 'answer_model', 'model_name') or 'N/A'}`",
+        f"- 答案模型 Base URL：`{nested(run_config, 'answer_model', 'api_base') or 'N/A'}`",
+        f"- 答案生成并发：{run_config.get('answer_concurrency')}",
         f"- Judge 模型：`{run_config['judge_model']}`",
         f"- Judge Base URL：`{run_config['judge_base_url']}`",
-        f"- 选定 Judge 并发：{run_config['selected_judge_concurrency']}",
+        f"- Judge 并发降级序列：`{run_config.get('judge_concurrency_schedule')}`",
         f"- 结果目录：`{result_dir}`",
         "",
         "## 评估口径",
         "",
         "- 检索指标同时统计 doc、父 chunk、exact gold chunk 三个层级；父 chunk 会将 `::childNNN` 归一到所属父块。",
+        "- `exact_gold_chunk_*` 是兼容指标：它只检查最终 top10 chunk id 是否精确等于 gold id；"
+        "当 gold 是 `::childNNN` 而最终列表保存父块 id 时，该指标会低估子证据命中。",
+        "- `matched_child_*` 是子证据链路指标：它检查 retrieval/final/support/citation "
+        "debug 中的 `matched_child_chunk_ids` 是否保留 gold child。",
         "- 子证据指标使用系统 debug 中的 `matched_child_chunk_ids`；若历史结果缺少该字段，可另行用答案/quote 文本推断，但正式报告优先使用显式 debug 字段。",
-        "- 答案正确率、忠实度和引用准确率由 DeepSeek judge 按样本 rubric、参考答案、系统答案和引用上下文打分；字段名保持英文，评价文字使用中文。",
+        "- 答案正确率、忠实度和引用准确率由 DeepSeek judge 按样本 rubric、参考答案、`answer_for_judge` 和引用上下文打分；字段名保持英文，评价文字使用中文。",
+        "- `answer_for_judge` 等于最终用户可见 `response.answer`；模型回答成功时，它是 DeepSeek 生成后再完成引用绑定的答案。",
         "- 答案通过率使用 judge 的 `correctness_pass`；连续分使用 `correctness_score`、`faithfulness_score`、`citation_support_score`。",
         "",
         "## 并发探测",
@@ -1266,6 +1672,37 @@ def render_main_report(
             f"{pct(summary['judge_metrics']['faithfulness_pass_rate'])} | "
             f"{pct(summary['judge_metrics']['citation_pass_rate'])} |"
         )
+    lines.extend(["", "## 模型回答使用情况", ""])
+    lines.append("| 变体 | 开启率 | 尝试率 | 实际使用率 | fallback 率 | answer source | fallback reason |")
+    lines.append("|---|---:|---:|---:|---:|---|---|")
+    for key, summary in summaries.items():
+        metrics = summary.get("answer_generation_metrics") or {}
+        lines.append(
+            f"| {summary['variant_name']} | "
+            f"{pct(metrics.get('enabled_rate'))} | "
+            f"{pct(metrics.get('attempted_rate'))} | "
+            f"{pct(metrics.get('used_model_rate'))} | "
+            f"{pct(metrics.get('fallback_rate'))} | "
+            f"{format_counts(metrics.get('answer_source_counts') or {})} | "
+            f"{format_counts(metrics.get('fallback_reason_counts') or {})} |"
+        )
+    lines.extend(["", "## Matched Child 链路指标", ""])
+    lines.append(
+        "| 变体 | child gold 样本 | parent hit + child gold | retrieval matched child | "
+        "final matched child | support matched child | citation matched child |"
+    )
+    lines.append("|---|---:|---:|---:|---:|---:|---:|")
+    for key, summary in summaries.items():
+        rule_metrics = summary["rule_metrics"]
+        lines.append(
+            f"| {summary['variant_name']} | "
+            f"{pct(rule_metrics['child_gold_sample_rate'])} | "
+            f"{pct(rule_metrics['parent_hit_child_gold_sample_rate'])} | "
+            f"{pct(rule_metrics['parent_hit_child_gold_matched_child_hit_at_retrieval_rate'])} | "
+            f"{pct(rule_metrics['parent_hit_child_gold_matched_child_hit_at_final_rate'])} | "
+            f"{pct(rule_metrics['parent_hit_child_gold_matched_child_hit_at_support_rate'])} | "
+            f"{pct(rule_metrics['parent_hit_child_gold_matched_child_hit_at_citation_rate'])} |"
+        )
     if comparison:
         lines.extend(["", "## B1 相对 B0 差值", ""])
         lines.append("| 指标 | 差值 |")
@@ -1293,12 +1730,18 @@ def render_main_report(
     for variant_key, summary in summaries.items():
         lines.append(f"### {summary['variant_name']}")
         lines.append("")
-        lines.append("| 类别 | 样本数 | doc hit@10 | parent hit@10 | citation parent hit | citation child hit | 答案通过率 | 忠实度通过率 | 引用通过率 |")
-        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+        lines.append(
+            "| 类别 | 样本数 | doc hit@10 | parent hit@10 | matched child support | "
+            "matched child citation | citation parent hit | citation child hit | 答案通过率 | "
+            "忠实度通过率 | 引用通过率 |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for category, item in (summary["slices"]["category"] or {}).items():
             lines.append(
                 f"| {category} | {item['sample_count']} | {pct(item['doc_hit_at10_rate'])} | "
                 f"{pct(item['parent_chunk_hit_at10_rate'])} | "
+                f"{pct(item['matched_child_hit_at_support_rate'])} | "
+                f"{pct(item['matched_child_hit_at_citation_rate'])} | "
                 f"{pct(item['citation_parent_chunk_hit_rate'])} | "
                 f"{pct(item['citation_child_evidence_hit_rate'])} | "
                 f"{pct(item['answer_correctness_pass_rate'])} | "
@@ -1343,12 +1786,24 @@ def render_probe_report(probe: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_failure_report(spec: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+def render_failure_report(
+    spec: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    effective_overrides: dict[str, Any],
+) -> str:
     failures = build_top_failures(rows, limit=80)
     lines = [
         f"# {spec['display_name']} 失败样本摘要",
         "",
         spec["description"],
+        "",
+        "本轮有效配置以主报告和 run_config 为准；关键运行级覆盖如下：",
+        "",
+        f"- `query_rewrite.mode`: `{effective_overrides.get('query_rewrite.mode')}`",
+        f"- `generation.v2_use_qwen_synthesis`: `{effective_overrides.get('generation.v2_use_qwen_synthesis')}`",
+        f"- `llm.provider`: `{effective_overrides.get('llm.provider', 'N/A')}`",
+        f"- `llm.model_name`: `{effective_overrides.get('llm.model_name', 'N/A')}`",
         "",
         "| sample_id | route | category | doc recall@10 | parent hit@10 | citation parent hit | 正确率 | 忠实度 | 引用支持 | 原因 |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|---|",
@@ -1492,6 +1947,7 @@ def compact_generation_debug(debug: dict[str, Any]) -> dict[str, Any]:
         "answer_mode": debug.get("answer_mode"),
         "plan_mode": (debug.get("answer_plan") or {}).get("mode") if isinstance(debug.get("answer_plan"), dict) else None,
         "citation_count": debug.get("citation_count"),
+        "answer_generation": extract_answer_generation(debug),
         "support_pack_size": len(support_pack) if isinstance(support_pack, list) else None,
         "support_matched_child_count": len(extract_support_matched_child_ids(debug)),
         "citation_matched_child_count": len(citation_child_ids),
@@ -1740,6 +2196,16 @@ def rate(values: list[Any]) -> float | None:
     return round(sum(1 for v in vals if bool(v)) / len(vals), 6)
 
 
+def count_values(values: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value or "")
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def percentile(values: list[Any], p: int) -> float | None:
     nums = sorted(float(v) for v in values if isinstance(v, (int, float)) and v is not None)
     if not nums:
@@ -1786,6 +2252,12 @@ def pct(value: Any) -> str:
     if value is None:
         return "N/A"
     return f"{float(value) * 100:.1f}%"
+
+
+def format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "N/A"
+    return "<br>".join(f"{key}: {value}" for key, value in counts.items())
 
 
 def safe_url(value: str) -> str:
