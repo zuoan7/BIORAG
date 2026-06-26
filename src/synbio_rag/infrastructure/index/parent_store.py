@@ -481,7 +481,7 @@ def _clone_parent_hit(
 
 
 def _child_snippet_payload(child_chunk: RetrievedChunk) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "chunk_id": child_chunk.chunk_id,
         "text": child_chunk.text,
         "child_index": child_chunk.metadata.get("child_index"),
@@ -497,6 +497,15 @@ def _child_snippet_payload(child_chunk: RetrievedChunk) -> dict[str, Any]:
         "bm25_score": child_chunk.bm25_score,
         "fusion_score": child_chunk.fusion_score,
     }
+    for key in (
+        "raw_retrieval_rank",
+        "child_probe_rerank_score",
+        "child_probe_rerank_rank",
+        "child_probe_query_scores",
+    ):
+        if key in child_chunk.metadata:
+            payload[key] = child_chunk.metadata[key]
+    return payload
 
 
 def _append_unique_metadata_list(metadata: dict[str, Any], key: str, values: list[Any]) -> None:

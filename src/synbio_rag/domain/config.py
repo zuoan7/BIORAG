@@ -100,6 +100,9 @@ _SUPPORTED_ENV_KEYS: frozenset[str] = frozenset(
         "RETRIEVAL_ORIGINAL_CN_FALLBACK_DENSE_TOP_N",
         "RETRIEVAL_ORIGINAL_CN_FALLBACK_ENABLED",
         "RETRIEVAL_ORIGINAL_CN_FALLBACK_MAX_TOTAL",
+        "RETRIEVAL_PARENT_AGGREGATION_CHILD_RERANK_TOP_N",
+        "RETRIEVAL_PARENT_AGGREGATION_ENABLED",
+        "RETRIEVAL_PARENT_AGGREGATION_RERANK_BONUS_WEIGHT",
         "RETRIEVAL_PARENT_EXPANSION_CAPTION_ENABLED",
         "RETRIEVAL_PARENT_EXPANSION_ENABLED",
         "RETRIEVAL_PARENT_EXPANSION_EVIDENCE_ENABLED",
@@ -112,6 +115,7 @@ _SUPPORTED_ENV_KEYS: frozenset[str] = frozenset(
         "RETRIEVAL_PARENT_EXPANSION_WINDOW_ENABLED",
         "RETRIEVAL_PARENT_INDEX_PATH",
         "RETRIEVAL_RERANK_MODE",
+        "RETRIEVAL_RERANK_SCORE_FLOOR_MIN_KEEP",
         "RETRIEVAL_RERANK_SCORE_FLOOR_RATIO",
         "RETRIEVAL_RERANK_STRATEGY_BONUS",
         "RETRIEVAL_RERANK_SUBQUERY_AGGREGATE_ALPHA",
@@ -260,6 +264,7 @@ class RerankPolicyConfig:
     guarded_rank1_min_completeness_gain: float = 0.18
     guarded_rank1_max_score_gap: float = 0.20
     rerank_score_floor_ratio: float = 0.4
+    rerank_score_floor_min_keep: int = 10
 
 
 @dataclass
@@ -314,6 +319,9 @@ class ContextExpansionConfig:
     neighbor_expansion_enabled: bool = True
     neighbor_window_size: int = 2
     neighbor_expansion_max_chunks: int = 30
+    parent_aggregation_enabled: bool = False
+    parent_aggregation_child_rerank_top_n: int = 30
+    parent_aggregation_rerank_bonus_weight: float = 0.25
     parent_expansion_enabled: bool = False
     parent_index_path: str = "./data/paper_round1/chunks/parent_index.jsonl"
     parent_expansion_max_total: int = 12
@@ -908,6 +916,12 @@ def _load_retrieval_env(settings: Settings, get_value) -> None:
     settings.retrieval.rerank_score_floor_ratio = float(
         get_value("RETRIEVAL_RERANK_SCORE_FLOOR_RATIO", str(settings.retrieval.rerank_score_floor_ratio))
     )
+    settings.retrieval.rerank_score_floor_min_keep = int(
+        get_value(
+            "RETRIEVAL_RERANK_SCORE_FLOOR_MIN_KEEP",
+            str(settings.retrieval.rerank_score_floor_min_keep),
+        )
+    )
     settings.retrieval.neighbor_expansion_enabled = _parse_bool(
         get_value(
             "RETRIEVAL_NEIGHBOR_EXPANSION_ENABLED",
@@ -921,6 +935,24 @@ def _load_retrieval_env(settings: Settings, get_value) -> None:
         get_value(
             "RETRIEVAL_NEIGHBOR_EXPANSION_MAX_CHUNKS",
             str(settings.retrieval.neighbor_expansion_max_chunks),
+        )
+    )
+    settings.retrieval.parent_aggregation_enabled = _parse_bool(
+        get_value(
+            "RETRIEVAL_PARENT_AGGREGATION_ENABLED",
+            str(settings.retrieval.parent_aggregation_enabled),
+        )
+    )
+    settings.retrieval.parent_aggregation_child_rerank_top_n = int(
+        get_value(
+            "RETRIEVAL_PARENT_AGGREGATION_CHILD_RERANK_TOP_N",
+            str(settings.retrieval.parent_aggregation_child_rerank_top_n),
+        )
+    )
+    settings.retrieval.parent_aggregation_rerank_bonus_weight = float(
+        get_value(
+            "RETRIEVAL_PARENT_AGGREGATION_RERANK_BONUS_WEIGHT",
+            str(settings.retrieval.parent_aggregation_rerank_bonus_weight),
         )
     )
     settings.retrieval.parent_expansion_enabled = _parse_bool(

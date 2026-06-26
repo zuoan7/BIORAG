@@ -126,8 +126,9 @@ def _normalize_score(value: float, low: float, high: float) -> float:
 
 
 def _serialize_hits(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
-    return [
-        {
+    hits = []
+    for chunk in chunks:
+        item: dict[str, object] = {
             "chunk_id": chunk.chunk_id,
             "doc_id": chunk.doc_id,
             "title": chunk.title,
@@ -135,5 +136,13 @@ def _serialize_hits(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
             "score": round(float(chunk.rerank_score), 6),
             "evidence_features": chunk.metadata.get("evidence_features", {}),
         }
-        for chunk in chunks
-    ]
+        for key in (
+            "parent_aggregation_score",
+            "parent_aggregation_bonus",
+            "matched_child_count",
+            "best_child_probe_score",
+        ):
+            if key in chunk.metadata:
+                item[key] = chunk.metadata[key]
+        hits.append(item)
+    return hits

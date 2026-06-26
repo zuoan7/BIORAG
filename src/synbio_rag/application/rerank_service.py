@@ -63,6 +63,67 @@ class LocalBGERerankerService:
             return []
         return self._rerank_with_local_model(queries, chunks, top_k, analysis, mode)
 
+    def score_child_probe(
+        self,
+        question: str,
+        chunks: list[RetrievedChunk],
+        analysis: QueryAnalysis | None = None,
+        top_n: int | None = None,
+    ) -> list[RetrievedChunk]:
+        limit = self.retrieval_config.parent_aggregation_child_rerank_top_n
+        if top_n is not None:
+            limit = top_n
+        limit = max(int(limit), 0)
+        candidates = chunks[:limit]
+        if not candidates:
+            return chunks
+
+        queries = _build_rerank_queries(question, analysis)
+        texts = [_rerank_text(chunk) for chunk in candidates]
+        pairs = [[query, text] for query in queries for text in texts]
+        raw_scores = self.local_reranker.score_pairs(pairs)
+        scores_by_query: list[list[float]] = []
+        cursor = 0
+        for _query in queries:
+            scores_by_query.append(
+                [float(score) for score in raw_scores[cursor : cursor + len(candidates)]]
+            )
+            cursor += len(candidates)
+
+        alpha = self.retrieval_config.rerank_subquery_aggregate_alpha
+        for idx, chunk in enumerate(candidates):
+            per_query_scores = [
+                float(scores[idx])
+                for scores in scores_by_query
+                if idx < len(scores)
+            ]
+            if per_query_scores:
+                max_score = max(per_query_scores)
+                mean_score = sum(per_query_scores) / len(per_query_scores)
+                score = max_score + alpha * mean_score
+            else:
+                score = float(chunk.rerank_score or chunk.vector_score or chunk.fusion_score)
+            chunk.metadata["child_probe_query_scores"] = [
+                round(score_value, 6)
+                for score_value in per_query_scores
+            ]
+            chunk.metadata["child_probe_rerank_score"] = round(float(score), 6)
+
+        raw_rank_by_chunk_id = {
+            chunk.chunk_id: rank
+            for rank, chunk in enumerate(candidates, start=1)
+        }
+        ranked = sorted(
+            candidates,
+            key=lambda chunk: (
+                -_round_float(chunk.metadata.get("child_probe_rerank_score")),
+                raw_rank_by_chunk_id.get(chunk.chunk_id, 10**9),
+            ),
+        )
+        for rank, chunk in enumerate(ranked, start=1):
+            chunk.metadata["child_probe_rerank_rank"] = rank
+        return chunks
+
     def _rerank_with_local_model(
         self,
         queries: list[str],
@@ -126,6 +187,10 @@ class LocalBGERerankerService:
             route_bonus = _route_bonus(queries[0], chunk, self.retrieval_config)
             evidence_bonus = _evidence_aware_bonus(chunk, self.retrieval_config)
             structure_bonus = _structure_marker_bonus(queries[0], chunk, self.retrieval_config)
+            parent_aggregation_bonus = _parent_aggregation_bonus(
+                chunk,
+                self.retrieval_config,
+            )
             chunk.rerank_score = (
                 max_score
                 + alpha * mean_score
@@ -133,7 +198,13 @@ class LocalBGERerankerService:
                 + route_bonus
                 + evidence_bonus
                 + structure_bonus
+                + parent_aggregation_bonus
             )
+            if parent_aggregation_bonus:
+                chunk.metadata["parent_aggregation_bonus"] = round(
+                    parent_aggregation_bonus,
+                    6,
+                )
             chunk.metadata["rerank_query_scores"] = [round(score, 6) for score in per_query_scores]
             rescored.append(chunk)
         raw_order = list(rescored)
@@ -226,6 +297,16 @@ def _build_ranking_trace(
                 "bm25_score": _round_float(chunk.bm25_score),
                 "fusion_score": _round_float(chunk.fusion_score),
                 "query_scores": list(chunk.metadata.get("rerank_query_scores") or []),
+                "parent_aggregation_score": _round_float(
+                    chunk.metadata.get("parent_aggregation_score")
+                ),
+                "parent_aggregation_bonus": _round_float(
+                    chunk.metadata.get("parent_aggregation_bonus")
+                ),
+                "matched_child_count": int(chunk.metadata.get("matched_child_count") or 0),
+                "best_child_probe_score": _round_float(
+                    chunk.metadata.get("best_child_probe_score")
+                ),
                 "survived_score_floor": chunk_id in post_floor_rank,
                 "dropped_by_score_floor": chunk_id in score_floor_dropped,
                 "doc_diversity_overflow": chunk_id in diversity_overflow,
@@ -249,6 +330,21 @@ def _rank_map(value: object) -> dict[str, int]:
 
 def _parent_chunk_id(chunk_id: object) -> str:
     return str(chunk_id or "").split("::child", 1)[0]
+
+
+def _parent_aggregation_bonus(
+    chunk: RetrievedChunk,
+    config: RetrievalConfig,
+) -> float:
+    if not config.parent_aggregation_enabled:
+        return 0.0
+    try:
+        aggregation_score = float(chunk.metadata.get("parent_aggregation_score") or 0.0)
+    except (TypeError, ValueError):
+        aggregation_score = 0.0
+    if aggregation_score <= 0:
+        return 0.0
+    return aggregation_score * float(config.parent_aggregation_rerank_bonus_weight)
 
 
 def _round_float(value: object) -> float:

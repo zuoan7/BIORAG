@@ -215,7 +215,16 @@ def main() -> None:
         default="enabled",
         help="Run-level query rewrite mode applied after variant overrides.",
     )
-    parser.add_argument("--answer-concurrency", type=int, default=10)
+    parser.add_argument(
+        "--answer-concurrency",
+        type=int,
+        default=1,
+        help=(
+            "Full RAG answer worker concurrency. Keep default 1 because each worker "
+            "runs local embedding/rerank models; use higher concurrency only for "
+            "external-chat-only workloads."
+        ),
+    )
     parser.add_argument("--probe-concurrency", default="10,5,2")
     parser.add_argument("--probe-requests-per-level", type=int, default=8)
     parser.add_argument("--judge-concurrency", type=int, default=10)
@@ -1620,7 +1629,7 @@ def render_main_report(
         f"- 答案模型模式：`{nested(run_config, 'answer_model', 'mode')}`",
         f"- 答案模型：`{nested(run_config, 'answer_model', 'model_name') or 'N/A'}`",
         f"- 答案模型 Base URL：`{nested(run_config, 'answer_model', 'api_base') or 'N/A'}`",
-        f"- 答案生成并发：{run_config.get('answer_concurrency')}",
+        f"- RAG 答案生成并发：{run_config.get('answer_concurrency')}",
         f"- Judge 模型：`{run_config['judge_model']}`",
         f"- Judge Base URL：`{run_config['judge_base_url']}`",
         f"- Judge 并发降级序列：`{run_config.get('judge_concurrency_schedule')}`",
@@ -1882,6 +1891,12 @@ def compact_raw_child_trace(debug: dict[str, Any]) -> dict[str, Any]:
             "raw_child_count": aggregation.get("raw_child_count"),
             "raw_parent_count": aggregation.get("raw_parent_count"),
             "materialized_parent_count": aggregation.get("materialized_parent_count"),
+            "parent_aggregation_enabled": aggregation.get("parent_aggregation_enabled"),
+            "parent_aggregation_used": aggregation.get("parent_aggregation_used"),
+            "parent_aggregation_reason": aggregation.get("parent_aggregation_reason"),
+            "child_probe_top_n": aggregation.get("child_probe_top_n"),
+            "parent_candidate_count": aggregation.get("parent_candidate_count"),
+            "top_parent_aggregation_hits": aggregation.get("top_parent_aggregation_hits") or [],
             "parent_ids_from_children": list(aggregation.get("parent_ids_from_children") or []),
             "child_ids_by_parent_id": {
                 str(parent_id): [str(child_id) for child_id in child_ids or []]

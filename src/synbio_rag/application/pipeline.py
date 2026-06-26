@@ -30,6 +30,7 @@ from .original_cn_fallback import (
 from .original_cn_fallback import (
     run_original_cn_fallback as _run_original_cn_fallback,
 )
+from .parent_aggregation import aggregate_parent_hits_with_child_scores
 from .parent_expansion import ParentContextExpander
 from .pipeline_stages import (
     ContextStage,
@@ -227,8 +228,13 @@ class SynBioRAGPipeline:
             )
             raw_child_debug = self._build_raw_child_debug(retrieved)
             raw_retrieved_count = len(retrieved)
-            retrieved = self._materialize_parent_child_hits(retrieved)
             aggregation_debug = raw_child_debug["child_to_parent_aggregation"]
+            retrieved = self._materialize_parent_child_hits(
+                retrieved,
+                question=question,
+                analysis=analysis,
+                debug=aggregation_debug,
+            )
             aggregation_debug["materialized_parent_count"] = len(retrieved)
             attempts.append(
                 {
@@ -244,11 +250,66 @@ class SynBioRAGPipeline:
                 return retrieved, {"selected": name, "attempts": attempts, **raw_child_debug}
         return [], {"selected": "empty", "attempts": attempts}
 
-    def _materialize_parent_child_hits(self, retrieved: list) -> list:
+    def _materialize_parent_child_hits(
+        self,
+        retrieved: list,
+        *,
+        question: str = "",
+        analysis: QueryAnalysis | None = None,
+        debug: dict[str, Any] | None = None,
+    ) -> list:
         parent_store = getattr(self, "parent_store", None)
         if parent_store is None or not retrieved:
+            if debug is not None:
+                debug.update(
+                    {
+                        "parent_aggregation_enabled": False,
+                        "parent_aggregation_used": False,
+                        "parent_aggregation_reason": (
+                            "parent_store_missing" if parent_store is None else "empty_input"
+                        ),
+                    }
+                )
             return retrieved
-        return parent_store.materialize_parent_hits(retrieved)
+        config = self.settings.retrieval
+        if not config.parent_aggregation_enabled:
+            if debug is not None:
+                debug.update(
+                    {
+                        "parent_aggregation_enabled": False,
+                        "parent_aggregation_used": False,
+                        "parent_aggregation_reason": "disabled",
+                    }
+                )
+            return parent_store.materialize_parent_hits(retrieved)
+
+        reranker = getattr(self, "reranker", None)
+        if reranker is None or not hasattr(reranker, "score_child_probe"):
+            if debug is not None:
+                debug.update(
+                    {
+                        "parent_aggregation_enabled": True,
+                        "parent_aggregation_used": False,
+                        "parent_aggregation_reason": "child_probe_unavailable",
+                    }
+                )
+            return parent_store.materialize_parent_hits(retrieved)
+
+        top_n = max(int(config.parent_aggregation_child_rerank_top_n), 0)
+        reranker.score_child_probe(
+            question,
+            retrieved,
+            analysis=analysis,
+            top_n=top_n,
+        )
+        if debug is not None:
+            debug["parent_aggregation_enabled"] = True
+        return aggregate_parent_hits_with_child_scores(
+            retrieved,
+            parent_store,
+            config,
+            debug=debug,
+        )
 
     def _build_raw_child_debug(self, retrieved: list[RetrievedChunk]) -> dict[str, Any]:
         parent_store = getattr(self, "parent_store", None)

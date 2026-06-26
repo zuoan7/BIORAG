@@ -9,14 +9,35 @@ from .rerank_common import _guarded_sort_key, _sort_key
 from .rerank_guarded_policy import _apply_guarded_rerank, _apply_rank1_evidence_guard
 
 
-def _apply_rerank_score_floor(chunks: list[RetrievedChunk], config: RetrievalConfig) -> list[RetrievedChunk]:
+def _rerank_score_floor_min_keep(config: RetrievalConfig, top_k: int) -> int:
+    return min(max(int(config.rerank_score_floor_min_keep), 0), max(int(top_k), 0))
+
+
+def _apply_rerank_score_floor(
+    chunks: list[RetrievedChunk],
+    config: RetrievalConfig,
+    min_keep: int = 0,
+) -> list[RetrievedChunk]:
     if not chunks or config.rerank_score_floor_ratio <= 0:
         return chunks
     top_score = chunks[0].rerank_score
     if top_score <= 0:
         return chunks
     floor = top_score * config.rerank_score_floor_ratio
-    return [chunk for chunk in chunks if chunk.rerank_score >= floor]
+    kept = [chunk for chunk in chunks if chunk.rerank_score >= floor]
+    keep_target = min(max(int(min_keep), 0), len(chunks))
+    if len(kept) >= keep_target:
+        return kept
+
+    kept_ids = {chunk.chunk_id for chunk in kept}
+    for chunk in chunks:
+        if len(kept) >= keep_target:
+            break
+        if chunk.chunk_id in kept_ids:
+            continue
+        kept.append(chunk)
+        kept_ids.add(chunk.chunk_id)
+    return kept
 
 
 _BODY_SECTION_GROUPS: set[str] = {
@@ -179,6 +200,7 @@ def _finalize_rerank(
     queries: list[str] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> list[RetrievedChunk]:
+    score_floor_min_keep = _rerank_score_floor_min_keep(config, top_k)
     if mode in {"guarded", "guarded_rank1"}:
         profiled = _apply_guarded_rerank(question, chunks, config)
         if mode == "guarded_rank1":
@@ -197,6 +219,8 @@ def _finalize_rerank(
                         "enabled": False,
                         "ratio": config.rerank_score_floor_ratio,
                         "floor": None,
+                        "min_keep": score_floor_min_keep,
+                        "rescued_chunk_ids": [],
                         "dropped_chunk_ids": [],
                     },
                 }
@@ -217,7 +241,7 @@ def _finalize_rerank(
         return final
     chunks.sort(key=_sort_key, reverse=True)
     pre_floor = list(chunks)
-    chunks = _apply_rerank_score_floor(chunks, config)
+    chunks = _apply_rerank_score_floor(chunks, config, min_keep=score_floor_min_keep)
     post_floor = list(chunks)
     if debug is not None:
         debug.update(
@@ -228,7 +252,12 @@ def _finalize_rerank(
                 "pre_floor_rank_by_chunk_id": _rank_by_chunk_id(pre_floor),
                 "post_floor_chunk_ids": _chunk_ids(post_floor),
                 "post_floor_rank_by_chunk_id": _rank_by_chunk_id(post_floor),
-                "score_floor": _score_floor_debug(pre_floor, post_floor, config),
+                "score_floor": _score_floor_debug(
+                    pre_floor,
+                    post_floor,
+                    config,
+                    min_keep=score_floor_min_keep,
+                ),
             }
         )
     final = _apply_comparison_coverage_selection(
@@ -450,23 +479,33 @@ def _score_floor_debug(
     pre_floor: list[RetrievedChunk],
     post_floor: list[RetrievedChunk],
     config: RetrievalConfig,
+    min_keep: int = 0,
 ) -> dict[str, Any]:
     if not pre_floor:
         return {
             "enabled": False,
             "ratio": config.rerank_score_floor_ratio,
             "floor": None,
+            "min_keep": max(int(min_keep), 0),
+            "rescued_chunk_ids": [],
             "dropped_chunk_ids": [],
         }
     top_score = float(pre_floor[0].rerank_score or 0.0)
     enabled = config.rerank_score_floor_ratio > 0 and top_score > 0
     floor = top_score * config.rerank_score_floor_ratio if enabled else None
     post_ids = set(_chunk_ids(post_floor))
+    rescued = [
+        chunk.chunk_id
+        for chunk in pre_floor
+        if chunk.chunk_id in post_ids and floor is not None and chunk.rerank_score < floor
+    ]
     dropped = [chunk.chunk_id for chunk in pre_floor if chunk.chunk_id not in post_ids]
     return {
         "enabled": enabled,
         "ratio": config.rerank_score_floor_ratio,
         "top_score": round(top_score, 6),
         "floor": round(float(floor), 6) if floor is not None else None,
+        "min_keep": max(int(min_keep), 0),
+        "rescued_chunk_ids": rescued,
         "dropped_chunk_ids": dropped,
     }
